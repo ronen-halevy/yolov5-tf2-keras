@@ -63,7 +63,7 @@ def run(
     keras_model.summary()
     keras_model.save_weights(tf_weights_dir)
     LOGGER.info('PyTorch, TensorFlow and Keras models successfully verified.\nUse export.py for TF model export.')
-    return keras_model
+    return keras_model, tf_model
 
 
 def parse_opt():

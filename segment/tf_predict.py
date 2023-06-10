@@ -31,12 +31,8 @@ Usage - formats:
 import argparse
 import os
 import platform
-
-import numpy as np
 import sys
 from pathlib import Path
-# import tensorflow as tf
-# import torch
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
@@ -51,8 +47,10 @@ from utils.tf_general import (LOGGER, Profile, check_file, check_img_size, check
                            strip_optimizer)
 from utils.tf_plots import Annotator, colors, save_one_box
 from utils.segment.tf_general import masks2segments, process_mask, process_mask_native
-from utils.torch_utils import select_device, smart_inference_mode
+
 import tensorflow as tf
+
+import models.convert_weights
 
 
 # @smart_inference_mode()
@@ -121,8 +119,7 @@ def run(
         dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=no_strech, vid_stride=vid_stride)
     vid_path, vid_writer = [None] * bs, [None] * bs
 
-    import models.convert_weights
-    keras_model=models.convert_weights.run(
+    keras_model, tf_model=models.convert_weights.run(
             weights=ROOT / 'yolov5s-seg.pt',  # weights path
             imgsz=(640, 640),  # inference size h,w
             batch_size=1,  # batch size
@@ -136,45 +133,53 @@ def run(
     # model.warmup(imgsz=(1 if pt else bs, 3, *imgsz))  # warmup
     seen, windows, dt = 0, [], (Profile(), Profile(), Profile())
     for path, im, im0s, vid_cap, s in dataset:
-        print(im.shape)
-        print(im0s.shape)
-        im = tf.cast(im, dtype=tf.float32)/ 255  # 0 - 255 to 0.0 - 1.0
-        if len(im.shape) == 3:
-            im = tf.expand_dims(im, axis=0)
+        with dt[0]:
 
-        # window_name = 'image'
-        # cv2.imshow(window_name, im)
-        # cv2.waitKey(0)
-        pred, proto,xx = keras_model(im)
-        pred, proto ,xx= keras_model.predict(im)
+            print(im.shape)
+            print(im0s.shape)
+            im = tf.cast(im, dtype=tf.float32)/ 255  # 0 - 255 to 0.0 - 1.0
+            if len(im.shape) == 3:
+                im = tf.expand_dims(im, axis=0)
+
+            # window_name = 'image'
+            # cv2.imshow(window_name, im)
+            # cv2.waitKey(0)
+            # pred, proto,xx = keras_model(im)
+            # Inference
+        with dt[1]:
+            visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
+            if visualize:
+                pred, proto ,xx= tf_model.predict(im, visualize=visualize)
+            else:
+                pred, proto ,xx= keras_model.predict(im)
 
 
 
 
-        # print('pred', pred[0])
+            # print('pred', pred[0])
 
 
-        # with dt[0]:
-        #     im = torch.from_numpy(im).to(model.device)
-        #     im = im.half() if model.fp16 else im.float()  # uint8 to fp16/32
-        #     im /= 255  # 0 - 255 to 0.0 - 1.0
-        #     if len(im.shape) == 3:
-        #         im = im[None]  # expand for batch dim
+            # with dt[0]:
+            #     im = torch.from_numpy(im).to(model.device)
+            #     im = im.half() if model.fp16 else im.float()  # uint8 to fp16/32
+            #     im /= 255  # 0 - 255 to 0.0 - 1.0
+            #     if len(im.shape) == 3:
+            #         im = im[None]  # expand for batch dim
 
-        # Inference
-        # with dt[1]:
-    #         visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
-    #         pred, proto = model(im, augment=augment, visualize=visualize)[:2]
-    #
-    #     # NMS
-    #     with dt[2]:
-        nms_pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det, nm=32)
-        b, h, w, ch = tf.cast(im.shape, tf.float32)  # batch, channel, height, width
-        import numpy as np
-        nms_pred = [x if isinstance(x, np.ndarray) else x.numpy() for x in nms_pred]
-        nms_pred[0][..., :4] *= [w, h, w, h]  # xywh normalized to pixels
+            # Inference
+            # with dt[1]:
+            # visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
+        #         pred, proto = model(im, augment=augment, visualize=visualize)[:2]
+        #
+        #     # NMS
+        with dt[2]:
+            nms_pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det, nm=32)
+            b, h, w, ch = tf.cast(im.shape, tf.float32)  # batch, channel, height, width
+            import numpy as np
+            nms_pred = [x if isinstance(x, np.ndarray) else x.numpy() for x in nms_pred]
+            nms_pred[0][..., :4] *= [w, h, w, h]  # xywh normalized to pixels
 
-        # print('pred nms',nms_pred[0])
+            # print('pred nms',nms_pred[0])
 
 #######
 
@@ -269,7 +274,7 @@ def run(
                     vid_writer[i].write(im0)
 
         # Print time (inference-only)
-        # LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
+        LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
 
     # Print results
     t = tuple(x.t / seen * 1E3 for x in dt)  # speeds per image
@@ -300,7 +305,7 @@ def parse_opt():
     parser.add_argument('--classes', nargs='+', type=int, help='filter by class: --classes 0, or --classes 0 2 3')
     parser.add_argument('--agnostic-nms', action='store_true', help='class-agnostic NMS')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
-    parser.add_argument('--visualize', action='store_true', help='visualize features')
+    parser.add_argument('--visualize', action='store_false', help='visualize features')
     parser.add_argument('--update', action='store_true', help='update all models')
     parser.add_argument('--project', default=ROOT / 'runs/predict-seg', help='save results to project/name')
     parser.add_argument('--name', default='exp', help='save results to project/name')

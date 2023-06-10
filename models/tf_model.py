@@ -33,6 +33,8 @@ from models.yolo import Detect, Segment
 from utils.activations import SiLU
 from utils.general import LOGGER, make_divisible, print_args
 
+from utils.tf_plots import feature_visualization
+
 
 class TFBN(keras.layers.Layer):
     # TensorFlow BatchNormalization wrapper
@@ -468,7 +470,8 @@ class TFModel:
                 topk_per_class=100,
                 topk_all=100,
                 iou_thres=0.45,
-                conf_thres=0.25):
+                conf_thres=0.25,
+                visualize=False):
         y = []  # outputs
         x = inputs
         print(len(self.model.layers))
@@ -478,25 +481,27 @@ class TFModel:
 
             x = m(x)  # run
             y.append(x if m.i in self.savelist else None)  # save output
+            if visualize:
+                feature_visualization(x, m.name, m.i, save_dir=visualize)
 
         # Add TensorFlow NMS
-        if tf_nms:
-            boxes = self._xywh2xyxy(x[0][..., :4])
-            probs = x[0][:, :, 4:5]
-            classes = x[0][:, :, 5:]
-            scores = probs * classes
-            if agnostic_nms:
-                nms = AgnosticNMS()((boxes, classes, scores), topk_all, iou_thres, conf_thres)
-            else:
-                boxes = tf.expand_dims(boxes, 2)
-                nms = tf.image.combined_non_max_suppression(boxes,
-                                                            scores,
-                                                            topk_per_class,
-                                                            topk_all,
-                                                            iou_thres,
-                                                            conf_thres,
-                                                            clip_boxes=False)
-            return (nms,)
+        # if tf_nms:
+        #     boxes = self._xywh2xyxy(x[0][..., :4])
+        #     probs = x[0][:, :, 4:5]
+        #     classes = x[0][:, :, 5:]
+        #     scores = probs * classes
+        #     if agnostic_nms:
+        #         nms = AgnosticNMS()((boxes, classes, scores), topk_all, iou_thres, conf_thres)
+        #     else:
+        #         boxes = tf.expand_dims(boxes, 2)
+        #         nms = tf.image.combined_non_max_suppression(boxes,
+        #                                                     scores,
+        #                                                     topk_per_class,
+        #                                                     topk_all,
+        #                                                     iou_thres,
+        #                                                     conf_thres,
+        #                                                     clip_boxes=False)
+        #     return (nms,)
         return x  # output [1,6300,85] = [xywh, conf, class0, class1, ...]
         # x = x[0]  # [x(1,6300,85), ...] to x(6300,85)
         # xywh = x[..., :4]  # x(6300,4) boxes

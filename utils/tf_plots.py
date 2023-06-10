@@ -176,18 +176,18 @@ def feature_visualization(x, module_type, stage, n=32, save_dir=Path('runs/detec
     n:              Maximum number of feature maps to plot
     save_dir:       Directory to save results
     """
-    if 'Detect' not in module_type:
-        batch, channels, height, width = x.shape  # batch, channels, height, width
+    if 'detect' not in module_type and 'segment' not in module_type:
+        batch, height, width, channels = x.shape  # batch, channels, height, width
         if height > 1 and width > 1:
             f = save_dir / f"stage{stage}_{module_type.split('.')[-1]}_features.png"  # filename
-
-            blocks = torch.chunk(x[0].cpu(), channels, dim=0)  # select batch index 0, block by channels
+            blocks = tf.split(x[0], channels, axis=-1)
+            # blocks = torch.chunk(x[0], channels, dim=0)  # select batch index 0, block by channels
             n = min(n, channels)  # number of plots
             fig, ax = plt.subplots(math.ceil(n / 8), 8, tight_layout=True)  # 8 rows x n/8 cols
             ax = ax.ravel()
             plt.subplots_adjust(wspace=0.05, hspace=0.05)
             for i in range(n):
-                ax[i].imshow(blocks[i].squeeze())  # cmap='gray'
+                ax[i].imshow(tf.squeeze(blocks[i]))  # cmap='gray'
                 ax[i].axis('off')
 
             LOGGER.info(f'Saving {f}... ({n}/{channels})')
