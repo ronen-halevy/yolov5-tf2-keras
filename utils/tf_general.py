@@ -924,114 +924,65 @@ def non_max_suppression(
         # prediction = prediction.cpu()
     bs = prediction.shape[0]  # batch size
     nc = prediction.shape[2] - nm - 5  # number of classes
-    xc = prediction[..., 4] > conf_thres  # candidates
+    # xc = prediction[..., 4] > conf_thres  # candidates
 
     # Settings
     # min_wh = 2  # (pixels) minimum box width and height
     max_wh = 7680  # (pixels) maximum box width and height
-    max_nms = 30000  # maximum number of boxes into torchvision.ops.nms()
+    # max_nms = 30000  # maximum number of boxes into torchvision.ops.nms()
     time_limit = 0.5 + 0.05 * bs  # seconds to quit after
-    redundant = True  # require redundant detections
-    multi_label &= nc > 1  # multiple labels per box (adds 0.5ms/img)
-    merge = False  # use merge-NMS
+    # redundant = True  # require redundant detections
+    # multi_label &= nc > 1  # multiple labels per box (adds 0.5ms/img)
+    # merge = False  # use merge-NMS
 
     t = time.time()
     mi = 5 + nc  # mask start index
     output = [tf.zeros((0, 6 + nm), dtype=tf.dtypes.float32)] * bs
     for xi, x in enumerate(prediction):  # image index, image inference
-        # Apply constraints
-        # x[((x[..., 2:4] < min_wh) | (x[..., 2:4] > max_wh)).any(1), 4] = 0  # width-height
-        x = x[xc[xi]]  # confidence
 
-        # Cat apriori labels if autolabelling
-        if labels and len(labels[xi]):
-            lb = labels[xi]
-            v = tf.zeros((len(lb), nc + nm + 5))
-            v[:, :4] = lb[:, 1:5]  # box
-            v[:, 4] = 1.0  # conf
-            v[range(len(lb)), lb[:, 0].long() + 5] = 1.0  # cls
-            x = tf.concat((x, v), axis=0)
-
-        # If none remain process next image
         if not x.shape[0]:
             continue
 
-        # Compute conf
-        # x[:, 5:] *= x[:, 4:5]  # conf = obj_conf * cls_conf
-        s=tf.math.multiply(
-            x[:, 5:], x[:, 4:5], name=None
-        )
+
         x = tf.concat( [x[:, :5], x[:, 5:] * x[:, 4:5]], axis=-1)
-        # Box/Mask
         box = xywh2xyxy(x[:, :4])  # center_x, center_y, width, height) to (x1, y1, x2, y2)
         mask = x[:, mi:]  # zero columns if no masks
 
-        # Detections matrix nx6 (xyxy, conf, cls)
-        if multi_label:
-            i, j = (x[:, 5:mi] > conf_thres).nonzero(as_tuple=False).T
-            x = tf.concat((box[i], x[i, 5 + j, None], j[:, None].float(), mask[i]), 1)
-        else:  # best class only
-            # conf = x[:, 5:mi].max(1, keepdims=True) # ronen
-            conf=tf.reduce_max(x[:, 5:mi], axis=-1, keepdims=True)
+        conf=tf.reduce_max(x[:, 5:mi], axis=-1, keepdims=True)
 
-            j = tf.math.argmax(
+        j = tf.math.argmax(
                 x[:, 5:mi],
                 axis=-1,
             )
-            j = tf.cast(tf.expand_dims(j, axis=-1), tf.float32)
-            x = tf.concat((box, conf, j, mask), 1)[tf.squeeze(conf, axis=-1)> conf_thres]
-
-            # x = tf.concat((box, conf, j, mask), 1)
-            # ss = tf.squeeze(conf, axis=-1)
-            # thresh = ss > conf_thres
-            # x1 = x[thresh]
-
-
+        j = tf.cast(tf.expand_dims(j, axis=-1), tf.float32)
+        x = tf.concat((box, conf, j, mask), 1)
 
         # Filter by class
         if classes is not None:
             x = x[(x[:, 5:6] == tf.convert_to_tensor(classes)).any(1)]
 
-        # Apply finite constraint
-        # if not torch.isfinite(x).all():
-        #     x = x[torch.isfinite(x).all(1)]
 
         # Check shape
         n = x.shape[0]  # number of boxes
         if not n:  # no boxes
             continue
-        # hh = tf.argsort(x[:, 4], direction='DESCENDING')
-        # h2h = tf.argsort(x[:, 4], direction='DESCENDING')[:max_nms]
-        # x = x[tf.argsort(x[:, 4], direction='DESCENDING')[:max_nms]]  # sort by confidence and remove excess boxes
-        #
-        # # x = x[x[:, 4].argsort(descending=True)[:max_nms]]  # sort by confidence and remove excess boxes
-        # x = x[tf.argsort(x[:, 4], direction='DESCENDING')[:max_nms]]  # sort by confidence and remove excess boxes
 
-        # Batched NMS
+        # Offset per class boxes to support none agnostic nms
         c = x[:, 5:6] * (0 if agnostic else max_wh)  # classes
         boxes, scores = x[:, :4] + c, x[:, 4]  # boxes (offset by class), scores
-        # i = torchvision.ops.nms(boxes, scores, iou_thres)  # NMS
 
         i = tf.image.non_max_suppression(boxes, tf.cast(scores,  tf.float32), max_output_size=max_det, iou_threshold=iou_thres, score_threshold=0.5)
-        print('i.shape', i.shape)
-        # i = i[:max_det]  # limit detections
-        if merge and (1 < n < 3E3):  # Merge NMS (boxes merged using weighted mean)
-            # update boxes as boxes(i,4) = weights(i,n) * boxes(n,4)
-            iou = box_iou(boxes[i], boxes) > iou_thres  # iou matrix
-            weights = iou * scores[None]  # box weights
-            x[i, :4] = torch.mm(weights, x[:, :4]).float() / weights.sum(1, keepdim=True)  # merged boxes
-            if redundant:
-                i = i[iou.sum(1) > 1]  # require redundancy
 
-        # output[xi] = x[i]
+
         output[xi]= tf.gather(x, indices=i)
-        # if mps:
-        #     output[xi] = output[xi].to('cpu')
+
         if (time.time() - t) > time_limit:
             LOGGER.warning(f'WARNING ⚠️ NMS time limit {time_limit:.3f}s exceeded')
             break  # time limit exceeded
 
     return output
+
+
 
 
 def strip_optimizer(f='best.pt', s=''):  # from utils.general import *; strip_optimizer()
