@@ -33,8 +33,8 @@ import cv2
 import numpy as np
 import pandas as pd
 import pkg_resources as pkg
-import torch
-import torchvision
+# import torch
+# import torchvision
 import tensorflow as tf
 import yaml
 # from ultralytics.yolo.utils.checks import check_requirements
@@ -55,7 +55,7 @@ VERBOSE = str(os.getenv('YOLOv5_VERBOSE', True)).lower() == 'true'  # global ver
 TQDM_BAR_FORMAT = '{l_bar}{bar:10}{r_bar}'  # tqdm bar format
 FONT = 'Arial.ttf'  # https://ultralytics.com/assets/Arial.ttf
 
-torch.set_printoptions(linewidth=320, precision=5, profile='long')
+# torch.set_printoptions(linewidth=320, precision=5, profile='long')
 np.set_printoptions(linewidth=320, formatter={'float_kind': '{:11.5g}'.format})  # format short g, %precision=5
 pd.options.display.max_columns = 10
 cv2.setNumThreads(0)  # prevent OpenCV from multithreading (incompatible with PyTorch DataLoader)
@@ -773,7 +773,7 @@ def xyxy2xywh(x):
 
 def xywh2xyxy(x):
     # Convert nx4 boxes from [x, y, w, h] to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
-    y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
+    y = x.clone() if isinstance(x, tf.Tensor) else np.copy(x)
     y[..., 0] = x[..., 0] - x[..., 2] / 2  # top left x
     y[..., 1] = x[..., 1] - x[..., 3] / 2  # top left y
     y[..., 2] = x[..., 0] + x[..., 2] / 2  # bottom right x
@@ -783,7 +783,7 @@ def xywh2xyxy(x):
 
 def xywhn2xyxy(x, w=640, h=640, padw=0, padh=0):
     # Convert nx4 boxes from [x, y, w, h] normalized to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
-    y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
+    y = x.clone() if isinstance(x, tf.Tensor) else np.copy(x)
     y[..., 0] = w * (x[..., 0] - x[..., 2] / 2) + padw  # top left x
     y[..., 1] = h * (x[..., 1] - x[..., 3] / 2) + padh  # top left y
     y[..., 2] = w * (x[..., 0] + x[..., 2] / 2) + padw  # bottom right x
@@ -795,7 +795,7 @@ def xyxy2xywhn(x, w=640, h=640, clip=False, eps=0.0):
     # Convert nx4 boxes from [x1, y1, x2, y2] to [x, y, w, h] normalized where xy1=top-left, xy2=bottom-right
     if clip:
         clip_boxes(x, (h - eps, w - eps))  # warning: inplace clip
-    y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
+    y = x.clone() if isinstance(x, tf.Tensor) else np.copy(x)
     y[..., 0] = ((x[..., 0] + x[..., 2]) / 2) / w  # x center
     y[..., 1] = ((x[..., 1] + x[..., 3]) / 2) / h  # y center
     y[..., 2] = (x[..., 2] - x[..., 0]) / w  # width
@@ -805,7 +805,7 @@ def xyxy2xywhn(x, w=640, h=640, clip=False, eps=0.0):
 
 def xyn2xy(x, w=640, h=640, padw=0, padh=0):
     # Convert normalized segments into pixel segments, shape (n,2)
-    y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
+    y = x.clone() if isinstance(x, tf.Tensor) else np.copy(x)
     y[..., 0] = w * x[..., 0] + padw  # top left x
     y[..., 1] = h * x[..., 1] + padh  # top left y
     return y
@@ -875,7 +875,7 @@ def scale_segments(img1_shape, segments, img0_shape, ratio_pad=None, normalize=F
 
 def clip_boxes(boxes, shape):
     # Clip boxes (xyxy) to image shape (height, width)
-    if isinstance(boxes, torch.Tensor):  # faster individually
+    if isinstance(boxes, tf.Tensor):  # faster individually
         boxes[..., 0].clamp_(0, shape[1])  # x1
         boxes[..., 1].clamp_(0, shape[0])  # y1
         boxes[..., 2].clamp_(0, shape[1])  # x2
@@ -887,7 +887,7 @@ def clip_boxes(boxes, shape):
 
 def clip_segments(segments, shape):
     # Clip segments (xy1,xy2,...) to image shape (height, width)
-    if isinstance(segments, torch.Tensor):  # faster individually
+    if isinstance(segments, tf.Tensor):  # faster individually
         segments[:, 0].clamp_(0, shape[1])  # x
         segments[:, 1].clamp_(0, shape[0])  # y
     else:  # np.array (faster grouped)
@@ -901,8 +901,6 @@ def non_max_suppression(
         iou_thres=0.45,
         classes=None,
         agnostic=False,
-        multi_label=False,
-        labels=(),
         max_det=300,
         nm=0,  # number of masks
 ):
@@ -918,49 +916,33 @@ def non_max_suppression(
     if isinstance(prediction, (list, tuple)):  # YOLOv5 model in validation model, output = (inference_out, loss_out)
         prediction = prediction[0]  # select only inference output
 
-    # device = prediction.device
-    # mps = 'mps' in device.type  # Apple MPS
-    # if mps:  # MPS not fully supported yet, convert tensors to CPU before NMS
-        # prediction = prediction.cpu()
     bs = prediction.shape[0]  # batch size
     nc = prediction.shape[2] - nm - 5  # number of classes
-    # xc = prediction[..., 4] > conf_thres  # candidates
-
     # Settings
-    # min_wh = 2  # (pixels) minimum box width and height
     max_wh = 7680  # (pixels) maximum box width and height
-    # max_nms = 30000  # maximum number of boxes into torchvision.ops.nms()
     time_limit = 0.5 + 0.05 * bs  # seconds to quit after
-    # redundant = True  # require redundant detections
-    # multi_label &= nc > 1  # multiple labels per box (adds 0.5ms/img)
-    # merge = False  # use merge-NMS
 
     t = time.time()
     mi = 5 + nc  # mask start index
     output = [tf.zeros((0, 6 + nm), dtype=tf.dtypes.float32)] * bs
     for xi, x in enumerate(prediction):  # image index, image inference
-
         if not x.shape[0]:
             continue
 
-
-        x = tf.concat( [x[:, :5], x[:, 5:] * x[:, 4:5]], axis=-1)
-        box = xywh2xyxy(x[:, :4])  # center_x, center_y, width, height) to (x1, y1, x2, y2)
-        mask = x[:, mi:]  # zero columns if no masks
-
-        conf=tf.reduce_max(x[:, 5:mi], axis=-1, keepdims=True)
-
-        j = tf.math.argmax(
+        # class_conf * obj:
+        conf=tf.reduce_max(x[:, 5:mi], axis=-1, keepdims=True)*x[:, 4:5]
+        # # sel class index:
+        class_sel = tf.math.argmax(
                 x[:, 5:mi],
                 axis=-1,
             )
-        j = tf.cast(tf.expand_dims(j, axis=-1), tf.float32)
-        x = tf.concat((box, conf, j, mask), 1)
+        class_sel = tf.cast(tf.expand_dims(class_sel, axis=-1), tf.float32)
+        # box, conf, class, mask
+        x = tf.concat((xywh2xyxy(x[:, :4]) , conf, class_sel,  x[:, mi:] ), axis=1)
 
         # Filter by class
         if classes is not None:
             x = x[(x[:, 5:6] == tf.convert_to_tensor(classes)).any(1)]
-
 
         # Check shape
         n = x.shape[0]  # number of boxes
@@ -972,8 +954,6 @@ def non_max_suppression(
         boxes, scores = x[:, :4] + c, x[:, 4]  # boxes (offset by class), scores
 
         i = tf.image.non_max_suppression(boxes, tf.cast(scores,  tf.float32), max_output_size=max_det, iou_threshold=iou_thres, score_threshold=0.5)
-
-
         output[xi]= tf.gather(x, indices=i)
 
         if (time.time() - t) > time_limit:
@@ -985,20 +965,20 @@ def non_max_suppression(
 
 
 
-def strip_optimizer(f='best.pt', s=''):  # from utils.general import *; strip_optimizer()
-    # Strip optimizer from 'f' to finalize training, optionally save as 's'
-    x = torch.load(f, map_location=torch.device('cpu'))
-    if x.get('ema'):
-        x['model'] = x['ema']  # replace model with ema
-    for k in 'optimizer', 'best_fitness', 'ema', 'updates':  # keys
-        x[k] = None
-    x['epoch'] = -1
-    x['model'].half()  # to FP16
-    for p in x['model'].parameters():
-        p.requires_grad = False
-    torch.save(x, s or f)
-    mb = os.path.getsize(s or f) / 1E6  # filesize
-    LOGGER.info(f"Optimizer stripped from {f},{f' saved as {s},' if s else ''} {mb:.1f}MB")
+# def strip_optimizer(f='best.pt', s=''):  # from utils.general import *; strip_optimizer()
+#     # Strip optimizer from 'f' to finalize training, optionally save as 's'
+#     x = torch.load(f, map_location=torch.device('cpu'))
+#     if x.get('ema'):
+#         x['model'] = x['ema']  # replace model with ema
+#     for k in 'optimizer', 'best_fitness', 'ema', 'updates':  # keys
+#         x[k] = None
+#     x['epoch'] = -1
+#     x['model'].half()  # to FP16
+#     for p in x['model'].parameters():
+#         p.requires_grad = False
+#     torch.save(x, s or f)
+#     mb = os.path.getsize(s or f) / 1E6  # filesize
+#     LOGGER.info(f"Optimizer stripped from {f},{f' saved as {s},' if s else ''} {mb:.1f}MB")
 
 
 def print_mutation(keys, results, hyp, save_dir, bucket, prefix=colorstr('evolve: ')):
@@ -1040,39 +1020,39 @@ def print_mutation(keys, results, hyp, save_dir, bucket, prefix=colorstr('evolve
         subprocess.run(['gsutil', 'cp', f'{evolve_csv}', f'{evolve_yaml}', f'gs://{bucket}'])  # upload
 
 
-def apply_classifier(x, model, img, im0):
-    # Apply a second stage classifier to YOLO outputs
-    # Example model = torchvision.models.__dict__['efficientnet_b0'](pretrained=True).to(device).eval()
-    im0 = [im0] if isinstance(im0, np.ndarray) else im0
-    for i, d in enumerate(x):  # per image
-        if d is not None and len(d):
-            d = d.clone()
-
-            # Reshape and pad cutouts
-            b = xyxy2xywh(d[:, :4])  # boxes
-            b[:, 2:] = b[:, 2:].max(1)[0].unsqueeze(1)  # rectangle to square
-            b[:, 2:] = b[:, 2:] * 1.3 + 30  # pad
-            d[:, :4] = xywh2xyxy(b).long()
-
-            # Rescale boxes from img_size to im0 size
-            scale_boxes(img.shape[2:], d[:, :4], im0[i].shape)
-
-            # Classes
-            pred_cls1 = d[:, 5].long()
-            ims = []
-            for a in d:
-                cutout = im0[i][int(a[1]):int(a[3]), int(a[0]):int(a[2])]
-                im = cv2.resize(cutout, (224, 224))  # BGR
-
-                im = im[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
-                im = np.ascontiguousarray(im, dtype=np.float32)  # uint8 to float32
-                im /= 255  # 0 - 255 to 0.0 - 1.0
-                ims.append(im)
-
-            pred_cls2 = model(torch.Tensor(ims).to(d.device)).argmax(1)  # classifier prediction
-            x[i] = x[i][pred_cls1 == pred_cls2]  # retain matching class detections
-
-    return x
+# def apply_classifier(x, model, img, im0):
+#     # Apply a second stage classifier to YOLO outputs
+#     # Example model = torchvision.models.__dict__['efficientnet_b0'](pretrained=True).to(device).eval()
+#     im0 = [im0] if isinstance(im0, np.ndarray) else im0
+#     for i, d in enumerate(x):  # per image
+#         if d is not None and len(d):
+#             d = d.clone()
+#
+#             # Reshape and pad cutouts
+#             b = xyxy2xywh(d[:, :4])  # boxes
+#             b[:, 2:] = b[:, 2:].max(1)[0].unsqueeze(1)  # rectangle to square
+#             b[:, 2:] = b[:, 2:] * 1.3 + 30  # pad
+#             d[:, :4] = xywh2xyxy(b).long()
+#
+#             # Rescale boxes from img_size to im0 size
+#             scale_boxes(img.shape[2:], d[:, :4], im0[i].shape)
+#
+#             # Classes
+#             pred_cls1 = d[:, 5].long()
+#             ims = []
+#             for a in d:
+#                 cutout = im0[i][int(a[1]):int(a[3]), int(a[0]):int(a[2])]
+#                 im = cv2.resize(cutout, (224, 224))  # BGR
+#
+#                 im = im[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
+#                 im = np.ascontiguousarray(im, dtype=np.float32)  # uint8 to float32
+#                 im /= 255  # 0 - 255 to 0.0 - 1.0
+#                 ims.append(im)
+#
+#             pred_cls2 = model(torch.Tensor(ims).to(d.device)).argmax(1)  # classifier prediction
+#             x[i] = x[i][pred_cls1 == pred_cls2]  # retain matching class detections
+#
+#     return x
 
 
 def increment_path(path, exist_ok=False, sep='', mkdir=False):

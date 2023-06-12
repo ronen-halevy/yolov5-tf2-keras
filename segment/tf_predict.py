@@ -43,8 +43,8 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 # from models.common import DetectMultiBackend
 from utils.tf_dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages # , LoadScreenshots, LoadStreams
 from utils.tf_general import (LOGGER, Profile, check_file, check_img_size, check_imshow, check_requirements, colorstr, cv2,
-                           increment_path, non_max_suppression, print_args, scale_boxes, scale_segments,
-                           strip_optimizer)
+                           increment_path, non_max_suppression, print_args, scale_boxes, scale_segments
+                           )
 from utils.tf_plots import Annotator, colors, save_one_box
 from utils.segment.tf_general import masks2segments, process_mask, process_mask_native
 
@@ -52,6 +52,11 @@ import tensorflow as tf
 
 import models.convert_weights
 
+#
+# def _xywh2xyxy(xywh):
+#     # Convert nx4 boxes from [x, y, w, h] to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
+#     x, y, w, h = tf.split(xywh, num_or_size_splits=4, axis=-1)
+#     return tf.concat([x - w / 2, y - h / 2, x + w / 2, y + h / 2], axis=-1)
 
 # @smart_inference_mode()
 def run(
@@ -146,6 +151,7 @@ def run(
             # cv2.waitKey(0)
             # pred, proto,xx = keras_model(im)
             # Inference
+        visualize=False
         with dt[1]:
             visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
             if visualize:
@@ -153,24 +159,6 @@ def run(
             else:
                 pred, proto ,xx= keras_model.predict(im)
 
-
-
-
-            # print('pred', pred[0])
-
-
-            # with dt[0]:
-            #     im = torch.from_numpy(im).to(model.device)
-            #     im = im.half() if model.fp16 else im.float()  # uint8 to fp16/32
-            #     im /= 255  # 0 - 255 to 0.0 - 1.0
-            #     if len(im.shape) == 3:
-            #         im = im[None]  # expand for batch dim
-
-            # Inference
-            # with dt[1]:
-            # visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
-        #         pred, proto = model(im, augment=augment, visualize=visualize)[:2]
-        #
         #     # NMS
         with dt[2]:
             nms_pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det, nm=32)
@@ -274,11 +262,11 @@ def run(
                     vid_writer[i].write(im0)
 
         # Print time (inference-only)
-        LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
+        # LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
 
     # Print results
-    t = tuple(x.t / seen * 1E3 for x in dt)  # speeds per image
-    LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {(1, 3, *imgsz)}' % t)
+    # t = tuple(x.t / seen * 1E3 for x in dt)  # speeds per image
+    # LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {(1, 3, *imgsz)}' % t)
     if save_txt or save_img:
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}{s}")
