@@ -24,7 +24,7 @@ from utils import TryExcept, threaded
 from utils.general import (CONFIG_DIR, FONT, LOGGER, check_font, check_requirements, clip_boxes, increment_path,
                            is_ascii, xywh2xyxy, xyxy2xywh)
 from utils.metrics import fitness
-from utils.segment.general import scale_image
+from utils.segment.tf_general import scale_image
 
 # Settings
 RANK = int(os.getenv('RANK', -1))
@@ -116,33 +116,31 @@ class Annotator:
                             thickness=ft,
                             lineType=cv2.LINE_AA)
 
-    def masks(self, masks, colors, im_gpu, alpha=0.5, retina_masks=False):
+    def masks(self, masks, colors, image, alpha=0.5, retina_masks=False):
         """Plot masks at once.
         Args:
-            masks (tensor): predicted masks on cuda, shape: [n, h, w]
+            masks (tensor): predicted masks, shape: [n, h, w]
             colors (List[List[Int]]): colors for predicted masks, [[r, g, b] * n]
-            im_gpu (tensor): img is in cuda, shape: [3, h, w], range: [0, 1]
+            image (tensor), img shape: [h, w, 3], range: [0, 1]
             alpha (float): mask transparency: 0.0 fully transparent, 1.0 opaque
         """
         if self.pil:
             # convert to numpy first
             self.im = np.asarray(self.im).copy()
-        if len(masks) == 0:
-            self.im[:] = im_gpu.permute(1, 2, 0).contiguous().cpu().numpy() * 255
+
         colors = tf.constant(colors, dtype=tf.float32)/ 255.0
         colors = colors[:, tf.newaxis, tf.newaxis, :]  # shape(n,1,1,3)
         masks = tf.expand_dims(masks, axis=-1)
+        # a color per a mask:
         masks_color = tf.cast(masks, tf.float32) * (colors * alpha)  # shape(n,h,w,3)
-
+        # inv_alph_masks prevents saturation. Multiplies mask pixels by (1-alpha)^n, n: num of masks a pixel attached to
         inv_alph_masks = tf.math.cumprod(1 - tf.cast(masks, tf.float32) * alpha, axis=0)  # shape(n,h,w,1)
-
+        # mcs is the final mask: sum all instances' masks, multipliy by inv_alph_masks to prevent saturation:
         mcs = tf.math.reduce_sum(masks_color * inv_alph_masks, axis=0) * 2  # mask color summand shape(n,h,w,3)
-
-        # im_gpu = im_gpu.flip(dims=[0])  # flip channel
-        # im_gpu = im_gpu.permute(1, 2, 0).contiguous()  # shape(h,w,3) ## ronen fix
-        im_gpu = im_gpu *inv_alph_masks[-1] + mcs
-        im_mask = (im_gpu * 255).numpy()
-        self.im[:] = im_mask if retina_masks else scale_image(im_gpu.shape, im_mask, self.im.shape)
+        # combine image and mask. Image's masked pixels a
+        image = image *inv_alph_masks[-1] + mcs
+        im_mask = (image * 255).numpy()
+        self.im[:] = im_mask if retina_masks else scale_image(image.shape, im_mask, self.im.shape)
         if self.pil:
             # convert im back to PIL and update draw
             self.fromarray(self.im)
