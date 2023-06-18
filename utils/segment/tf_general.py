@@ -114,6 +114,7 @@ def scale_image(im1_shape, masks, im0_shape, ratio_pad=None):
     if len(masks.shape) < 2:
         raise ValueError(f'"len of masks shape" should be 2 or 3, but got {len(masks.shape)}')
     masks = masks[top:bottom, left:right]
+    # resize w pad? TBD todo
     masks = tf.image.resize(masks[tf.newaxis,...], (im0_shape[0], im0_shape[1]))[0]
 
     if len(masks.shape) == 2:

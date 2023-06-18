@@ -43,7 +43,7 @@ class Colors:
 
     def __call__(self, i, bgr=False):
         c = self.palette[int(i) % self.n]
-        return (c[2], c[1], c[0]) if bgr else c
+        return (c[0], c[1], c[2]) if bgr else c
 
     @staticmethod
     def hex2rgb(h):  # rgb order (PIL)
@@ -76,7 +76,9 @@ class Annotator:
         non_ascii = not is_ascii(example)  # non-latin labels, i.e. asian, arabic, cyrillic
         self.pil = pil or non_ascii
         if self.pil:  # use PIL
-            self.im = im if isinstance(im, Image.Image) else Image.fromarray(im)
+            self.im  = tf.keras.utils.array_to_img(
+                im, data_format=None, scale=True, dtype=None
+            )
             self.draw = ImageDraw.Draw(self.im)
             self.font = check_pil_font(font='Arial.Unicode.ttf' if non_ascii else font,
                                        size=font_size or max(round(sum(self.im.size) / 2 * 0.035), 12))

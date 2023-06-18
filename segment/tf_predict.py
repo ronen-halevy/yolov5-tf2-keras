@@ -54,6 +54,7 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 # TBD put it here till all pytorch is removed
 import tensorflow as tf
 from tensorflow import keras
+import numpy as np
 
 
 def dir_filelist(images_dir, ext_list='.*'):
@@ -68,7 +69,7 @@ def dir_filelist(images_dir, ext_list='.*'):
 def run(
     load_model=False,
     load_weights=False,
-    model_load_path=ROOT / 'yolov5l-seg_saved_model',
+    model_load_path=ROOT / 'yolov5s-seg_saved_model',
     weights_load_path=ROOT / 'yolov5l-seg_weights.tf', # used if load_model=False
     weights_save_path=ROOT / 'yolov5l-seg_weights.tf',  # used if load_model=False
     save_weights=False,
@@ -132,7 +133,6 @@ def run(
         # dataset = LoadScreenshots(source, img_size=imgsz, stride=stride, auto=no_strech)
     else:
         dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=no_strech, vid_stride=vid_stride)
-    vid_path, vid_writer = [None] * bs, [None] * bs
 
 
     if load_model:
@@ -153,12 +153,10 @@ def run(
 
     seen, windows, dt = 0, [], (Profile(), Profile(), Profile())
 
-    ####
-    ####
     input_data_source= 'images_dir'
     images_dir=source
     if input_data_source == 'image_file':
-        paths = [image_file_path]
+        paths = [source]
     elif input_data_source == 'images_dir':
         paths = dir_filelist(images_dir, ('.jpeg', '.jpg', '.png', '.bmp'))
     else:
@@ -166,7 +164,11 @@ def run(
 
     for image_index, path in enumerate(paths):
         im0 = tf.image.decode_image(open(path, 'rb').read(), channels=3, dtype=tf.float32)
-        im = tf.image.resize(im0, (imgsz[0], imgsz[1]))
+        im = tf.image.resize_with_pad(
+            im0,
+            target_height=imgsz[0],
+            target_width=imgsz[1],
+        )
 
         im = tf.expand_dims(im, axis=0)
         with dt[1]:
@@ -179,133 +181,82 @@ def run(
         #     # NMS
         with dt[2]:
             nms_pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det, nm=32)
-            nms_pred=nms_pred[0] # here runs one by one
             b, h, w, ch = tf.cast(im.shape, tf.float32)  # batch, channel, height, width
-            import numpy as np
-            nms_pred = [x if isinstance(x, np.ndarray) else x.numpy() for x in nms_pred]
-            nms_pred = nms_pred[0]
+            nms_pred = nms_pred[0].numpy()
             nms_pred[..., :4] *= [w, h, w, h]  # xywh normalized to pixels
-            # nms_pred[0][..., :4] *= [w, h, w, h]  # xywh normalized to pixels
+        # take entry 0 - assumed image by image
+        proto=proto[0]
+        im = im[0]
+        p = Path(path)
+        s=''
+        seen += 1
 
-    ######xc
+        save_path = str(save_dir / p.name)  # im.jpg
+        txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # im.txt
+        # s += '%gx%g ' % im.shape[2:]  # print string
+        imc = im0.copy() if save_crop else im0  # for save_crop
+        annotator = Annotator(im0, line_width=line_thickness, example=str(class_names))
 
-
-
-
-
-    for path, im, im0s, vid_cap, s in dataset:
-        with dt[0]:
-            print(im.shape)
-            print(im0s.shape)
-            im = tf.cast(im, dtype=tf.float32)/ 255  # 0 - 255 to 0.0 - 1.0
-            if len(im.shape) == 3:
-                im = tf.expand_dims(im, axis=0)
-        with dt[1]:
-            visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if (visualize and not load_model) else False
-            if visualize:
-                pred, proto= tf_model.predict(im, visualize=visualize)
-                pred=pred.numpy() # make it ndarray, same as keras predict output
+        if len(nms_pred):
+            if retina_masks:
+                # scale bbox first the crop masks
+                nms_pred[:, :4] = scale_boxes(im.shape[2:], nms_pred[:, :4], im0.shape).round()  # rescale boxes to im0 size
+                masks = process_mask_native(proto, nms_pred[:, 6:], nms_pred[:, :4], im0.shape[:2])  # HWC
             else:
-                pred, proto = keras_model.predict(im)
-        #     # NMS
-        with dt[2]:
-            nms_pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det, nm=32)
-            b, h, w, ch = tf.cast(im.shape, tf.float32)  # batch, channel, height, width
-            import numpy as np
-            nms_pred = [x if isinstance(x, np.ndarray) else x.numpy() for x in nms_pred]
-            nms_pred[0][..., :4] *= [w, h, w, h]  # xywh normalized to pixels
+                masks = process_mask(proto, nms_pred[:, 6:], nms_pred[:, :4], im.shape[0:2], upsample=True)  # HWC
+                nms_pred[:, :4] = scale_boxes(im.shape[0:2], nms_pred[:, :4], im0.shape).round()  # rescale boxes to im0 size
 
-       # Process predictions
-        for i, det in enumerate(nms_pred):  # per image
-            seen += 1
-            if webcam:  # batch_size >= 1
-                p, im0, frame = path[i], im0s[i].copy(), dataset.count
-                s += f'{i}: '
-            else:
-                p, im0, frame = path, im0s.copy(), getattr(dataset, 'frame', 0)
+            # Segments
+            if save_txt:
+                segments = [
+                    scale_segments(im0.shape if retina_masks else im.shape[2:], x, im0.shape, normalize=True)
+                    for x in reversed(masks2segments(masks))]
 
-            p = Path(p)  # to Path
-            save_path = str(save_dir / p.name)  # im.jpg
-            txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # im.txt
-            # s += '%gx%g ' % im.shape[2:]  # print string
-            imc = im0.copy() if save_crop else im0  # for save_crop
-            annotator = Annotator(im0, line_width=line_thickness, example=str(class_names))
-            if len(det):
-                if retina_masks:
-                    # scale bbox first the crop masks
-                    det[:, :4] = scale_boxes(im.shape[2:], det[:, :4], im0.shape).round()  # rescale boxes to im0 size
-                    masks = process_mask_native(proto[i], det[:, 6:], det[:, :4], im0.shape[:2])  # HWC
-                else:
-                    masks = process_mask(proto[i], det[:, 6:], det[:, :4], im.shape[1:3], upsample=True)  # HWC
-                    det[:, :4] = scale_boxes(im.shape[1:3], det[:, :4], im0.shape).round()  # rescale boxes to im0 size
+            # Print results: sum detections per class
+            for c in np.unique(nms_pred[:, 5]):
+                n = np.sum(nms_pred[:, 5] == c)  # detections per class
+                s += f"{n} {class_names[int(c)]}{'s' * (n > 1)}, "  # add to string
 
-                # Segments
-                if save_txt:
-                    segments = [
-                        scale_segments(im0.shape if retina_masks else im.shape[2:], x, im0.shape, normalize=True)
-                        for x in reversed(masks2segments(masks))]
+            # Mask plotting
+            if len(masks):
+                annotator.masks(
+                        masks,
+                        colors=[colors(x, True) for x in nms_pred[:, 5]],
+                        image=im
+                    )
 
-                # Print results
-                for c in np.unique(det[:, 5]):
-                    n = np.sum(det[:, 5] == c)  # detections per class
-                    s += f"{n} {class_names[int(c)]}{'s' * (n > 1)}, "  # add to string
+            # Write results
+            for j, (*xyxy, conf, cls) in enumerate(reversed(nms_pred[:, :6])):
+                if save_txt:  # Write to file
+                    seg = segments[j].reshape(-1)  # (n,2) to (n*2)
+                    line = (cls, *seg, conf) if save_conf else (cls, *seg)  # label format
+                    with open(f'{txt_path}.txt', 'a') as f:
+                        f.write(('%g ' * len(line)).rstrip() % line + '\n')
 
-                # Mask plotting
-                if len(masks):
-                    annotator.masks(
-                            masks,
-                            colors=[colors(x, True) for x in det[:, 5]],
-                            image=im[i]
-                        )
+                if save_img or save_crop or view_img:  # Add bbox to image
+                    c = int(cls)  # integer class
+                    label = None if hide_labels else (class_names[c] if hide_conf else f'{class_names[c]} {conf:.2f}')
+                    annotator.box_label(xyxy, label, color=colors(c, True))
+                    # annotator.draw.polygon(segments[j], outline=colors(c, True), width=3)
+                if save_crop:
+                    save_one_box(xyxy, imc, file=save_dir / 'crops' / class_names[c] / f'{p.stem}.jpg', BGR=True)
 
-                # Write results
-                for j, (*xyxy, conf, cls) in enumerate(reversed(det[:, :6])):
-                    if save_txt:  # Write to file
-                        seg = segments[j].reshape(-1)  # (n,2) to (n*2)
-                        line = (cls, *seg, conf) if save_conf else (cls, *seg)  # label format
-                        with open(f'{txt_path}.txt', 'a') as f:
-                            f.write(('%g ' * len(line)).rstrip() % line + '\n')
+        # Stream results
+        im0 = annotator.result()
+        if view_img:
+            if platform.system() == 'Linux' and p not in windows:
+                windows.append(p)
+                cv2.namedWindow(str(p), cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)  # allow window resize (Linux)
+                cv2.resizeWindow(str(p), im0.shape[1], im0.shape[0])
+            cv2.imshow(str(p), im0)
+            if cv2.waitKey(1) == ord('q'):  # 1 millisecond
+                exit()
 
-                    if save_img or save_crop or view_img:  # Add bbox to image
-                        c = int(cls)  # integer class
-                        label = None if hide_labels else (class_names[c] if hide_conf else f'{class_names[c]} {conf:.2f}')
-                        annotator.box_label(xyxy, label, color=colors(c, True))
-                        # annotator.draw.polygon(segments[j], outline=colors(c, True), width=3)
-                    if save_crop:
-                        save_one_box(xyxy, imc, file=save_dir / 'crops' / class_names[c] / f'{p.stem}.jpg', BGR=True)
-
-            # Stream results
-            im0 = annotator.result()
-            if view_img:
-                if platform.system() == 'Linux' and p not in windows:
-                    windows.append(p)
-                    cv2.namedWindow(str(p), cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)  # allow window resize (Linux)
-                    cv2.resizeWindow(str(p), im0.shape[1], im0.shape[0])
-                cv2.imshow(str(p), im0)
-                if cv2.waitKey(1) == ord('q'):  # 1 millisecond
-                    exit()
-
-            # Save results (image with detections)
-            if save_img:
-                if dataset.mode == 'image':
-                    cv2.imwrite(save_path, im0)
-                else:  # 'video' or 'stream'
-                    if vid_path[i] != save_path:  # new video
-                        vid_path[i] = save_path
-                        if isinstance(vid_writer[i], cv2.VideoWriter):
-                            vid_writer[i].release()  # release previous video writer
-                        if vid_cap:  # video
-                            fps = vid_cap.get(cv2.CAP_PROP_FPS)
-                            w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                            h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        else:  # stream
-                            fps, w, h = 30, im0.shape[1], im0.shape[0]
-                        save_path = str(Path(save_path).with_suffix('.mp4'))  # force *.mp4 suffix on results videos
-                        vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
-                    vid_writer[i].write(im0)
-
-        # Print time (inference-only)
-        LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
+        # Save results (image with detections)
+        if save_img:
+            tf.keras.utils.save_img(save_path, im0)
+        # int time (inference-only)
+        LOGGER.info(f"{s}{'' if len(nms_pred) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
 
     # Print results
     t = tuple(x.t / seen * 1E3 for x in dt)  # speeds per image
