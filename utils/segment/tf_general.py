@@ -16,9 +16,9 @@ def crop_mask(masks, boxes):
     """
 
     n, h, w = masks.shape
-    x1, y1, x2, y2 = tf.split(boxes[:, :, None], num_or_size_splits=4, axis=1)  # x1 shape(1,1,n)
-    r = tf.range(w, dtype=x1.dtype)[None, None, :]  # rows shape(1,w,1)
-    c = tf.range(h, dtype=x1.dtype)[None, :, None]  # cols shape(h,1,1)
+    x1, y1, x2, y2 = tf.split(boxes[:, :, None], num_or_size_splits=4, axis=1)  # x1 shape(n,1,1)
+    r = tf.range(w, dtype=x1.dtype)[None, None, :]  # rows shape(1,1,w)
+    c = tf.range(h, dtype=x1.dtype)[None, :, None]  # cols shape(1,h,1)
     crop =(tf.cast((r >= x1), dtype=tf.float32) * tf.cast((r < x2), dtype=tf.float32) * tf.cast((c >= y1), dtype=tf.float32) * tf.cast((c < y2), dtype=tf.float32))
     return masks * crop # ((r >= x1) * (r < x2) * (c >= y1) * (c < y2))
 
@@ -95,7 +95,7 @@ def process_mask_native(protos, masks_in, bboxes, shape):
     masks = crop_mask(masks, bboxes)  # CHW
     return masks.gt_(0.5)
 
-
+# scale mask to orig image dims: crop padding margins and resize
 def scale_image(im1_shape, masks, im0_shape, ratio_pad=None):
     """
     img1_shape: model input shape, [h, w]
