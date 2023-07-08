@@ -182,7 +182,7 @@ def run(
         with dt[2]:
             nms_pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det, nm=32)
             b, h, w, ch = tf.cast(im.shape, tf.float32)  # batch, channel, height, width
-            nms_pred = nms_pred[0].numpy()
+            nms_pred = nms_pred.numpy()
             nms_pred[..., :4] *= [w, h, w, h]  # xywh normalized to pixels
         # take entry 0 - assumed image by image
         proto=proto[0]
