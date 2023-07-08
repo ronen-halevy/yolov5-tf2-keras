@@ -132,14 +132,15 @@ class Annotator:
 
         colors = tf.constant(colors, dtype=tf.float32)/ 255.0
         colors = colors[:, tf.newaxis, tf.newaxis, :]  # shape(n,1,1,3)
-        masks = tf.expand_dims(masks, axis=-1)
+        masks = tf.expand_dims(masks, axis=-1) # (n,h,w,1)
         # a color per a mask:
         masks_color = tf.cast(masks, tf.float32) * (colors * alpha)  # shape(n,h,w,3)
-        # inv_alph_masks prevents saturation. Multiplies mask pixels by (1-alpha)^n, n: num of masks a pixel attached to
+        # inv_alph_masks prevents saturation.
+        # inv_alph_masks equals (1-alpha)^n pr 1 if mask is True or not, where n is num of masks a pixel attached to
         inv_alph_masks = tf.math.cumprod(1 - tf.cast(masks, tf.float32) * alpha, axis=0)  # shape(n,h,w,1)
         # mcs is the final mask: sum all instances' masks, multipliy by inv_alph_masks to prevent saturation:
         mcs = tf.math.reduce_sum(masks_color * inv_alph_masks, axis=0) * 2  # mask color summand shape(n,h,w,3)
-        # combine image and mask. Image's masked pixels a
+        # combine image and mask:
         image = image *inv_alph_masks[-1] + mcs
         im_mask = (image * 255).numpy()
         self.im[:] = im_mask if retina_masks else scale_image(image.shape, im_mask, self.im.shape)
