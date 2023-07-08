@@ -773,12 +773,11 @@ def xyxy2xywh(x):
 
 def xywh2xyxy(x):
     # Convert nx4 boxes from [x, y, w, h] to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
-    y = x.clone() if isinstance(x, tf.Tensor) else np.copy(x)
-    y[..., 0] = x[..., 0] - x[..., 2] / 2  # top left x
-    y[..., 1] = x[..., 1] - x[..., 3] / 2  # top left y
-    y[..., 2] = x[..., 0] + x[..., 2] / 2  # bottom right x
-    y[..., 3] = x[..., 1] + x[..., 3] / 2  # bottom right y
-    return y
+    xmin = x[..., 0] - x[..., 2] / 2  # top left x
+    xmax = x[..., 1] - x[..., 3] / 2  # top left y
+    ymin = x[..., 0] + x[..., 2] / 2  # bottom right x
+    ymax = x[..., 1] + x[..., 3] / 2  # bottom right y
+    return tf.stack([xmin, xmax, ymin, ymax], axis=-1)
 
 
 def xywhn2xyxy(x, w=640, h=640, padw=0, padh=0):
@@ -838,6 +837,8 @@ def resample_segments(segments, n=1000):
     return segments
 
 
+# find image's padding size, shift boxes' coords accordingly.
+# rescale boxes, and clip to original image size
 def scale_boxes(img1_shape, boxes, img0_shape, ratio_pad=None):
     # Rescale boxes (xyxy) from img1_shape to img0_shape
     if ratio_pad is None:  # calculate from img0_shape
@@ -896,7 +897,7 @@ def clip_segments(segments, shape):
 
 
 def non_max_suppression(
-        prediction,
+        pred,
         conf_thres=0.25,
         iou_thres=0.45,
         classes=None,
@@ -910,56 +911,20 @@ def non_max_suppression(
          list of detections, on (n,6) tensor per image [xyxy, conf, cls]
     """
 
-    # Checks
-    assert 0 <= conf_thres <= 1, f'Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0'
-    assert 0 <= iou_thres <= 1, f'Invalid IoU {iou_thres}, valid values are between 0.0 and 1.0'
-    if isinstance(prediction, (list, tuple)):  # YOLOv5 model in validation model, output = (inference_out, loss_out)
-        prediction = prediction[0]  # select only inference output
-
-    bs = prediction.shape[0]  # batch size
-    nc = prediction.shape[2] - nm - 5  # number of classes
-    # Settings
-    max_wh = 7680  # (pixels) maximum box width and height
-    time_limit = 0.5 + 0.05 * bs  # seconds to quit after
-
-    t = time.time()
+    nc = pred.shape[2] - nm - 5  # number of classes
     mi = 5 + nc  # mask start index
-    output = [tf.zeros((0, 6 + nm), dtype=tf.dtypes.float32)] * bs
-    for xi, x in enumerate(prediction):  # image index, image inference
-        if not x.shape[0]:
-            continue
+    pred = tf.squeeze(pred, axis=0)
 
-        # class_conf * obj:
-        conf=tf.reduce_max(x[:, 5:mi], axis=-1, keepdims=True)*x[:, 4:5]
-        # # sel class index:
-        class_sel = tf.math.argmax(
-                x[:, 5:mi],
-                axis=-1,
-            )
-        class_sel = tf.cast(tf.expand_dims(class_sel, axis=-1), tf.float32)
-        # box, conf, class, mask
-        x = tf.concat((xywh2xyxy(x[:, :4]) , conf, class_sel,  x[:, mi:] ), axis=1)
-
-        # Filter by class
-        if classes is not None:
-            x = x[(x[:, 5:6] == tf.convert_to_tensor(classes)).any(1)]
-
-        # Check shape
-        n = x.shape[0]  # number of boxes
-        if not n:  # no boxes
-            continue
-
-        # Offset per class boxes to support none agnostic nms
-        c = x[:, 5:6] * (0 if agnostic else max_wh)  # classes
-        boxes, scores = x[:, :4] + c, x[:, 4]  # boxes (offset by class), scores
-
-        i = tf.image.non_max_suppression(boxes, tf.cast(scores,  tf.float32), max_output_size=max_det, iou_threshold=iou_thres, score_threshold=0.5)
-        output[xi]= tf.gather(x, indices=i)
-
-        if (time.time() - t) > time_limit:
-            LOGGER.warning(f'WARNING ⚠️ NMS time limit {time_limit:.3f}s exceeded')
-            break  # time limit exceeded
-
+    class_sel_prob = tf.reduce_max(pred[:, 5:mi], axis=-1, keepdims=False)
+    # scores=class_conf * obj:
+    scores = pred[:, 4] * class_sel_prob
+    class_sel_idx = tf.math.argmax(pred[:, 5:mi], axis=-1, output_type=tf.int32)
+    class_sel_idx = tf.cast(class_sel_idx, dtype=tf.float32)[...,tf.newaxis]
+    boxes=xywh2xyxy(pred[:, :4])
+    ind = tf.image.non_max_suppression(boxes, scores, max_output_size=max_det, iou_threshold=iou_thres, score_threshold=0.5)
+    # Concat before gather:
+    pred = tf.concat((boxes , scores[...,tf.newaxis], class_sel_idx,  pred[:, mi:] ), axis=1)
+    output= tf.gather(pred, indices=ind)
     return output
 
 
@@ -1049,7 +1014,7 @@ def print_mutation(keys, results, hyp, save_dir, bucket, prefix=colorstr('evolve
 #                 im /= 255  # 0 - 255 to 0.0 - 1.0
 #                 ims.append(im)
 #
-#             pred_cls2 = model(torch.Tensor(ims).to(d.device)).argmax(1)  # classifier prediction
+#             pred_cls2 = model(torch.Tensor(ims).to(d.device)).argmax(1)  # classifier pred
 #             x[i] = x[i][pred_cls1 == pred_cls2]  # retain matching class detections
 #
 #     return x
