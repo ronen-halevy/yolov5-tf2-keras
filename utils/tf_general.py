@@ -898,8 +898,8 @@ def clip_segments(segments, shape):
 
 def non_max_suppression(
         pred,
-        conf_thres=0.25,
-        iou_thres=0.45,
+        conf_thres,
+        iou_thres,
         classes=None,
         agnostic=False,
         max_det=300,
@@ -921,7 +921,7 @@ def non_max_suppression(
     class_sel_idx = tf.math.argmax(pred[:, 5:mi], axis=-1, output_type=tf.int32)
     class_sel_idx = tf.cast(class_sel_idx, dtype=tf.float32)[...,tf.newaxis]
     boxes=xywh2xyxy(pred[:, :4])
-    ind = tf.image.non_max_suppression(boxes, scores, max_output_size=max_det, iou_threshold=iou_thres, score_threshold=0.5)
+    ind = tf.image.non_max_suppression(boxes, scores, max_output_size=max_det, iou_threshold=iou_thres, score_threshold=conf_thres)
     # Concat before gather:
     pred = tf.concat((boxes , scores[...,tf.newaxis], class_sel_idx,  pred[:, mi:] ), axis=1)
     output= tf.gather(pred, indices=ind)
