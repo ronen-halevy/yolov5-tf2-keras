@@ -34,16 +34,15 @@ import platform
 import sys
 from pathlib import Path
 
-
 # from models.common import DetectMultiBackend
-from utils.tf_dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams # , LoadScreenshots, LoadStreams
-from utils.tf_general import (LOGGER, Profile, check_file, check_img_size, check_imshow, check_requirements, colorstr, cv2,
-                           increment_path, non_max_suppression, print_args, scale_boxes, scale_segments
-                           )
+from utils.tf_dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams  # , LoadScreenshots, LoadStreams
+from utils.tf_general import (LOGGER, Profile, check_file, check_img_size, check_imshow, check_requirements, colorstr,
+                              cv2,
+                              increment_path, non_max_suppression, print_args, scale_boxes, scale_segments
+                              )
 from utils.tf_plots import Annotator, colors, save_one_box
 from utils.segment.tf_general import masks2segments, process_mask, process_mask_native
 from models.tf_model import TFModel
-
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
@@ -66,42 +65,48 @@ def dir_filelist(images_dir, ext_list='.*'):
         filenames.append(f'{images_dir}/{f}')
     return filenames
 
+    if save_model:
+        keras_model.save(model_save_path)
+
+
 def run(
-    load_model=False,
-    load_weights=False,
-    model_load_path=ROOT / 'yolov5s-seg_saved_model',
-    weights_load_path=ROOT / 'yolov5l-seg_weights.tf', # used if load_model=False
-    weights_save_path=ROOT / 'yolov5l-seg_weights.tf',  # used if load_model=False
-    save_weights=False,
-    source=ROOT / 'data/images',  # file/dir/URL/glob/screen/0(webcam)
-    class_names_file='',
-    data=ROOT / 'data/coco128.yaml',  # dataset.yaml path
-    imgsz=(640, 480),  # inference size (height, width)
-    conf_thres=0.25,  # confidence threshold
-    iou_thres=0.45,  # NMS IOU threshold
-    max_det=1000,  # maximum detections per image
-    device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
-    view_img=False,  # show results
-    save_txt=False,  # save results to *.txt
-    save_conf=False,  # save confidences in --save-txt labels
-    save_crop=False,  # save cropped prediction boxes
-    nosave=False,  # do not save images/videos
-    classes=None,  # filter by class: --class 0, or --class 0 2 3
-    agnostic_nms=False,  # class-agnostic NMS
-    augment=False,  # augmented inference
-    visualize=False,  # visualize features
-    update=False,  # update all models
-    project=ROOT / 'runs/predict-seg',  # save results to project/name
-    name='exp',  # save results to project/name
-    exist_ok=False,  # existing project/name ok, do not increment
-    line_thickness=3,  # bounding box thickness (pixels)
-    hide_labels=False,  # hide labels
-    hide_conf=False,  # hide confidences
-    half=False,  # use FP16 half-precision inference
-    dnn=False,  # use OpenCV DNN for ONNX inference
-    vid_stride=1,  # video frame-rate stride
-    retina_masks=False,
-    no_strech=False # resize image to max rectangle
+        load_weights=False,
+        save_weights=False,
+        load_model=False,
+        save_model=False,
+        model_load_path=ROOT / 'saved_models/yolov5s-seg_saved_model',
+        model_save_path=ROOT / 'saved_models/yolov5s-seg_saved_model',  # used if load_model=False
+        weights_load_path=ROOT / 'saved_weights/yolov5l-seg_weights.tf',  # used if load_model=False
+        weights_save_path=ROOT / 'saved_weights/yolov5l-seg_weights.tf',  # used if load_model=False
+        source=ROOT / 'data/images',  # file/dir/URL/glob/screen/0(webcam)
+        class_names_file='',
+        data=ROOT / 'data/coco12.yaml',  # dataset.yaml path
+        imgsz=(640, 480),  # inference size (height, width)
+        conf_thres=0.25,  # confidence threshold
+        iou_thres=0.45,  # NMS IOU threshold
+        max_det=1000,  # maximum detections per image
+        device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
+        view_img=False,  # show results
+        save_txt=False,  # save results to *.txt
+        save_conf=False,  # save confidences in --save-txt labels
+        save_crop=False,  # save cropped prediction boxes
+        nosave=False,  # do not save images/videos
+        classes=None,  # filter by class: --class 0, or --class 0 2 3
+        agnostic_nms=False,  # class-agnostic NMS
+        augment=False,  # augmented inference
+        visualize=False,  # visualize features
+        update=False,  # update all models
+        project=ROOT / 'runs/predict-seg',  # save results to project/name
+        name='exp',  # save results to project/name
+        exist_ok=False,  # existing project/name ok, do not increment
+        line_thickness=3,  # bounding box thickness (pixels)
+        hide_labels=False,  # hide labels
+        hide_conf=False,  # hide confidences
+        half=False,  # use FP16 half-precision inference
+        dnn=False,  # use OpenCV DNN for ONNX inference
+        vid_stride=1,  # video frame-rate stride
+        retina_masks=False,
+        no_strech=False  # resize image to max rectangle
 ):
     source = str(source)
     class_names = [c.strip() for c in open(class_names_file).readlines()]
@@ -118,7 +123,7 @@ def run(
     (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
     # Load model
-    stride=32
+    stride = 32
     imgsz = check_img_size(imgsz, s=stride)  # check image size
 
     # Dataloader
@@ -129,11 +134,10 @@ def run(
         bs = len(dataset)
 
     elif screenshot:
-        pass # place holder
+        pass  # place holder
         # dataset = LoadScreenshots(source, img_size=imgsz, stride=stride, auto=no_strech)
     else:
         dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=no_strech, vid_stride=vid_stride)
-
 
     if load_model:
         keras_model = tf.keras.models.load_model(model_load_path, compile=True)
@@ -144,17 +148,19 @@ def run(
                            ref_model_seq=None, nc=80, imgsz=imgsz)
         im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else bs)
         keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im))
-    if load_weights: # normally True when load_model is false
+    if load_weights:  # normally True when load_model is false
         keras_model.load_weights(weights_load_path)
     if save_weights:
         keras_model.save_weights(weights_save_path)
+    if save_model:
+        keras_model.save(model_save_path)
 
     keras_model.summary()
 
     seen, windows, dt = 0, [], (Profile(), Profile(), Profile())
 
-    input_data_source= 'images_dir'
-    images_dir=source
+    input_data_source = 'images_dir'
+    images_dir = source
     if input_data_source == 'image_file':
         paths = [source]
     elif input_data_source == 'images_dir':
@@ -172,23 +178,25 @@ def run(
 
         im = tf.expand_dims(im, axis=0)
         with dt[1]:
-            visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if (visualize and not load_model) else False
+            visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if (
+                        visualize and not load_model) else False
             if visualize:
-                pred, proto= tf_model.predict(im, visualize=visualize)
-                pred=pred.numpy() # make it ndarray, same as keras predict output
+                pred, proto = tf_model.predict(im, visualize=visualize)
+                pred = pred.numpy()  # make it ndarray, same as keras predict output
             else:
                 pred, proto = keras_model.predict(im)
         #     # NMS
         with dt[2]:
+            print('conf_thres',conf_thres)
             nms_pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det, nm=32)
             b, h, w, ch = tf.cast(im.shape, tf.float32)  # batch, channel, height, width
             nms_pred = nms_pred.numpy()
             nms_pred[..., :4] *= [w, h, w, h]  # xywh normalized to pixels
         # take entry 0 - assumed image by image
-        proto=proto[0]
+        proto = proto[0]
         im = im[0]
         p = Path(path)
-        s=''
+        s = ''
         seen += 1
 
         save_path = str(save_dir / p.name)  # im.jpg
@@ -200,11 +208,13 @@ def run(
         if len(nms_pred):
             if retina_masks:
                 # scale bbox first the crop masks
-                nms_pred[:, :4] = scale_boxes(im.shape[2:], nms_pred[:, :4], im0.shape).round()  # rescale boxes to im0 size
+                nms_pred[:, :4] = scale_boxes(im.shape[2:], nms_pred[:, :4],
+                                              im0.shape).round()  # rescale boxes to im0 size
                 masks = process_mask_native(proto, nms_pred[:, 6:], nms_pred[:, :4], im0.shape[:2])  # HWC
             else:
                 masks = process_mask(proto, nms_pred[:, 6:], nms_pred[:, :4], im.shape[0:2], upsample=True)  # HWC
-                nms_pred[:, :4] = scale_boxes(im.shape[0:2], nms_pred[:, :4], im0.shape).round()  # rescale boxes to im0 size
+                nms_pred[:, :4] = scale_boxes(im.shape[0:2], nms_pred[:, :4],
+                                              im0.shape).round()  # rescale boxes to im0 size
 
             # Segments
             if save_txt:
@@ -220,10 +230,10 @@ def run(
             # Mask plotting
             if len(masks):
                 annotator.masks(
-                        masks,
-                        colors=[colors(x, True) for x in nms_pred[:, 5]],
-                        image=im
-                    )
+                    masks,
+                    colors=[colors(x, True) for x in nms_pred[:, 5]],
+                    image=im
+                )
 
             # Write results
             for j, (*xyxy, conf, cls) in enumerate(reversed(nms_pred[:, :6])):
@@ -268,19 +278,31 @@ def run(
 
 def parse_opt():
     parser = argparse.ArgumentParser()
+    # parser.add_argument('--model_version', type=str, default='yolov5n',
+    #                     help='model version is the prefix of model and weights files for both load and save actions')
 
     parser.add_argument('--load_model', action='store_true', help='load model with ckpt. Otherwise, load weights')
-    parser.add_argument('--load_weights', action='store_false', help='load keras weights. Normally True if load_model is False')
-    parser.add_argument('--save_weights', action='store_true', help='save keras model weights')
-    parser.add_argument('--model_load_path', type=str, default=ROOT / 'yolov5l-seg_saved_model', help='load model path')
-    parser.add_argument('--weights_load_path', type=str, default=ROOT / 'yolov5l-seg_weights.tf', help='load weights path')
-    parser.add_argument('--weights_save_path', type=str, default=ROOT / 'yolov5l-seg_weights.tf', help='save weights path')
+    parser.add_argument('--save_model', action='store_true', help='save keras model with weights')
+    parser.add_argument('--load_weights', action='store_false',
+                        help='load_weights. Normally True if load_model is False')
+    parser.add_argument('--save_weights', action='store_true', help='ssaved_weights')
+    parser.add_argument('--model_load_path', type=str, default=ROOT / 'segment/saved_models/yolov5l-seg_saved_model',
+                        help='lmodel_load_path')
+    parser.add_argument('--model_save_path', type=str, default=ROOT / 'segment/saved_models/yolov5l-seg_saved_model',
+                        help='model_save_path')
+
+    parser.add_argument('--weights_load_path', type=str, default=ROOT / 'segment/saved_weights/yolov5l-seg_weights.tf',
+                        help='load weights path')
+    parser.add_argument('--weights_save_path', type=str, default=ROOT / 'segment/saved_weights/yolov5l-seg_weights.tf',
+                        help='save weights path')
     parser.add_argument('--source', type=str, default=ROOT / 'data/images', help='file/dir/URL/glob/screen/0(webcam)')
     parser.add_argument('--data', type=str, default=ROOT / 'data/coco128.yaml', help='(optional) dataset.yaml path')
-    parser.add_argument('--class_names_file', type=str, default=ROOT / 'data/class-names/coco.names', help='class names')
-    parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[640, 640], help='inference size h,w')
-    parser.add_argument('--conf-thres', type=float, default=0.25, help='confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.45, help='NMS IoU threshold')
+    parser.add_argument('--class_names_file', type=str, default=ROOT / 'data/class-names/coco.names',
+                        help='class names')
+    parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[640, 640],
+                        help='inference size h,w')
+    parser.add_argument('--conf_thres', type=float, default=0.1, help='confidence threshold')
+    parser.add_argument('--iou_thres', type=float, default=0.45, help='NMS IoU threshold')
     parser.add_argument('--max-det', type=int, default=1000, help='maximum detections per image')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--view-img', action='store_true', help='show results')
