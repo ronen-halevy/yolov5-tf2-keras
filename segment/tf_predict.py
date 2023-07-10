@@ -283,7 +283,7 @@ def parse_opt():
     #                     help='model version is the prefix of model and weights files for both load and save actions')
 
     parser.add_argument('--model_cfg_file', type=str, default='/home/ronen/devel/PycharmProjects/tf_yolov5/models/segment/yolov5l-seg.yaml',
-                        help='load model with ckpt. Otherwise, load weights')
+                        help="model's yaml config file")
 
     parser.add_argument('--load_model', action='store_true', help='load model with ckpt. Otherwise, load weights')
     parser.add_argument('--save_model', action='store_true', help='save keras model with weights')
