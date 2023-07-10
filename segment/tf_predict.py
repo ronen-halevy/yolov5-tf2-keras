@@ -70,6 +70,7 @@ def dir_filelist(images_dir, ext_list='.*'):
 
 
 def run(
+        model_cfg_file,
         load_weights=False,
         save_weights=False,
         load_model=False,
@@ -144,7 +145,7 @@ def run(
 
     else:
         dynamic = False
-        tf_model = TFModel(cfg='/home/ronen/devel/PycharmProjects/tf_yolov5/models/segment/yolov5l-seg.yaml',
+        tf_model = TFModel(cfg=model_cfg_file,
                            ref_model_seq=None, nc=80, imgsz=imgsz)
         im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else bs)
         keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im))
@@ -280,6 +281,9 @@ def parse_opt():
     parser = argparse.ArgumentParser()
     # parser.add_argument('--model_version', type=str, default='yolov5n',
     #                     help='model version is the prefix of model and weights files for both load and save actions')
+
+    parser.add_argument('--model_cfg_file', type=str, default='/home/ronen/devel/PycharmProjects/tf_yolov5/models/segment/yolov5l-seg.yaml',
+                        help='load model with ckpt. Otherwise, load weights')
 
     parser.add_argument('--load_model', action='store_true', help='load model with ckpt. Otherwise, load weights')
     parser.add_argument('--save_model', action='store_true', help='save keras model with weights')
