@@ -22,9 +22,10 @@ if str(ROOT) not in sys.path:
 # ROOT = ROOT.relative_to(Path.cwd())  # relative
 
 import numpy as np
-import tensorflow as tf
 import torch
 import torch.nn as nn
+import tensorflow as tf
+
 from tensorflow import keras
 
 from models.common import (C3, SPP, SPPF, Bottleneck, BottleneckCSP, C3x, Concat, Conv, CrossConv, DWConv,
@@ -80,6 +81,7 @@ class TFConv(keras.layers.Layer):
             kernel_initializer=keras.initializers.Constant(w.conv.weight.permute(2, 3, 1, 0).numpy()),
             bias_initializer='zeros' if hasattr(w, 'bn') else keras.initializers.Constant(w.conv.bias.numpy()))
         self.conv = conv if s == 1 else keras.Sequential([TFPad(autopad(k, p)), conv])
+        #  If converted from pytorch, bn may be already fused to adjacent conv
         self.bn = TFBN(w.bn) if hasattr(w, 'bn') else tf.identity
         self.act = activations(w.act) if act else tf.identity
 
