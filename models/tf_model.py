@@ -89,6 +89,7 @@ class TFConv(keras.layers.Layer):
             kernel_initializer='zeros' if w is None else  keras.initializers.Constant(w.conv.weight.permute(2, 3, 1, 0).numpy()),
             bias_initializer='zeros' if w is None else 'zeros' if hasattr(w, 'bn') else keras.initializers.Constant(w.conv.bias.numpy()))
         self.conv = conv if s == 1 else keras.Sequential([TFPad(autopad(k, p)), conv])
+        # If weights converted from pytorch, BN weights might be fused to adjacent Conv layer, excluding bn attribute
         self.bn = TFBN(w.bn) if hasattr(w, 'bn') else tf.identity
         self.act = keras.activations.swish if  w is None else  activations(w.act) if act else tf.identity
 
