@@ -143,7 +143,8 @@ class Annotator:
         # combine image and mask:
         image = image *inv_alph_masks[-1] + mcs
         im_mask = (image * 255).numpy()
-        self.im[:] = im_mask if retina_masks else scale_image(image.shape, im_mask, self.im.shape)
+        self.im = im_mask if retina_masks else scale_image(image.shape, im_mask, self.im.shape).numpy()
+
         if self.pil:
             # convert im back to PIL and update draw
             self.fromarray(self.im)
