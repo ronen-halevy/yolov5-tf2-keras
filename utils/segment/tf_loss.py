@@ -5,6 +5,8 @@ Loss functions
 
 # import torch
 # import torch.nn as nn
+from ..tf_general import xywh2xyxy
+from .tf_general import crop_mask
 
 from utils.metrics import bbox_iou
 from utils.torch_utils import de_parallel
@@ -85,14 +87,20 @@ class ComputeLoss:
         # self.na = m.na  # number of anchors
         # self.nc = m.nc  # number of classes
         # self.nl = m.nl  # number of layers
-        self.anchors = m.anchors
+        self.anchors = anchors
         # self.device = device
 
-    def __call__(self, p, targets):  # predictions, targets
+    def __call__(self, preds, targets, masks):  # predictions, targets
+        p, proto = preds
+        bs, nm, mask_h, mask_w = proto.shape  # batch size, number of masks, mask height, mask width
+
         lcls = tf.zeros([1])  # class loss
         lbox = tf.zeros([1])   # box loss
         lobj = tf.zeros([1])   # object loss
-        tcls, tbox, indices, anchors = self.build_targets(p, targets)  # targets
+        lseg = tf.zeros([1])
+        # tcls, tbox, indices, anchors = self.build_targets(p, targets)  # targets
+        tcls, tbox, indices, anchors, tidxs, xywhn = self.build_targets(p, targets)  # targets
+
 
         # Losses
         for i, pi in enumerate(p):  # layer index, layer predictions
@@ -102,7 +110,7 @@ class ComputeLoss:
             n = b.shape[0]  # number of targets
             if n:
                 # pxy, pwh, _, pcls = pi[b, a, gj, gi].tensor_split((2, 4, 5), dim=1)  # faster, requires torch 1.8.0
-                pxy, pwh, _, pcls = pi[b, a, gj, gi].split((2, 2, 1, self.nc), 1)  # target-subset of predictions
+                pxy, pwh, _, pcls, pmask = pi[b, a, gj, gi].split((2, 2, 1, self.nc), 1)  # target-subset of predictions
 
                 # Regression
                 pxy = pxy.sigmoid() * 2 - 0.5
@@ -127,6 +135,19 @@ class ComputeLoss:
                     t[range(n), tcls[i]] = self.cp
                     lcls += self.BCEcls(pcls, t)  # BCE
 
+                if tuple(masks.shape[-2:]) != (mask_h, mask_w):  # downsample
+                    masks = F.interpolate(masks[None], (mask_h, mask_w), mode='nearest')[0]
+                marea = xywhn[i][:, 2:].prod(1)  # mask width, height normalized
+                mxyxy = xywh2xyxy(xywhn[i] * tf.constant([mask_w, mask_h, mask_w, mask_h], device=self.device))
+                for bi in b.unique():
+                    j = b == bi  # matching index
+                    if self.overlap:
+                        mask_gti = tf.constant(masks[bi][None] == tidxs[i][j].view(-1, 1, 1), 1.0, 0.0)
+                    else:
+                        mask_gti = masks[tidxs[i]][j]
+                    lseg += self.single_mask_loss(mask_gti, pmask[j], proto[bi], mxyxy[j], marea[j])
+
+
                 # Append targets to text file
                 # with open('targets.txt', 'a') as file:
                 #     [file.write('%11.5g ' * 4 % tuple(x) + '\n') for x in torch.cat((txy[i], twh[i]), 1)]
@@ -144,6 +165,12 @@ class ComputeLoss:
         bs = tobj.shape[0]  # batch size
 
         return (lbox + lobj + lcls) * bs, tf.concat((lbox, lobj, lcls))
+
+    def single_mask_loss(self, gt_mask, pred, proto, xyxy, area):
+        # Mask loss for one image
+        pred_mask = (pred @ proto.view(self.nm, -1)).view(-1, *proto.shape[1:])  # (n,32) @ (32,80,80) -> (n,80,80)
+        loss = F.binary_cross_entropy_with_logits(pred_mask, gt_mask, reduction='none')
+        return (crop_mask(loss, xyxy).mean(dim=(1, 2)) / area).mean()
 
     def build_targets(self, p, targets):
         # Build targets for compute_loss(), input targets(image,class,x,y,w,h)

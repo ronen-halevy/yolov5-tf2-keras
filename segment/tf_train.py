@@ -193,22 +193,29 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # EMA
     ema = tf.train.ExponentialMovingAverage(decay=0.9999)
 
-    na = 3  # number of anchors
-    nc = 80  # number of classes
-    nl = 3  # number of layers
-    anchors=hyp['anchors']
+    # na = 3  # number of anchors
+    # nc = 80  # number of classes
+    # nl = 3  # number of layers
+
+    anchors = tf_model.anchors
+    nc = tf_model.nc
+    nl = len(anchors)
+    na = len(anchors[0])
+
     compute_loss = ComputeLoss(hyp,  na,nl,nc,anchors, autobalance=False)  # init loss class
 
     for epoch in range(1, epochs + 1):
-        for batch, (image, targets, masks) in enumerate(dataset):
+        for batch, (image,  targets, filename, shape, masks) in enumerate(dataset):
 
             with tf.GradientTape() as tape:
-                pred = keras_model(image)  # forward
+                im = tf.expand_dims(image,axis=0)
+                pred = keras_model(im)  # forward
+
                 loss, loss_items = compute_loss(pred, targets, masks)
 
 
-                grads = tape.gradient(loss, keras_model.trainable_variables)
-                optimizer.apply_gradients(
+            grads = tape.gradient(loss, keras_model.trainable_variables)
+            optimizer.apply_gradients(
                     zip(grads, keras_model.trainable_variables))
                 # logging.info(
                 #     f'{epoch}_train_{batch}_lr:{optimizer.lr.numpy():.6f}, '

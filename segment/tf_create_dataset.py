@@ -92,7 +92,7 @@ class LoadImagesAndLabels:
             print('ret', im_file, lb, segments)
             return im_file, lb, segments
         except Exception as e:
-            print('!!!!!', e)
+
             nc = 1
             msg = f'{prefix}WARNING ⚠️ {im_file}: ignoring corrupt image/label: {e}'
             return [None, None, None, None, nm, nf, ne, nc, msg]
