@@ -88,6 +88,7 @@ class ComputeLoss:
         # self.nc = m.nc  # number of classes
         # self.nl = m.nl  # number of layers
         self.anchors = anchors
+        self.overlap=True # Todo
         # self.device = device
 
     def __call__(self, preds, targets, masks):  # predictions, targets
@@ -173,6 +174,8 @@ class ComputeLoss:
         return (crop_mask(loss, xyxy).mean(dim=(1, 2)) / area).mean()
 
     def build_targets(self, p, targets):
+        targets = targets.to_tensor() # todo
+
         # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
         na, nt = self.na, targets.shape[0]  # number of anchors, targets
         tcls, tbox, indices, anch = [], [], [], []
@@ -180,10 +183,19 @@ class ComputeLoss:
         # ai = torch.arange(na, device=self.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
 
         ai = tf.tile(tf.reshape(tf.range(na, dtype= tf.float32), (na, 1)), [1,nt])
+        if self.overlap:
+            batch = p[0].shape[0]
+            ti = []
+            for i in range(batch):
+                num =tf.math.reduce_sum ( tf.cast(targets[:, 0] == i, tf.float32)) # find number of targets of each image
+                ti.append(tf.tile(tf.expand_dims(tf.range(num, dtype=tf.float32 ), axis=0), [na,1]) + 1)  # (na, num)
+            ti = tf.concat(ti, axis=1)  # (na, nt)
+        else:
+            ti = tf.tile(tf.expand_dims(tf.range(nt, dtype=tf.float32), axis=0), [na, 1])
 
         # targets = torch.cat((targets.repeat(na, 1, 1), ai[..., None]), 2)  # append anchor indices
         # append anchor indices and targer indices. concat axis 2 to dim 8: im_id, cls, x,y,h,w, ai, ti
-        targets = tf.concat((tf.tile(targets, (na, 1, 1)), ai[..., None]), 2)  # shape: [na, nt,8]
+        targets = tf.concat((tf.tile(tf.expand_dims(targets, axis=0), (na, 1, 1)), ai[..., None], ti[..., None]), 2)  # shape: [na, nt,8]
 
         g = 0.5  # bias
         # off = torch.tensor(
@@ -210,18 +222,19 @@ class ComputeLoss:
         for i in range(self.nl):
             anchors, shape = self.anchors[i], p[i].shape
             # gain[2:6] = torch.tensor(shape)[[3, 2, 3, 2]]  # xyxy gain
-            xyxy_gain = tf.constant(shape)[[3, 2, 3, 2]]  # xyxy gain
-            gain = tf.concat((gain[0:2],xyxy_gain ))
+            xyxy_gain = tf.tile(tf.slice(shape, [2],[2]), [2]) # todo check
+            # xyxy_gain = tf.constant(shape)[3, 2, 3, 2]  # xyxy gain
+            gain = tf.concat([gain[0:2],tf.cast(xyxy_gain, tf.float32), gain[5:]], axis=0)
             # gain[2:6] =
 
 
-            # Match targets to anchors
-            t = targets * gain  # shape(3,nt,7)
+            # Match targets to anchors: resize xywh to grid size:
+            t = tf.math.multiply(targets, gain)  # shape(3,nt,8)
             if nt:
                 # Limit ratio between gt boxes and anchors to within threshold (x4 ratio). Otherwise exclude gt box from
                 # unmatching anchor's boxes records.:
                 # Matches:
-                r = t[..., 4:6] / anchors[:, None]  # wh/anchors ratio. shape: [na, nt,2]
+                r = tf.math.divide(t[..., 4:6] ,  tf.cast(tf.expand_dims(anchors, axis=-1), tf.float32) ) # wh/anchors ratio. shape: [na, nt,2]
 
                 j = tf.math.maximum(r, 1 / r) < self.hyp['anchor_t']  # compare, bool shake: [na, nt]
 
