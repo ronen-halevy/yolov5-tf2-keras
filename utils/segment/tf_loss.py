@@ -178,8 +178,9 @@ class ComputeLoss:
 
         # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
         na, nt = self.na, targets.shape[0]  # number of anchors, targets
-        tcls, tbox, indices, anch = [], [], [], []
-        gain = tf.ones([7])  # normalized to gridspace gain
+        tcls, tbox, indices, anch, tidxs, xywhn = [], [], [], [], [], []
+
+        gain = tf.ones([8])  # normalized to gridspace gain
         # ai = torch.arange(na, device=self.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
 
         ai = tf.tile(tf.reshape(tf.range(na, dtype= tf.float32), (na, 1)), [1,nt])
@@ -188,14 +189,14 @@ class ComputeLoss:
             ti = []
             for i in range(batch):
                 num =tf.math.reduce_sum ( tf.cast(targets[:, 0] == i, tf.float32)) # find number of targets of each image
-                ti.append(tf.tile(tf.expand_dims(tf.range(num, dtype=tf.float32 ), axis=0), [na,1]) + 1)  # (na, num)
+                ti.append(tf.tile(tf.range(num, dtype=tf.float32 )[None], [na,1]) + 1)  # (na, num)
             ti = tf.concat(ti, axis=1)  # (na, nt)
         else:
-            ti = tf.tile(tf.expand_dims(tf.range(nt, dtype=tf.float32), axis=0), [na, 1])
+            ti = tf.tile(tf.range(nt, dtype=tf.float32)[None], [na, 1])
 
         # targets = torch.cat((targets.repeat(na, 1, 1), ai[..., None]), 2)  # append anchor indices
         # append anchor indices and targer indices. concat axis 2 to dim 8: im_id, cls, x,y,h,w, ai, ti
-        targets = tf.concat((tf.tile(tf.expand_dims(targets, axis=0), (na, 1, 1)), ai[..., None], ti[..., None]), 2)  # shape: [na, nt,8]
+        targets = tf.concat((tf.tile(targets[None],(na, 1, 1)), ai[..., None], ti[..., None]), 2)  # shape: [na, nt,8]
 
         g = 0.5  # bias
         # off = torch.tensor(
@@ -223,8 +224,10 @@ class ComputeLoss:
             anchors, shape = self.anchors[i], p[i].shape
             # gain[2:6] = torch.tensor(shape)[[3, 2, 3, 2]]  # xyxy gain
             xyxy_gain = tf.tile(tf.slice(shape, [2],[2]), [2]) # todo check
-            # xyxy_gain = tf.constant(shape)[3, 2, 3, 2]  # xyxy gain
-            gain = tf.concat([gain[0:2],tf.cast(xyxy_gain, tf.float32), gain[5:]], axis=0)
+            from tensorflow.python.ops.numpy_ops import np_config
+            np_config.enable_numpy_behavior()
+            # xyxy_gain = tf.constant(shape)[[3, 2, 3, 2]]  # xyxy gain
+            gain = tf.concat([gain[0:2],tf.cast(tf.constant(shape)[[3, 2, 3, 2]], tf.float32), gain[6:]], axis=0)# xyxy gain
             # gain[2:6] =
 
 
@@ -234,9 +237,11 @@ class ComputeLoss:
                 # Limit ratio between gt boxes and anchors to within threshold (x4 ratio). Otherwise exclude gt box from
                 # unmatching anchor's boxes records.:
                 # Matches:
-                r = tf.math.divide(t[..., 4:6] ,  tf.cast(tf.expand_dims(anchors, axis=-1), tf.float32) ) # wh/anchors ratio. shape: [na, nt,2]
 
-                j = tf.math.maximum(r, 1 / r) < self.hyp['anchor_t']  # compare, bool shake: [na, nt]
+                # r = tf.math.divide(t[..., 4:6],  tf.cast(anchors[:,None,:], tf.float32) )# wh/anchors ratio. shape: [na, nt,2]
+                r = (t[..., 4:6]/  tf.cast(anchors[:,None,:], tf.float32) )# wh/anchors ratio. shape: [na, nt,2]
+
+                j = tf.math.reduce_max(tf.math.maximum(r, 1 / r), axis=-1) < self.hyp['anchor_t']  # compare, bool shape: [na, nt]
 
                 # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
                 t = t[j]  # filter out unmatched to anchors targets. shape:  [nt, 8] where nt changed to nt_filtered
@@ -250,26 +255,43 @@ class ComputeLoss:
 
                 # Offsets
                 gxy = t[:, 2:4]  # grid xy. shape: [nt,2]
-                gxi = gain[[2, 3]] - gxy  # inverse: offsets from square upper ends. shape: [nt,2]
+                # from tensorflow.python.ops.numpy_ops import np_config
+                # np_config.enable_numpy_behavior()
+                # gxi = tf.slice(gain, [2] ,[2]) - gxy  # inverse: offsets from square upper ends. shape: [nt,2]
+                gxi = gain[[2, 3]] - gxy  # inverse
+
                 j, k = ((gxy % 1 < g) & (gxy > 1)).T # j,k true if gt in l,up half. gxy<=1 l,u, edge square. shape:[nt].
                 l, m = ((gxi % 1 < g) & (gxi > 1)).T# l,m true if gt in r,low half. gxi<=1 r,l, edge square. shape:[nt].
                 j = tf.stack((tf.ones_like(j), j, k, l, m)) # 5 validity ind to main &4 adjacent squares. shape:[5,nt]
-                t = t.tile((5, 1, 1))[j] # tile by 5 and filter valid. shape: [valid dup nt, 8]
+                t = tf.tile(t[None], (5, 1, 1))[j] # tile by 5 and filter valid. shape: [valid dup nt, 8]
+
+                # t = tf.tile((5, 1, 1))[j] # tile by 5 and filter valid. shape: [valid dup nt, 8]
+
                 offsets = (tf.zeros_like(gxy)[None] + off[:, None])[j] # gt indices offs. shpe:  [valid dup nt, 2]
             else:
                 t = targets[0]
                 offsets = 0
 
             # Define
-            bc, gxy, gwh, a = t.chunk(4, 1)  # (image, class), grid xy, grid wh, anchors
-            a, (b, c) = a.long().view(-1), bc.long().T  # anchors, image, class
-            gij = (gxy - offsets).long() # gij=gxy-offs giving left corner of grid square
+            bc, gxy, gwh, ati = tf.split(t, 4, axis=-1)  # (image, class), grid xy, grid wh, anchors
+            (a,tidx), (b, c) =  tf.transpose(ati), tf.transpose(bc)  # anchors, image, class
+            gij = tf.cast((gxy - offsets), tf.int32) # gij=gxy-offs giving left corner of grid square
             gi, gj = gij.T  # grid indices
 
             # Append
-            indices.append((b, a, gj.clamp_(0, shape[2] - 1), gi.clamp_(0, shape[3] - 1)))  # image, anchor, grid
-            tbox.append(tf.concat((gxy - gij, gwh), 1))  # xy modified : gxy - gij i.e. box_center-grid square indices
-            anch.append(anchors[a])  # anchors
-            tcls.append(c)  # class
+            indices.append((b, a, tf.clip_by_value(gj,0, (shape[2] - 1)), tf.clip_by_value(gi ,0, shape[3] - 1)))  # image, anchor, grid
 
-        return tcls, tbox, indices, anch
+            tbox.append(tf.concat((gxy - tf.cast(gij, tf.float32), gwh), 1))  # xy modified : gxy - gij i.e. box_center-grid square indices
+            # anch.append(anchors[a])  # anchors
+            print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1',tf.math.reduce_max(tf.cast(a, tf.int32)))
+            # anch.append(tf.gather(anchors, [tf.cast(a, tf.int32)], axis=0))   # anchors
+            xx=anchors[2]
+            anch.append(anchors[tf.cast(a, tf.int32)])  # anchors
+
+            tcls.append(c)  # class
+            tidxs.append(tidx)
+            xywhn.append(tf.concat((gxy, gwh), 1) / gain[2:6])  # xywh normalized
+
+
+        return tcls, tbox, indices, anch, tidxs, xywhn
+

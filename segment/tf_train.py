@@ -137,8 +137,12 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     tf_model = TFModel(cfg=cfg,
                        ref_model_seq=None, nc=80, imgsz=imgsz)
     im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else batch_size)
+    # tf_model.predict(im)
     keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im))
-
+    # keras_model.compile()
+    # print(keras_model.summary())
+    # tf_model.run_eagerly = True
+    # pred = keras_model(im)  # forward
 
     # check_suffix(weights, '.pt')  # check weights
     pretrained = weights.endswith('.tf')
@@ -196,11 +200,18 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # na = 3  # number of anchors
     # nc = 80  # number of classes
     # nl = 3  # number of layers
+    # extract stride to adjust anchors:
+    s = 640  # at least 2x min stride, just for getting output shape
+    stride = tf.constant(
+        [s / x.shape[-2] for x in keras_model(tf.zeros([1, s, s, 3], dtype=tf.float32))[0]])  # forward
 
-    anchors = tf_model.anchors
     nc = tf_model.nc
-    nl = len(anchors)
-    na = len(anchors[0])
+    anchors = tf.reshape(tf_model.anchors, [len(tf_model.anchors), -1, 2])
+    anchors = tf.cast(anchors, tf.float32) / tf.reshape(stride, (-1, 1, 1))
+
+    nl = anchors.shape[0]
+    na = anchors.shape[1] # if isinstance(anchors, list) else anchors  # number of anchors
+
 
     compute_loss = ComputeLoss(hyp,  na,nl,nc,anchors, autobalance=False)  # init loss class
 
