@@ -12,7 +12,9 @@ from utils.metrics import bbox_iou
 from utils.torch_utils import de_parallel
 import tensorflow as tf
 
+from tensorflow.python.ops.numpy_ops import np_config
 
+np_config.enable_numpy_behavior()
 def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441
     # return positive, negative label smoothing BCE targets
     return 1.0 - 0.5 * eps, 0.5 * eps
@@ -106,16 +108,18 @@ class ComputeLoss:
         # Losses
         for i, pi in enumerate(p):  # layer index, layer predictions
             b, a, gj, gi = indices[i]  # image, anchor, gridy, gridx
-            tobj = tf.zeros([pi.shape[:4]], dtype=pi.dtype)  # target obj
+            tobj = tf.zeros(pi.shape[:4], dtype=pi.dtype)  # target obj
 
             n = b.shape[0]  # number of targets
             if n:
                 # pxy, pwh, _, pcls = pi[b, a, gj, gi].tensor_split((2, 4, 5), dim=1)  # faster, requires torch 1.8.0
-                pxy, pwh, _, pcls, pmask = pi[b, a, gj, gi].split((2, 2, 1, self.nc), 1)  # target-subset of predictions
+                xxx = pi[tf.cast(b, tf.int32), tf.cast(a, tf.int32), gj, gi]
+                pxy, pwh, _, pcls, pmask = tf.split(pi[tf.cast(b, tf.int32), tf.cast(a, tf.int32), gj, gi], (2, 2, 1, self.nc, nm), 1)
+                                            # .split((2, 2, 1, self.nc), 1))  # target-subset of predictions
 
                 # Regression
-                pxy = pxy.sigmoid() * 2 - 0.5
-                pwh = (pwh.sigmoid() * 2) ** 2 * anchors[i]
+                pxy = tf.sigmoid(pxy) * 2 - 0.5
+                pwh = (tf.sigmoid(pwh) * 2) ** 2 * anchors[i]
                 pbox = tf.concat((pxy, pwh), 1)  # predicted box
                 iou = tf.squeeze(bbox_iou(pbox, tbox[i], CIoU=True))  # iou(prediction, target)
                 lbox += (1.0 - iou).mean()  # iou loss
@@ -224,8 +228,8 @@ class ComputeLoss:
             anchors, shape = self.anchors[i], p[i].shape
             # gain[2:6] = torch.tensor(shape)[[3, 2, 3, 2]]  # xyxy gain
             xyxy_gain = tf.tile(tf.slice(shape, [2],[2]), [2]) # todo check
-            from tensorflow.python.ops.numpy_ops import np_config
-            np_config.enable_numpy_behavior()
+            # from tensorflow.python.ops.numpy_ops import np_config
+            # np_config.enable_numpy_behavior()
             # xyxy_gain = tf.constant(shape)[[3, 2, 3, 2]]  # xyxy gain
             gain = tf.concat([gain[0:2],tf.cast(tf.constant(shape)[[3, 2, 3, 2]], tf.float32), gain[6:]], axis=0)# xyxy gain
             # gain[2:6] =
