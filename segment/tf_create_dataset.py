@@ -152,40 +152,43 @@ class LoadImagesAndLabels:
 
 
 def collate_fn(img, label, path, shapes, masks):
-    # img, label, path, shapes, masks = zip(*batch)  # transposed
-    batched_masks = tf.concat(masks, 0)
-    for i, l in enumerate(label):
-        id = tf.cast(tf.fill([l.shape[0],1], i), tf.float32)
-        l=tf.concat([l, id], axis=-1)
+        # img, label, path, shapes, masks = zip(*batch)  # transposed
+        batched_masks = tf.concat(masks, 0)
+        for i, l in enumerate(label):
+            id = tf.cast(tf.fill([l.shape[0],1], i), tf.float32)
+            l=tf.concat([l, id], axis=-1)
 
-        # l[:, 0] = i  # add target image index for build_targets()
-    return tf.stack(img, 0), tf.concat(label, 0), path, shapes, batched_masks
+            # l[:, 0] = i  # add target image index for build_targets()
+        return tf.stack(img, 0), tf.concat(label, 0), path, shapes, batched_masks
 
-def decode_and_resize_image(filename, size,  y_lables, y_masks):
-    img_st = tf.io.read_file(filename)
-    img_dec = tf.image.decode_image(img_st, channels=3, expand_animations=False)
-    img = tf.cast(img_dec, tf.float32)
-    # resize w/o keeping aspect ratio - no prob for normal sized images
-    img = tf.image.resize(img/255, size)
-    return img,  y_lables, filename, img.shape, y_masks
+class CreateDataset:
+    def decode_and_resize_image(self, filename, size,  y_lables, y_masks):
+        # mosaic = self.mosaic and random.random() < hyp['mosaic']
 
-def create_dataset(train_path, imgsz):
-    lial = LoadImagesAndLabels()
-    image_files, lables, segments = lial.load(train_path)
-    y_segments = tf.ragged.constant(list(segments))
-    y_lables = tf.ragged.constant(list(lables))
-    x_train = tf.convert_to_tensor(image_files)
-    # img_indices = tf.reshape(tf.convert_to_tensor(range(len(image_files))), (-1,1,1))
-    # print('y_lables',y_lables.shape)
-    # print('img_indices',img_indices.shape)
+        img_st = tf.io.read_file(filename)
+        img_dec = tf.image.decode_image(img_st, channels=3, expand_animations=False)
+        img = tf.cast(img_dec, tf.float32)
+        # resize w/o keeping aspect ratio - no prob for normal sized images
+        img = tf.image.resize(img/255, size)
+        return img,  y_lables, filename, img.shape, y_masks
 
-    # y_lables =tf.concat([y_lables, img_indices], axis=-1)
+    def __call__(self, train_path, imgsz):
+        lial = LoadImagesAndLabels()
+        image_files, lables, segments = lial.load(train_path)
+        y_segments = tf.ragged.constant(list(segments))
+        y_lables = tf.ragged.constant(list(lables))
+        x_train = tf.convert_to_tensor(image_files)
+        # img_indices = tf.reshape(tf.convert_to_tensor(range(len(image_files))), (-1,1,1))
+        # print('y_lables',y_lables.shape)
+        # print('img_indices',img_indices.shape)
 
-    dataset = tf.data.Dataset.from_tensor_slices((x_train, y_lables, y_segments))
-    dataset = dataset.map(lambda x, y_lables, y_segments: decode_and_resize_image(x, imgsz,  y_lables, y_segments))
-    return dataset
-    # for img,  y_lables, filename, shape, y_masks in dataset:
-    #     collate_fn(img,  y_lables, filename, img.shape, y_masks )
-    # dataset = dataset.map(lambda img,  y_lables, filename, shape, y_masks : collate_fn(img,  y_lables, filename, shape, y_masks))
-    # for img,  y_lables, filename, img.shape, y_masks in dataset:
-    #     pass
+        # y_lables =tf.concat([y_lables, img_indices], axis=-1)
+        dataset = tf.data.Dataset.from_tensor_slices((x_train, y_lables, y_segments))
+        dataset = dataset.map(lambda x, y_lables, y_segments: self.decode_and_resize_image(x, imgsz,  y_lables, y_segments))
+
+        return dataset
+        # for img,  y_lables, filename, shape, y_masks in dataset:
+        #     collate_fn(img,  y_lables, filename, img.shape, y_masks )
+        # dataset = dataset.map(lambda img,  y_lables, filename, shape, y_masks : collate_fn(img,  y_lables, filename, shape, y_masks))
+        # for img,  y_lables, filename, img.shape, y_masks in dataset:
+        #     pass

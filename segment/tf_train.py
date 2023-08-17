@@ -40,17 +40,17 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
-import segment.val as validate  # for end-of-epoch mAP
-from models.experimental import attempt_load
-from models.yolo import SegmentationModel
-from utils.autoanchor import check_anchors
-from utils.autobatch import check_train_batch_size
+# import segment.val as validate  # for end-of-epoch mAP
+# from models.experimental import attempt_load
+# from models.yolo import SegmentationModel
+# from utils.autoanchor import check_anchors
+# from utils.autobatch import check_train_batch_size
 from utils.callbacks import Callbacks
 from utils.downloads import attempt_download, is_url
 from utils.general import (LOGGER, TQDM_BAR_FORMAT, check_amp, check_dataset, check_file, check_git_info,
-                           check_git_status, check_img_size, check_requirements, check_suffix, check_yaml, colorstr,
-                           get_latest_run, increment_path, init_seeds, intersect_dicts, labels_to_class_weights,
-                           labels_to_image_weights, one_cycle, print_args, print_mutation, strip_optimizer, yaml_save)
+                           check_git_status,  check_requirements, check_yaml, colorstr,
+                           get_latest_run, increment_path, init_seeds,
+                           print_args, print_mutation, yaml_save)
 from utils.loggers import GenericLogger
 from utils.plots import plot_evolve, plot_labels
 from utils.segment.dataloaders import create_dataloader
@@ -66,7 +66,7 @@ from tensorflow import keras
 import numpy as np
 from models.tf_model import TFModel
 
-from tf_create_dataset import create_dataset
+from tf_create_dataset import CreateDataset
 
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
@@ -124,9 +124,8 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     data_dict = data_dict or check_dataset(data)  # check if None
     train_path, val_path = data_dict['train'], data_dict['val']
 
+    create_dataset=CreateDataset()
     dataset=create_dataset(train_path, imgsz)
-
-
 
     nc = 1 if single_cls else int(data_dict['nc'])  # number of classes
     names = {0: 'item'} if single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
