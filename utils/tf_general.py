@@ -895,37 +895,37 @@ def clip_segments(segments, shape):
         segments[:, 0] = segments[:, 0].clip(0, shape[1])  # x
         segments[:, 1] = segments[:, 1].clip(0, shape[0])  # y
 
-
-def non_max_suppression(
-        pred,
-        conf_thres,
-        iou_thres,
-        classes=None,
-        agnostic=False,
-        max_det=300,
-        nm=0,  # number of masks
-):
-    """Non-Maximum Suppression (NMS) on inference results to reject overlapping detections
-
-    Returns:
-         list of detections, on (n,6) tensor per image [xyxy, conf, cls]
-    """
-
-    nc = pred.shape[2] - nm - 5  # number of classes
-    mi = 5 + nc  # mask start index
-    pred = tf.squeeze(pred, axis=0)
-
-    class_sel_prob = tf.reduce_max(pred[:, 5:mi], axis=-1, keepdims=False)
-    # scores=class_conf * obj:
-    scores = pred[:, 4] * class_sel_prob
-    class_sel_idx = tf.math.argmax(pred[:, 5:mi], axis=-1, output_type=tf.int32)
-    class_sel_idx = tf.cast(class_sel_idx, dtype=tf.float32)[...,tf.newaxis]
-    boxes=xywh2xyxy(pred[:, :4])
-    ind = tf.image.non_max_suppression(boxes, scores, max_output_size=max_det, iou_threshold=iou_thres, score_threshold=conf_thres)
-    # Concat before gather:
-    pred = tf.concat((boxes , scores[...,tf.newaxis], class_sel_idx,  pred[:, mi:] ), axis=1)
-    output= tf.gather(pred, indices=ind)
-    return output
+#
+# def non_max_suppression(
+#         pred,
+#         conf_thres,
+#         iou_thres,
+#         classes=None,
+#         agnostic=False,
+#         max_det=300,
+#         nm=0,  # number of masks
+# ):
+#     """Non-Maximum Suppression (NMS) on inference results to reject overlapping detections
+#
+#     Returns:
+#          list of detections, on (n,6) tensor per image [xyxy, conf, cls]
+#     """
+#
+#     nc = pred.shape[2] - nm - 5  # number of classes
+#     mi = 5 + nc  # mask start index
+#     pred = tf.squeeze(pred, axis=0)
+#
+#     class_sel_prob = tf.reduce_max(pred[:, 5:mi], axis=-1, keepdims=False)
+#     # scores=class_conf * obj:
+#     scores = pred[:, 4] * class_sel_prob
+#     class_sel_idx = tf.math.argmax(pred[:, 5:mi], axis=-1, output_type=tf.int32)
+#     class_sel_idx = tf.cast(class_sel_idx, dtype=tf.float32)[...,tf.newaxis]
+#     boxes=xywh2xyxy(pred[:, :4])
+#     ind = tf.image.non_max_suppression(boxes, scores, max_output_size=max_det, iou_threshold=iou_thres, score_threshold=conf_thres)
+#     # Concat before gather:
+#     pred = tf.concat((boxes , scores[...,tf.newaxis], class_sel_idx,  pred[:, mi:] ), axis=1)
+#     output= tf.gather(pred, indices=ind)
+#     return output
 
 
 

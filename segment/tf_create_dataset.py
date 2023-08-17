@@ -147,7 +147,7 @@ class LoadImagesAndLabels:
             segments.append(segment)
 
 
-
+        # image_files: list, str, size ds_size, labels: list of arrays(nt, 6), size: ds_size segments: list of arrays(nt, 6), size: ds_size
         return image_files, lables, segments
 
 

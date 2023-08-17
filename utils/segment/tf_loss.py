@@ -8,7 +8,7 @@ Loss functions
 from ..tf_general import xywh2xyxy
 from .tf_general import crop_mask
 
-from utils.metrics import bbox_iou
+from utils.tf_metrics import bbox_iou
 from utils.torch_utils import de_parallel
 import tensorflow as tf
 
@@ -125,20 +125,21 @@ class ComputeLoss:
                 lbox += (1.0 - iou).mean()  # iou loss
 
                 # Objectness
-                iou = iou.detach().clamp(0).type(tobj.dtype)
+                iou = tf.cast(tf.minimum(iou, 0), tobj.dtype)
+
                 if self.sort_obj_iou:
                     j = iou.argsort()
                     b, a, gj, gi, iou = b[j], a[j], gj[j], gi[j], iou[j]
                 if self.gr < 1:
                     iou = (1.0 - self.gr) + self.gr * iou
-                tobj[b, a, gj, gi] = iou  # iou ratio
+                # tobj[b, a, gj, gi] = iou  # iou ratio
+                index = tf.transpose([tf.cast(b, tf.int32), tf.cast(a, tf.int32), gj, gi] )
+                tobj= tf.tensor_scatter_nd_update(tobj,index, iou)
 
                 # Classification
                 if self.nc > 1:  # cls loss (only if multiple classes)
-                    # t = torch.full_like(pcls, self.cn, device=self.device)  # targets
-                    t = tf.fill(pcls.shape, self.cn)
-                    t[range(n), tcls[i]] = self.cp
-                    lcls += self.BCEcls(pcls, t)  # BCE
+                    # create [nt, nc] one_hot class array:
+                    t= tf.one_hot(indices=tf.cast(tcls[i], tf.int32), depth=pcls.shape[1])
 
                 if tuple(masks.shape[-2:]) != (mask_h, mask_w):  # downsample
                     masks = F.interpolate(masks[None], (mask_h, mask_w), mode='nearest')[0]
@@ -187,14 +188,14 @@ class ComputeLoss:
         gain = tf.ones([8])  # normalized to gridspace gain
         # ai = torch.arange(na, device=self.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
 
-        ai = tf.tile(tf.reshape(tf.range(na, dtype= tf.float32), (na, 1)), [1,nt])
+        ai = tf.tile(tf.reshape(tf.range(na, dtype= tf.float32), (na, 1)), [1,nt]) # anchor index. shape: [na, nt]
         if self.overlap:
             batch = p[0].shape[0]
             ti = []
             for i in range(batch):
                 num =tf.math.reduce_sum ( tf.cast(targets[:, 0] == i, tf.float32)) # find number of targets of each image
                 ti.append(tf.tile(tf.range(num, dtype=tf.float32 )[None], [na,1]) + 1)  # (na, num)
-            ti = tf.concat(ti, axis=1)  # (na, nt)
+            ti = tf.concat(ti, axis=1)  # target index. (na, nt)
         else:
             ti = tf.tile(tf.range(nt, dtype=tf.float32)[None], [na, 1])
 
@@ -231,7 +232,9 @@ class ComputeLoss:
             # from tensorflow.python.ops.numpy_ops import np_config
             # np_config.enable_numpy_behavior()
             # xyxy_gain = tf.constant(shape)[[3, 2, 3, 2]]  # xyxy gain
-            gain = tf.concat([gain[0:2],tf.cast(tf.constant(shape)[[3, 2, 3, 2]], tf.float32), gain[6:]], axis=0)# xyxy gain
+            # gain = tf.concat([gain[0:2],tf.cast(tf.constant(shape)[[3, 2, 3, 2]], tf.float32), gain[6:]], axis=0)# xyxy gain
+            # gain = tf.concat([gain[0:2],tf.cast(tf.constant(shape)[[3, 2, 3, 2]], tf.float32), gain[6:]], axis=0)# xyxy gain
+            gain = tf.tensor_scatter_nd_update(gain, [[2],[3],[4],[5]], tf.cast(tf.constant(shape)[[3, 2, 3, 2]], tf.float32))
             # gain[2:6] =
 
 
