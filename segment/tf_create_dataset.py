@@ -179,7 +179,7 @@ class LoadImagesAndLabels:
             image_files.append(image_file)
             labels.append(label)
             segments.append(segment)
-        mosaic=False
+        mosaic=True
         if mosaic:
             image_files_mosaic = []
             labels_mosaic = []
@@ -198,7 +198,7 @@ class LoadImagesAndLabels:
                 labels_mosaic.append(labels4)
                 segments_mosaic.append(segments4)
             image_files=image_files_mosaic
-            labels=labels4
+            labels=labels_mosaic
             segments=segments_mosaic
 
 
@@ -224,8 +224,8 @@ class CreateDataset:
         self.mosaic_border = [-imgsz//2 , -imgsz//2]
         self.imgsz = imgsz
 
-    @tf.function
-    def scatter_image_to_mosaic( self, dst_x, dst_y):
+    # @tf.function
+    def scatter_image_to_mosaic( self, dst_image, src_image, dst_x, dst_y):
         # tf.print("innnnnnnnnnnnnnnnnnnnn scatter_image_to_mosaic")
         y_range = tf.range(dst_y[0], dst_y[1])[...,None]
         y_ind=tf.tile(y_range,  tf.constant([1,dst_x[1]-dst_x[0]]))
@@ -233,12 +233,12 @@ class CreateDataset:
         x_ind=tf.tile(x_range,  tf.constant([dst_y[1]-dst_y[0],1]))
         indices = tf.squeeze(tf.concat([y_ind[..., None], x_ind[..., None]], axis=-1))
 
-        # dst =tf.tensor_scatter_nd_update(
-        #     dst_image, indices, src_image,indices
-        # )
+        dst =tf.tensor_scatter_nd_update(
+            dst_image, indices, src_image
+        )
         # tf.print("out scatter_image_to_mosaic")
 
-        return indices
+        return dst
 
 
     # @tf.function
@@ -323,24 +323,128 @@ class CreateDataset:
         img4 = tf.image.resize(img4, [640,640])
         img5 = tf.image.resize(img5, [640,640])
 
+    def xyn2xy(self,x, w=640, h=640, padw=0, padh=0):
+        # Convert normalized segments into pixel segments, shape (n,2)
+        # y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
+        xcoord = w * x[..., 0] + padw  # top left x
+        ycoord = h * x[..., 1] + padh  # top left y
+        y=tf.stack(
+            [xcoord, ycoord], axis=-1, name='stack'
+        )
+        return y
 
 
+    def xywhn2xyxy(self, x, w=640, h=640, padw=0, padh=0):
+        # Convert nx4 boxes from [x, y, w, h] normalized to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
+        y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
+        y[..., 0] = w * (x[..., 0] - x[..., 2] / 2) + padw  # top left x
+        y[..., 1] = h * (x[..., 1] - x[..., 3] / 2) + padh  # top left y
+        y[..., 2] = w * (x[..., 0] + x[..., 2] / 2) + padw  # bottom right x
+        y[..., 3] = h * (x[..., 1] + x[..., 3] / 2) + padh  # bottom right y
+        return y
 
-        return img4, y_lables, filename, img.shape, y_masks
+    def dec_res(self, filename, size):
+        img_st = tf.io.read_file(filename)
+        img_dec = tf.image.decode_image(img_st, channels=3, expand_animations=False)
+        img11 = tf.cast(img_dec, tf.float32)
+        img11 = tf.image.resize(img11 / 255, size)
+        return img11
+
+        # return img4, y_lables, filename, img.shape, y_masks
     # @tf.function
-    def decode_and_resize_image(self, filename, size,  y_lables, y_masks):
+    def decode_and_resize_image(self, filenames, size,  y_lables, y_segments):
         # tf.print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%', rimages[0][0])
         # tf.print(y_lables)
         # y_lables=lables[indices[2]]
         # y_masks=segments[indices[2]]
+        labels4, segments4 = [], []
 
-        img_st = tf.io.read_file(filename)
-        img_dec = tf.image.decode_image(img_st, channels=3, expand_animations=False)
-        img = tf.cast(img_dec, tf.float32)
-        # resize w/o keeping aspect ratio - no prob for normal sized images
-        img = tf.image.resize(img/255, size)
+        padw = []
+        padh = []
+        yc, xc = (int(random.uniform(-x, 2 * self.imgsz + x)) for x in self.mosaic_border)  # mosaic center x, y
+        nch = 3
 
-        return img,y_lables, filename, img.shape, y_masks
+        img4=  tf.fill(
+            (self.imgsz  * 2, self.imgsz  * 2, nch), 0.0
+        )
+
+        w,h = size
+        s=w
+
+        # for idx, (filename,  y_lables, y_mask) in enumerate(zip(filenames, y_lables, y_masks)):
+        #     if idx == 0:  # top left
+        #         x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
+        #         x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h  # xmin, ymin, xmax, ymax (small image)
+        #     elif idx == 1:  # top right
+        #         x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, s * 2), yc
+        #         x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
+        #     elif idx == 2:  # bottom left
+        #         x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(s * 2, yc + h)
+        #         x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
+        #     elif idx == 3:  # bottom right
+        #         x1a, y1a, x2a, y2a = xc, yc, min(xc + w, s * 2), min(s * 2, yc + h)
+        #         x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
+        #     img = self.dec_res(filenames[0], size)
+        #     img4 = self.scatter_image_to_mosaic(img4, img[y1b:y2b, x1b:x2b], (x1a, x2a), (y1a, y2a))
+        #     padw = x1a - x1b
+        #     padh = y1a - y1b
+
+
+         #1
+        x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # new xmin, ymin, xmax, ymax (large image)
+        x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h  # Delta(w), Delta(h), w, h (small image)
+        padw = x1a - x1b
+        padh = y1a - y1b
+        img = self.dec_res(filenames[0], size)
+        img4 = self.scatter_image_to_mosaic(img4, img[y1b:y2b, x1b:x2b], (x1a, x2a), (y1a, y2a))
+        if y_lables[0].shape[0]:
+            y_l = y_lables[0].to_tensor()
+            xyxy = self.xywhn2xyxy(y_l[:, 1:], w, h, padw, padh)  # normalized xywh to pixel xyxy format
+            yl = tf.concat( [y_l[:, 0][...,None], xyxy], axis=-1)
+            ys = y_segments[0].to_tensor()
+            segments = [self.xyn2xy(x, w, h, padw, padh) for x in ys]
+            labels4.append(ys)
+            segments4.extend(segments)
+
+
+        #2
+        x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, self.imgsz * 2), yc
+        x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
+        img = self.dec_res(filenames[1], size)
+        img4 = self.scatter_image_to_mosaic(img4, img[y1b:y2b, x1b:x2b], (x1a, x2a), (y1a, y2a))
+        padw= x1a - x1b
+        padh=y1a - y1b
+        # img4[y1a:y2a, x1a:x2a] = rimages[0][0][y1b:y2b, x1b:x2b]  # img4[ymin:ymax, xmin:xmax]
+
+        # 3
+        x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(self.imgsz * 2, yc + h)
+        x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
+        img = self.dec_res(filenames[2], size)
+        img4 = self.scatter_image_to_mosaic(img4, img[y1b:y2b, x1b:x2b], (x1a, x2a), (y1a, y2a))
+        padw=x1a - x1b
+        padh=y1a - y1b
+        # img4[y1a:y2a, x1a:x2a] = rimages[1][0][y1b:y2b, x1b:x2b]  # img4[ymin:ymax, xmin:xmax]
+
+        # tf.print('rimages',rimages[1][0][y1b:y2b, x1b:x2b].shape)
+        #4
+        x1a, y1a, x2a, y2a = xc, yc, min(xc + w, self.imgsz * 2), min(self.imgsz * 2, yc + h)
+        x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
+        padw=x1a - x1b
+        padh=y1a - y1b
+
+        img = self.dec_res(filenames[3], size)
+        img4 = self.scatter_image_to_mosaic(img4, img[y1b:y2b, x1b:x2b], (x1a, x2a), (y1a, y2a))
+        # labels, segments = self.labels[index].copy(), self.segments[index].copy()
+
+
+        # indices1 = self.scatter_image_to_mosaic(img4, [x1a, x2a], [y1a, y2a])
+        # img4 = tf.tensor_scatter_nd_add(
+        #     img4, indices1, rimages[0][0][y1b:y2b, x1b:x2b], name=None
+        # )
+
+        img4 = tf.image.resize(img4, [640, 640])
+
+        return img4,y_lables[0], filenames, img4.shape, y_segments[0]
 
 
     def decode_and_resize_image_mult(self, filename, size,  y_lables, y_masks):
@@ -403,36 +507,36 @@ class CreateDataset:
         # # resize w/o keeping aspect ratio - no prob for normal sized images
         # img = tf.image.resize(img/255, size)
 
-        return img, y_lables, filename, img.shape, y_masks
+        return img, y_lables[0], filename[0], img.shape, y_masks[0]
 
     def __call__(self, train_path):
         lial = LoadImagesAndLabels()
         image_files, lables, segments = lial.load(train_path)
-        self.image_files=image_files
-        self.lables=lables
-
-        self.segments=segments
+        # self.image_files=image_files
+        # self.lables=lables
+        #
+        # self.segments=segments
         y_segments = tf.ragged.constant(list(segments))
         y_lables = tf.ragged.constant(list(lables))
         x_train = tf.convert_to_tensor(image_files)
-        self.image_files=image_files
+        # self.image_files=image_files
         # img_indices = tf.reshape(tf.convert_to_tensor(range(len(image_files))), (-1,1,1))
         # print('y_lables',y_lables.shape)
         # print('img_indices',img_indices.shape)
 
         # y_lables =tf.concat([y_lables, img_indices], axis=-1)
         ds = tf.data.Dataset.from_tensor_slices((x_train, y_lables, y_segments))
-        indices = random.choices(range(len(image_files)), k=3)  # 3 additional image indices
-        indices = [0,0,0]
+        # indices = random.choices(range(len(image_files)), k=3)  # 3 additional image indices
+        # indices = [0,0,0]
         # ds = ds.map(lambda x, lables, segments: self.decode_and_resize_image_mult(x, [self.imgsz, self.imgsz],  lables, segments,
         #  [tf.data.experimental.at(
         # ds, indices[0]),tf.data.experimental.at(ds, 1),tf.data.experimental.at(ds, 2) ]  ))
 
-        # for x,  lables, segments in ds:
-        #     self.decode_and_resize_image(x, [self.imgsz, self.imgsz],  lables, segments)
-        ds = ds.map(lambda x, lables, segments: self.decode_and_resize_image(x, [self.imgsz, self.imgsz],  lables, segments))
+        for x,  lables, segments in ds:
+            self.decode_and_resize_image(x, [self.imgsz, self.imgsz],  lables, segments)
+        dataset = ds.map(lambda x, lables, segments: self.decode_and_resize_image(x, [self.imgsz, self.imgsz],  lables, segments))
 
-        for img, y_lables, filename, shape, y_masks in ds:
+        for img, y_lables, filename, shape, y_masks in dataset:
             pass
 
         # for idx, (x,  lables, filename, shapes, masks) in enumerate(ds):
@@ -444,8 +548,8 @@ class CreateDataset:
         # ds=ds.take(4)
 
 
-        dataset = ds.map(lambda x,  lables, filename, shapes, masks: self.testt(x, filename,  lables, masks ,[tf.data.experimental.at(
-        ds, indices[0]),tf.data.experimental.at(ds, indices[1]),tf.data.experimental.at(ds, indices[2]) ]         ))
+        # dataset = ds.map(lambda x,  lables, filename, shapes, masks: self.testt(x, filename,  lables, masks ,[tf.data.experimental.at(
+        # ds, indices[0]),tf.data.experimental.at(ds, indices[1]),tf.data.experimental.at(ds, indices[2]) ]         ))
 # ) )
 
         return dataset
