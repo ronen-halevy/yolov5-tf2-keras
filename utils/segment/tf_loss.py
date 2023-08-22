@@ -179,7 +179,7 @@ class ComputeLoss:
         return (crop_mask(loss, xyxy).mean(dim=(1, 2)) / area).mean()
 
     def build_targets(self, p, targets):
-        targets = targets.to_tensor() # todo
+        # targets = targets.to_tensor() # todo
 
         # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
         na, nt = self.na, targets.shape[0]  # number of anchors, targets
@@ -189,17 +189,18 @@ class ComputeLoss:
         # ai = torch.arange(na, device=self.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
 
         ai = tf.tile(tf.reshape(tf.range(na, dtype= tf.float32), (na, 1)), [1,nt]) # anchor index. shape: [na, nt]
+        # objects overlap assign objects pixels by a per class index. CPixels common to multi assigned by greater index
         if self.overlap:
-            batch = p[0].shape[0]
+            batch = p[0].shape[0] # images in batch
             ti = []
-            for i in range(batch):
-                num =tf.math.reduce_sum ( tf.cast(targets[:, 0] == i, tf.float32)) # find number of targets of each image
-                ti.append(tf.tile(tf.range(num, dtype=tf.float32 )[None], [na,1]) + 1)  # (na, num)
+            for i in range(batch):# images loop
+                num =tf.math.reduce_sum ( tf.cast(targets[:, 0] == i, tf.float32)) #  num of targets in image
+                ti.append(tf.tile(tf.range(num, dtype=tf.float32 )[None], [na,1]) + 1)  # shape: (na, num)
             ti = tf.concat(ti, axis=1)  # target index. (na, nt)
         else:
             ti = tf.tile(tf.range(nt, dtype=tf.float32)[None], [na, 1])
 
-        # targets = torch.cat((targets.repeat(na, 1, 1), ai[..., None]), 2)  # append anchor indices
+
         # append anchor indices and targer indices. concat axis 2 to dim 8: im_id, cls, x,y,h,w, ai, ti
         targets = tf.concat((tf.tile(targets[None],(na, 1, 1)), ai[..., None], ti[..., None]), 2)  # shape: [na, nt,8]
 
