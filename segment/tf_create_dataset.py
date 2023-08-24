@@ -196,10 +196,10 @@ class LoadImagesAndLabels:
 
                 labels_mosaic.append(labels4)
                 segments_mosaic.append(segments4)
-            for idx0, mosaic_entry_labels in enumerate(labels_mosaic): # inset image index to label entries
-                for idx1, img_entry_labels in enumerate(mosaic_entry_labels):
-                    img_index = tf.tile([idx0], [img_entry_labels.shape[0]])[..., None]
-                    labels_mosaic[idx0][idx1] = tf.concat([tf.cast(img_index, tf.float32), img_entry_labels], axis=-1).tolist()
+            # for idx0, mosaic_entry_labels in enumerate(labels_mosaic): # inset image index to label entries
+            #     for idx1, img_entry_labels in enumerate(mosaic_entry_labels):
+            #         img_index = tf.tile([idx0], [img_entry_labels.shape[0]])[..., None]
+            #         labels_mosaic[idx0][idx1] = tf.concat([tf.cast(img_index, tf.float32), img_entry_labels], axis=-1).tolist()
             image_files = image_files_mosaic
             labels = labels_mosaic
             segments = segments_mosaic
@@ -248,84 +248,36 @@ class CreateDataset:
 
     # @tf.function
 
-    def testt(self, img, filename, y_lables, y_masks, rimages):
-        # w,h = img.shape[1:2]
-        tf.print('!!!!!!!!!!!!!!!!!!!!!!!!!filename', filename)
 
-        w, h = img.shape[0:2]
-        padw = []
-        padh = []
-        yc, xc = (int(random.uniform(-x, 2 * self.imgsz + x)) for x in self.mosaic_border)  # mosaic center x, y
+    def clip_boxes(self, boxes, shape):
+        # Clip boxes (xyxy) to image shape (height, width)
+        tf.clip_by_value( boxes[:, 0], 0, boxes.shape[1])
+        if isinstance(boxes, torch.Tensor):  # faster individually
+            boxes[..., 0].clamp_(0, shape[1])  # x1
+            boxes[..., 1].clamp_(0, shape[0])  # y1
+            boxes[..., 2].clamp_(0, shape[1])  # x2
+            boxes[..., 3].clamp_(0, shape[0])  # y2
+        else:  # np.array (faster grouped)
+            boxes[..., [0, 2]] = boxes[..., [0, 2]].clip(0, shape[1])  # x1, x2
+            boxes[..., [1, 3]] = boxes[..., [1, 3]].clip(0, shape[0])  # y1, y2
 
-        indices = [[]] + random.choices(range(len(rimages)), k=3)  # 3 additional image indices
-        random.shuffle(indices)
-        # img4 = np.full((self.imgsz  * 2, self.imgsz  * 2, img.shape[2]), 114, dtype=np.uint8)  # base image with 4 tiles
-        img4 = tf.fill(
-            (self.imgsz * 2, self.imgsz * 2, img.shape[2]), 0.0
+    def xyxy2xywhn(self, x, w=640, h=640, clip=False, eps=0.0):
+        # Convert nx4 boxes from [x1, y1, x2, y2] to [x, y, w, h] normalized where xy1=top-left, xy2=bottom-right
+        if clip:
+            self.clip_boxes(x, (h - eps, w - eps))  # warning: inplace clip
+        # xmin = w * (x[..., 0:1] - x[..., 2:3] / 2) + padw  # top left x
+        # ymin = h * (x[..., 1:2] - x[..., 3:] / 2) + padh  # top left y
+        # xmax = w * (x[..., 0:1] + x[..., 2:3] / 2) + padw  # bottom right x
+        # ymax = h * (x[..., 1:2] + x[..., 3:] / 2) + padh  # bottom right y
+    #     y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
+        xc = ((x[..., 0:1] + x[..., 2:3]) / 2) / w  # x center
+        yc = ((x[..., 1:2] + x[..., 3:4]) / 2) / h  # y center
+        w = (x[..., 2:3] - x[..., 0:1]) / w  # width
+        h= (x[..., 3:4] - x[..., 1:2]) / h  # height
+        y = tf.concat(
+            [xc, yc, w, h], axis=-1, name='concat'
         )
-
-        img5 = tf.fill(
-            (self.imgsz * 2, self.imgsz * 2, img.shape[2]), 0.0
-        )
-
-        x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # new xmin, ymin, xmax, ymax (large image)
-        x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h  # Delta(w), Delta(h), w, h (small image)
-        padw.append(x1a - x1b)
-        padh.append(y1a - y1b)
-
-        y_range = tf.range(y1a, y2a)[..., None]
-        y_ind = tf.tile(y_range, tf.constant([1, x2a - x1a]))
-        x_range = tf.range(x1a, x2a)[None]
-        x_ind = tf.tile(x_range, tf.constant([y2a - y1a, 1]))
-        indices = tf.squeeze(tf.concat([y_ind[..., None], x_ind[..., None]], axis=-1))
-        img4 = tf.tensor_scatter_nd_add(
-            img4, indices, img[y1b:y2b, x1b:x2b], name=None
-        )
-        # #
-
-        x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, self.imgsz * 2), yc
-        x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
-        padw.append(x1a - x1b)
-        padh.append(y1a - y1b)
-        # img4[y1a:y2a, x1a:x2a] = rimages[0][0][y1b:y2b, x1b:x2b]  # img4[ymin:ymax, xmin:xmax]
-
-        indices1 = self.scatter_image_to_mosaic([x1a, x2a], [y1a, y2a])
-        img4 = tf.tensor_scatter_nd_add(
-            img4, indices1, rimages[0][0][y1b:y2b, x1b:x2b], name=None
-        )
-        # #
-        x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(self.imgsz * 2, yc + h)
-        x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
-        padw.append(x1a - x1b)
-        padh.append(y1a - y1b)
-        # img4[y1a:y2a, x1a:x2a] = rimages[1][0][y1b:y2b, x1b:x2b]  # img4[ymin:ymax, xmin:xmax]
-
-        # img4=self.scatter_image_to_mosaic( img4, rimages[1][0][y1b:y2b, x1b:x2b] , [x1a, x2a], [y1a, y2a])
-        indices1 = self.scatter_image_to_mosaic([x1a, x2a], [y1a, y2a])
-        img4 = tf.tensor_scatter_nd_add(
-            img4, indices1, rimages[1][0][y1b:y2b, x1b:x2b], name=None
-        )
-        # tf.print('rimages',rimages[1][0][y1b:y2b, x1b:x2b].shape)
-
-        x1a, y1a, x2a, y2a = xc, yc, min(xc + w, self.imgsz * 2), min(self.imgsz * 2, yc + h)
-        x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
-        padw.append(x1a - x1b)
-        padh.append(y1a - y1b)
-        # img4[y1a:y2a, x1a:x2a] = rimages[2][0][y1b:y2b, x1b:x2b]  # img4[ymin:ymax, xmin:xmax]
-        # img4=self.scatter_image_to_mosaic( img4, rimages[2][0][y1b:y2b, x1b:x2b] , [x1a, x2a], [y1a, y2a])
-        indices1 = self.scatter_image_to_mosaic([x1a, x2a], [y1a, y2a])
-        img4 = tf.tensor_scatter_nd_add(
-            img4, indices1, rimages[2][0][y1b:y2b, x1b:x2b], name=None
-        )
-        # labels, segments = self.labels[index].copy(), self.segments[index].copy()
-        # if labels.size:
-        #     labels[:, 1:] = xywhn2xyxy(labels[:, 1:], w, h, padw, padh)  # normalized xywh to pixel xyxy format
-        #     segments = [xyn2xy(x, w, h, padw, padh) for x in segments]
-        # labels4.append(labels)
-        # segments4.extend(segments)
-        img4 = tf.cast(img4, tf.float32)
-        img4 = tf.image.resize(img4, [640, 640])
-        img5 = tf.image.resize(img5, [640, 640])
+        return y
 
     def xyn2xy(self, x, w=640, h=640, padw=0, padh=0):
         # Convert normalized segments into pixel segments, shape (n,2)
@@ -342,12 +294,12 @@ class CreateDataset:
     def xywhn2xyxy(self, x, w=640, h=640, padw=0, padh=0):
         # Convert nx4 boxes from [x, y, w, h] normalized to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
         # y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
-        xmin = w * (x[..., 0] - x[..., 2] / 2) + padw  # top left x
-        ymin = h * (x[..., 1] - x[..., 3] / 2) + padh  # top left y
-        xmax = w * (x[..., 0] + x[..., 2] / 2) + padw  # bottom right x
-        ymax = h * (x[..., 1] + x[..., 3] / 2) + padh  # bottom right y
-        y = tf.stack(
-            [xmin, ymin, xmax, ymax], axis=-1, name='stack'
+        xmin = w * (x[..., 0:1] - x[..., 2:3] / 2) + padw  # top left x
+        ymin = h * (x[..., 1:2] - x[..., 3:] / 2) + padh  # top left y
+        xmax = w * (x[..., 0:1] + x[..., 2:3] / 2) + padw  # bottom right x
+        ymax = h * (x[..., 1:2] + x[..., 3:] / 2) + padh  # bottom right y
+        y = tf.concat(
+            [xmin, ymin, xmax, ymax], axis=-1, name='concat'
         )
         return y
 
@@ -394,12 +346,14 @@ class CreateDataset:
             img4 = self.scatter_image_to_mosaic(img4, img[y1b:y2b, x1b:x2b], (x1a, x2a), (y1a, y2a))
             padw = x1a - x1b
             padh = y1a - y1b
-            tf.print('1111111', idx, y_lables[idx].to_tensor().shape)
 
             if True:  # y_lables[idx].to_tensor().shape[0]:
-                y_l = y_lables[idx].to_tensor()
-                xyxy = self.xywhn2xyxy(y_l[:, 2:], w, h, padw, padh)  # normalized xywh to pixel xyxy format
-                y_l = tf.concat([y_l[:, 0:2], xyxy], axis=-1)
+                y_l = y_lables[idx]#.to_tensor()
+                xyxy = self.xywhn2xyxy(y_l[:, 1:], w, h, padw, padh)  # normalized xywh to pixel xyxy format
+                xywh= self.xyxy2xywhn(xyxy,  w=640, h=640, clip=False, eps=0.0)
+
+                y_l = tf.concat([y_l[:, 0:1], xywh], axis=-1) # concat [cls,xywh] shape: [nt, 5]
+
                 labels4.append(y_l)
 
                 ys = y_segments[idx]  # .to_tensor()
@@ -416,37 +370,12 @@ class CreateDataset:
 
 
         labels4 = tf.concat(labels4, axis=0)
-        labels4= tf.concat([labels4[0:2], labels4[2:]/2], axis =0)
+        labels4= tf.concat([labels4[0:1], labels4[1:]], axis =0)
         segments4/=2.
         img4 = tf.image.resize(img4, [640, 640])
 
         return img4, labels4, filenames, img4.shape, segments4
 
-    def decode_and_resize_image_mult(self, filename, size, y_lables, y_masks):
-
-        index = 3
-
-        ######################3
-        labels4, segments4 = [], []
-        s = size[0]
-        yc, xc = (int(random.uniform(-x, 2 * s + x)) for x in self.mosaic_border)  # mosaic center x, y
-
-        # 3 additional image indices
-        indices = [index] + random.choices(self.indices, k=3)  # 3 additional image indices
-        for i, index in enumerate(indices):
-            # Load image
-            fname = self.image_files[index]
-            img_st = tf.io.read_file(fname)
-            img_dec = tf.image.decode_image(img_st, channels=3, expand_animations=False)
-            img = tf.cast(img_dec, tf.float32)
-            # resize w/o keeping aspect ratio - no prob for normal sized images
-            img = tf.image.resize(img / 255, size)
-
-            h, w = size
-
-
-
-        return img, y_lables[0], filename[0], img.shape, y_masks[0]
 
     def __call__(self, train_path):
         lial = LoadImagesAndLabels()

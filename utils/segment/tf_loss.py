@@ -142,7 +142,7 @@ class ComputeLoss:
                     t= tf.one_hot(indices=tf.cast(tcls[i], tf.int32), depth=pcls.shape[1])
 
                 if tuple(masks.shape[-2:]) != (mask_h, mask_w):  # downsample
-                    masks = F.interpolate(masks[None], (mask_h, mask_w), mode='nearest')[0]
+                    masks = tf.image.resize(masks, (mask_h, mask_w), method='nearest')[0]
                 marea = xywhn[i][:, 2:].prod(1)  # mask width, height normalized
                 mxyxy = xywh2xyxy(xywhn[i] * tf.constant([mask_w, mask_h, mask_w, mask_h], device=self.device))
                 for bi in b.unique():
@@ -170,7 +170,7 @@ class ComputeLoss:
         lcls *= self.hyp['cls']
         bs = tobj.shape[0]  # batch size
 
-        return (lbox + lobj + lcls) * bs, tf.concat((lbox, lobj, lcls))
+        return (lbox + lobj + lcls) * bs, tf.concat((lbox, lobj, lcls), axis=-1)
 
     def single_mask_loss(self, gt_mask, pred, proto, xyxy, area):
         # Mask loss for one image
@@ -194,7 +194,10 @@ class ComputeLoss:
             batch = p[0].shape[0] # images in batch
             ti = []
             for i in range(batch):# images loop
-                num =tf.math.reduce_sum ( tf.cast(targets[:, 0] == i, tf.float32)) #  num of targets in image
+                # aa=targets[:,:, 0:1]
+                # num =tf.math.reduce_sum (targets[:,:, 0:1]) == i #  num of targets in image
+
+                num =tf.math.reduce_sum ( tf.cast(targets[:, 0:1] == i, tf.float32)) #  num of targets in image
                 ti.append(tf.tile(tf.range(num, dtype=tf.float32 )[None], [na,1]) + 1)  # shape: (na, num)
             ti = tf.concat(ti, axis=1)  # target index. (na, nt)
         else:
@@ -229,12 +232,13 @@ class ComputeLoss:
         for i in range(self.nl):
             anchors, shape = self.anchors[i], p[i].shape
             # gain[2:6] = torch.tensor(shape)[[3, 2, 3, 2]]  # xyxy gain
-            xyxy_gain = tf.tile(tf.slice(shape, [2],[2]), [2]) # todo check
+            # xyxy_gain = tf.tile(tf.slice(shape, [2],[2]), [2]) # todo check
             # from tensorflow.python.ops.numpy_ops import np_config
             # np_config.enable_numpy_behavior()
             # xyxy_gain = tf.constant(shape)[[3, 2, 3, 2]]  # xyxy gain
             # gain = tf.concat([gain[0:2],tf.cast(tf.constant(shape)[[3, 2, 3, 2]], tf.float32), gain[6:]], axis=0)# xyxy gain
             # gain = tf.concat([gain[0:2],tf.cast(tf.constant(shape)[[3, 2, 3, 2]], tf.float32), gain[6:]], axis=0)# xyxy gain
+            # gain: [1, 1, gs, gs, gs, gs, 1, 1] where gs is in 80,40,20 according to prediction layer
             gain = tf.tensor_scatter_nd_update(gain, [[2],[3],[4],[5]], tf.cast(tf.constant(shape)[[3, 2, 3, 2]], tf.float32))
             # gain[2:6] =
 

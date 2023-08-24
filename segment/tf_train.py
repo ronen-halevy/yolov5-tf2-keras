@@ -124,8 +124,8 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     data_dict = data_dict or check_dataset(data)  # check if None
     train_path, val_path = data_dict['train'], data_dict['val']
 
-    create_dataset=CreateDataset()
-    dataset=create_dataset(train_path, imgsz)
+    create_dataset=CreateDataset(640)
+    dataset=create_dataset(train_path)
 
     nc = 1 if single_cls else int(data_dict['nc'])  # number of classes
     names = {0: 'item'} if single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
@@ -213,13 +213,36 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
 
     compute_loss = ComputeLoss(hyp,  na,nl,nc,anchors, autobalance=False)  # init loss class
+    dataset = dataset.batch(2)
 
-    for epoch in range(1, epochs + 1):
+    for epoch in range(epochs):
         for batch, (image,  targets, filename, shape, masks) in enumerate(dataset):
+            # import cv2
+            # nmasks = []
+            # for mask in masks:
+            #     mask=mask.to_tensor()
+            #     polygons = mask.numpy()
+            #
+            #     mask1 = np.zeros([640, 640], dtype=np.uint8)
+            #     # polygons = np.asarray(mask)
+            #     polygons = polygons.astype(np.int32)
+            #     shape = polygons.shape
+            #     polygons = polygons.reshape(shape[0], -1, 2)
+            #     cv2.fillPoly(mask1, polygons, color=1)
+
+
+            new_targets = []
+            for idx, target in enumerate(targets):
+                bindex=tf.cast([idx], tf.float32)[None]
+                bindex = tf.tile(bindex, [target.shape[0],  1])
+                new_targets.append(tf.concat([bindex, target.to_tensor()], axis=-1)) # [bindex,cls, xywh]
+            targets = tf.concat(new_targets, axis=0) # shape: [nt, 6]
+
+
 
             with tf.GradientTape() as tape:
-                im = tf.expand_dims(image,axis=0)
-                pred = keras_model(im)  # forward
+                # im = tf.expand_dims(image,axis=0)
+                pred = keras_model(image)  # forward
 
                 loss, loss_items = compute_loss(pred, targets, masks)
 
