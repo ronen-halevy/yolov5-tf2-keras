@@ -68,6 +68,7 @@ from models.tf_model import TFModel
 
 from tf_create_dataset import CreateDataset
 
+from utils.segment.polygons2masks import polygons2masks_overlap, polygon2mask
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
@@ -91,7 +92,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze, opt.mask_ratio
     # callbacks.run('on_pretrain_routine_start')
     imgsz = [640, 640] # Todo ronen
-
+    nm = 32 # todo TBD
     # Directories
     w = save_dir / 'weights'  # weights dir
     (w.parent if evolve else w).mkdir(parents=True, exist_ok=True)  # make dir
@@ -139,7 +140,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # tf_model.predict(im)
     keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im))
     # keras_model.compile()
-    # print(keras_model.summary())
+    print(keras_model.summary())
     # tf_model.run_eagerly = True
     # pred = keras_model(im)  # forward
 
@@ -212,31 +213,30 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     na = anchors.shape[1] # if isinstance(anchors, list) else anchors  # number of anchors
 
 
-    compute_loss = ComputeLoss(hyp,  na,nl,nc,anchors, autobalance=False)  # init loss class
-    dataset = dataset.batch(2)
+    compute_loss = ComputeLoss(hyp,  na,nl,nc,nm, anchors, autobalance=False)  # init loss class
+    dataset = dataset.batch(1)
 
     for epoch in range(epochs):
-        for batch, (image,  targets, filename, shape, masks) in enumerate(dataset):
-            # import cv2
-            # nmasks = []
-            # for mask in masks:
-            #     mask=mask.to_tensor()
-            #     polygons = mask.numpy()
-            #
-            #     mask1 = np.zeros([640, 640], dtype=np.uint8)
-            #     # polygons = np.asarray(mask)
-            #     polygons = polygons.astype(np.int32)
-            #     shape = polygons.shape
-            #     polygons = polygons.reshape(shape[0], -1, 2)
-            #     cv2.fillPoly(mask1, polygons, color=1)
+
+        for batch, (image,  targets, filename, shape, segments) in enumerate(dataset):
+            nmasks = []
+
+            masks, sorted_idx = polygons2masks_overlap(image.shape[1:3],
+                                                               segments,
+                                                               downsample_ratio=mask_ratio)
+            masks = masks[None]  # (640, 640) -> (1, 640, 640)
+            print(sorted_idx)
 
 
+            # concat image index word to targets. result targets shape: [nt, 6] where nt total of target objectd
             new_targets = []
             for idx, target in enumerate(targets):
                 bindex=tf.cast([idx], tf.float32)[None]
                 bindex = tf.tile(bindex, [target.shape[0],  1])
                 new_targets.append(tf.concat([bindex, target.to_tensor()], axis=-1)) # [bindex,cls, xywh]
             targets = tf.concat(new_targets, axis=0) # shape: [nt, 6]
+
+            targets = targets[sorted_idx]
 
 
 

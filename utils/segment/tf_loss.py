@@ -57,10 +57,11 @@ class ComputeLoss:
     sort_obj_iou = False
 
     # Compute losses
-    def __init__(self, hyp, na,nl,nc,anchors, autobalance=False):
+    def __init__(self, hyp, na,nl,nc,nm,anchors, autobalance=False):
         self.na = na # number of anchors
         self.nc = nc  # number of classes
         self.nl = nl  # number of layers
+        self.nm = nm  # number of masks
 
 
         # device = next(model.parameters()).device  # get model device
@@ -113,7 +114,6 @@ class ComputeLoss:
             n = b.shape[0]  # number of targets
             if n:
                 # pxy, pwh, _, pcls = pi[b, a, gj, gi].tensor_split((2, 4, 5), dim=1)  # faster, requires torch 1.8.0
-                xxx = pi[tf.cast(b, tf.int32), tf.cast(a, tf.int32), gj, gi]
                 pxy, pwh, _, pcls, pmask = tf.split(pi[tf.cast(b, tf.int32), tf.cast(a, tf.int32), gj, gi], (2, 2, 1, self.nc, nm), 1)
                                             # .split((2, 2, 1, self.nc), 1))  # target-subset of predictions
 
@@ -140,18 +140,21 @@ class ComputeLoss:
                 if self.nc > 1:  # cls loss (only if multiple classes)
                     # create [nt, nc] one_hot class array:
                     t= tf.one_hot(indices=tf.cast(tcls[i], tf.int32), depth=pcls.shape[1])
+                    lcls += self.BCEcls(pcls, t)  # BCE
 
+                # Mask regression
                 if tuple(masks.shape[-2:]) != (mask_h, mask_w):  # downsample
                     masks = tf.image.resize(masks, (mask_h, mask_w), method='nearest')[0]
-                marea = xywhn[i][:, 2:].prod(1)  # mask width, height normalized
-                mxyxy = xywh2xyxy(xywhn[i] * tf.constant([mask_w, mask_h, mask_w, mask_h], device=self.device))
-                for bi in b.unique():
+                marea = tf.math.reduce_prod(xywhn[i][:, 2:], axis=1)  # mask width, height normalized
+                mxyxy = xywh2xyxy(xywhn[i] * tf.constant([mask_w, mask_h, mask_w, mask_h]))
+                for bi in tf.unique(b)[0]:
                     j = b == bi  # matching index
                     if self.overlap:
-                        mask_gti = tf.constant(masks[bi][None] == tidxs[i][j].view(-1, 1, 1), 1.0, 0.0)
+                        mask_gti = tf.where(masks[tf.cast(bi, tf.int32)][None] == tf.reshape(tidxs[i][j], [-1, 1, 1]), 1.0, 0.0)
+
                     else:
                         mask_gti = masks[tidxs[i]][j]
-                    lseg += self.single_mask_loss(mask_gti, pmask[j], proto[bi], mxyxy[j], marea[j])
+                    lseg += self.single_mask_loss(mask_gti, pmask[j], proto[tf.cast(bi, tf.int32)], mxyxy[j], marea[j])
 
 
                 # Append targets to text file
@@ -173,10 +176,13 @@ class ComputeLoss:
         return (lbox + lobj + lcls) * bs, tf.concat((lbox, lobj, lcls), axis=-1)
 
     def single_mask_loss(self, gt_mask, pred, proto, xyxy, area):
-        # Mask loss for one image
-        pred_mask = (pred @ proto.view(self.nm, -1)).view(-1, *proto.shape[1:])  # (n,32) @ (32,80,80) -> (n,80,80)
-        loss = F.binary_cross_entropy_with_logits(pred_mask, gt_mask, reduction='none')
-        return (crop_mask(loss, xyxy).mean(dim=(1, 2)) / area).mean()
+        pred_mask = tf.reshape(pred @ tf.reshape(proto, (self.nm, -1)),[ -1, *proto.shape[1:]])  # (n,32) @ (32,80,80) -> (n,80,80)
+        bse = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction='none')
+        loss=bse(pred_mask[...,None], gt_mask[...,None])
+        return tf.math.reduce_mean(tf.math.reduce_mean(crop_mask(loss, xyxy), axis=[1,2]) / area)
+        # return (crop_mask(loss, xyxy).mean(dim=(1, 2)) / area).mean()
+
+        # return (crop_mask(loss, xyxy).mean(dim=(1, 2)) / area).mean()
 
     def build_targets(self, p, targets):
         # targets = targets.to_tensor() # todo
