@@ -188,30 +188,27 @@ class ComputeLoss:
         # targets = targets.to_tensor() # todo
 
         # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
-        na, nt = self.na, targets.shape[0]  # number of anchors, targets
+        na, nt = self.na, targets.shape[0]  # number of anchors, num of targets in images batch
         tcls, tbox, indices, anch, tidxs, xywhn = [], [], [], [], [], []
 
         gain = tf.ones([8])  # normalized to gridspace gain
         # ai = torch.arange(na, device=self.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
 
         ai = tf.tile(tf.reshape(tf.range(na, dtype= tf.float32), (na, 1)), [1,nt]) # anchor index. shape: [na, nt]
+
         # objects overlap assign objects pixels by a per class index. CPixels common to multi assigned by greater index
         if self.overlap:
             batch = p[0].shape[0] # images in batch
             ti = []
-            for i in range(batch):# images loop
-                # aa=targets[:,:, 0:1]
-                # num =tf.math.reduce_sum (targets[:,:, 0:1]) == i #  num of targets in image
-
-                num =tf.math.reduce_sum ( tf.cast(targets[:, 0:1] == i, tf.float32)) #  num of targets in image
-                ti.append(tf.tile(tf.range(num, dtype=tf.float32 )[None], [na,1]) + 1)  # shape: (na, num)
-            ti = tf.concat(ti, axis=1)  # target index. (na, nt)
-        else:
+            for idx in range(batch):# loop on batch to create targets index range per image
+                num =tf.math.reduce_sum ( tf.cast(targets[:, 0:1] == idx, tf.float32)) # targets in image
+                ti.append(tf.tile(tf.range(num, dtype=tf.float32 )[None], [na,1]) + 1)  #entries shape:(na, num)
+            ti = tf.concat(ti, axis=1)  # e.g. batch=2 with 2&1 targets: [[1,2,1], [1,2,1], [1,2,1]], shape:(na, nt)
+        else:# no overlap: flat ti indices, e.g. batch=2 with 2&1 targets: [[1,2,3], [1,2,3], [1,2,3]], shape:(na, nt)
             ti = tf.tile(tf.range(nt, dtype=tf.float32)[None], [na, 1])
 
-
-        # append anchor indices and targer indices. concat axis 2 to dim 8: im_id, cls, x,y,h,w, ai, ti
-        targets = tf.concat((tf.tile(targets[None],(na, 1, 1)), ai[..., None], ti[..., None]), 2)  # shape: [na, nt,8]
+        ttpa = tf.tile(targets[None], (na, 1,1)) # tile targets per anchors. shape: [na, nt, 6]
+        targets = tf.concat((ttpa, ai[..., None], ti[..., None]), 2)  # concat anchor idx and ti idx. shape: [na, nt,8]
 
         g = 0.5  # bias
         # off = torch.tensor(
@@ -234,9 +231,9 @@ class ComputeLoss:
                 [0, -1],  # j,k,l,m
             ], dtype=tf.float32
            ) * g  # offsets
-
+        # loop on layers i.e. 3 output grids (80*80,40*40,20*20), calc target samples per each:
         for i in range(self.nl):
-            anchors, shape = self.anchors[i], p[i].shape
+            anchors, shape = self.anchors[i], p[i].shape # take layer's anchors and grid. p[i] shape: [na,gy,gx]
             # gain[2:6] = torch.tensor(shape)[[3, 2, 3, 2]]  # xyxy gain
             # xyxy_gain = tf.tile(tf.slice(shape, [2],[2]), [2]) # todo check
             # from tensorflow.python.ops.numpy_ops import np_config

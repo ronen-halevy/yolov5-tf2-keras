@@ -214,37 +214,38 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
 
     compute_loss = ComputeLoss(hyp,  na,nl,nc,nm, anchors, autobalance=False)  # init loss class
-    dataset = dataset.batch(1)
+    dataset = dataset.batch(2)
 
     for epoch in range(epochs):
 
-        for batch, (image,  targets, filename, shape, segments) in enumerate(dataset):
+        for batch, (bimages,  btargets, bfilename, bshape, bsegments) in enumerate(dataset):
             nmasks = []
 
-            masks, sorted_idx = polygons2masks_overlap(image.shape[1:3],
-                                                               segments,
+            bmasks, bsorted_idx = polygons2masks_overlap(bimages.shape[1:3],
+                                                               bsegments,
                                                                downsample_ratio=mask_ratio)
-            masks = masks[None]  # (640, 640) -> (1, 640, 640)
-            print(sorted_idx)
+            bmasks = tf.stack(bmasks, axis=0)  # (b, 640, 640)
+            print(bsorted_idx)
 
 
             # concat image index word to targets. result targets shape: [nt, 6] where nt total of target objectd
-            new_targets = []
-            for idx, target in enumerate(targets):
+            new_btargets = []
+            for idx, (targets, sorted_idx) in enumerate(zip(btargets, bsorted_idx)):
                 bindex=tf.cast([idx], tf.float32)[None]
-                bindex = tf.tile(bindex, [target.shape[0],  1])
-                new_targets.append(tf.concat([bindex, target.to_tensor()], axis=-1)) # [bindex,cls, xywh]
-            targets = tf.concat(new_targets, axis=0) # shape: [nt, 6]
+                bindex = tf.tile(bindex, [targets.shape[0],  1])
+                new_btargets.extend(tf.concat([bindex, targets.to_tensor()], axis=-1)[sorted_idx]) # [bindex,cls, xywh]
+            # btargets = tf.stack(new_btargets, axis=0) # shape: [nt, 6]
 
-            targets = targets[sorted_idx]
+            # targets = targets[sorted_idx]
+            new_btargets=tf.stack(new_btargets, axis=0)
 
 
 
             with tf.GradientTape() as tape:
                 # im = tf.expand_dims(image,axis=0)
-                pred = keras_model(image)  # forward
+                pred = keras_model(bimages)  # forward
 
-                loss, loss_items = compute_loss(pred, targets, masks)
+                loss, loss_items = compute_loss(pred, new_btargets, bmasks)
 
 
             grads = tape.gradient(loss, keras_model.trainable_variables)
@@ -557,8 +558,6 @@ def run(**kwargs):
     for k, v in kwargs.items():
         setattr(opt, k, v)
     main(opt)
-    return opt
-
 
 if __name__ == '__main__':
     opt = parse_opt()
