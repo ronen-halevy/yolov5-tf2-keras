@@ -225,7 +225,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                                                                bsegments,
                                                                downsample_ratio=mask_ratio)
             bmasks = tf.stack(bmasks, axis=0)  # (b, 640, 640)
-            print(bsorted_idx)
 
 
             # concat image index word to targets. result targets shape: [nt, 6] where nt total of target objectd

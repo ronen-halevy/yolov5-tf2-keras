@@ -172,8 +172,10 @@ class ComputeLoss:
         lobj *= self.hyp['obj']
         lcls *= self.hyp['cls']
         bs = tobj.shape[0]  # batch size
+        loss = lbox + lobj + lcls + lseg
 
-        return (lbox + lobj + lcls) * bs, tf.concat((lbox, lobj, lcls), axis=-1)
+        print('loss', loss.numpy() * bs, lbox.numpy(), lobj.numpy(), lcls.numpy(), lseg.numpy())
+        return loss* bs, tf.concat((lbox, lobj, lcls), axis=-1)
 
     def single_mask_loss(self, gt_mask, pred, proto, xyxy, area):
         pred_mask = tf.reshape(pred @ tf.reshape(proto, (self.nm, -1)),[ -1, *proto.shape[1:]])  # (n,32) @ (32,80,80) -> (n,80,80)
@@ -298,9 +300,7 @@ class ComputeLoss:
 
             tbox.append(tf.concat((gxy - tf.cast(gij, tf.float32), gwh), 1))  # xy modified : gxy - gij i.e. box_center-grid square indices
             # anch.append(anchors[a])  # anchors
-            print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1',tf.math.reduce_max(tf.cast(a, tf.int32)))
             # anch.append(tf.gather(anchors, [tf.cast(a, tf.int32)], axis=0))   # anchors
-            xx=anchors[2]
             anch.append(anchors[tf.cast(a, tf.int32)])  # anchors
 
             tcls.append(c)  # class
