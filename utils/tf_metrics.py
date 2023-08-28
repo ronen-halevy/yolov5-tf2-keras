@@ -240,8 +240,8 @@ def bbox_iou(box1, box2, xywh=True, GIoU=False, DIoU=False, CIoU=False, eps=1e-7
         w2, h2 = b2_x2 - b2_x1, tf.minimum(b2_y2 - b2_y1,eps)
 
     # Intersection area
-    inter = tf.minimum((tf.minimum(b1_x2, b2_x2) - tf.maximum(b1_x1, b2_x1)), 0) * \
-            tf.minimum((tf.minimum(b1_y2,b2_y2) - tf.maximum(b1_y1,b2_y1)),0)
+    inter = tf.maximum((tf.minimum(b1_x2, b2_x2) - tf.maximum(b1_x1, b2_x1)), 0) * \
+            tf.maximum((tf.minimum(b1_y2,b2_y2) - tf.maximum(b1_y1,b2_y1)),0)
 
     # Union Area
     union = w1 * h1 + w2 * h2 - inter + eps

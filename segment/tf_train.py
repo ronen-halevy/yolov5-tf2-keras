@@ -212,8 +212,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     nl = anchors.shape[0]
     na = anchors.shape[1] # if isinstance(anchors, list) else anchors  # number of anchors
 
-
-    compute_loss = ComputeLoss(hyp,  na,nl,nc,nm, anchors, autobalance=False)  # init loss class
+    compute_loss = ComputeLoss( na,nl,nc,nm, anchors, hyp['fl_gamma'], hyp['box'], hyp['obj'], hyp['cls'], hyp['anchor_t'], autobalance=False)  # init loss class
     dataset = dataset.batch(2)
 
     for epoch in range(epochs):

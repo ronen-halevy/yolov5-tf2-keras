@@ -57,7 +57,11 @@ class ComputeLoss:
     sort_obj_iou = False
 
     # Compute losses
-    def __init__(self, hyp, na,nl,nc,nm,anchors, autobalance=False):
+    # fl_gamma - focal loss gamma
+    # box_lg, obj_lg, cls_lg - box, obj and class loss gain
+    # anchor_t - anchor multiple thresh
+
+    def __init__(self, na,nl,nc,nm,anchors, fl_gamma, box_lg, obj_lg, cls_lg, anchor_t, autobalance=False, label_smoothing=0.0):
         self.na = na # number of anchors
         self.nc = nc  # number of classes
         self.nl = nl  # number of layers
@@ -65,7 +69,7 @@ class ComputeLoss:
 
 
         # device = next(model.parameters()).device  # get model device
-        h = hyp  # hyperparameters
+        # h = hyp  # hyperparameters
 
         # Define criteria
         # BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['cls_pw']], device=device))
@@ -76,23 +80,28 @@ class ComputeLoss:
         # BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['cls_pw']], device=device))
 
         # Class label smoothing https://arxiv.org/pdf/1902.04103.pdf eqn 3
-        self.cp, self.cn = smooth_BCE(eps=h.get('label_smoothing', 0.0))  # positive, negative BCE targets
+        self.cp, self.cn = smooth_BCE(eps=label_smoothing)  # positive, negative BCE targets
 
         # Focal loss
-        g = h['fl_gamma']  # focal loss gamma
-        if g > 0:
-            BCEcls, BCEobj = FocalLoss(BCEcls, g), FocalLoss(BCEobj, g)
+        # g = h['fl_gamma']  # focal loss gamma
+        if fl_gamma > 0:
+            BCEcls, BCEobj = FocalLoss(BCEcls, fl_gamma), FocalLoss(BCEobj, fl_gamma)
 
         # m = de_parallel(model).model[-1]  # Detect() module
         self.balance = {3: [4.0, 1.0, 0.4]}.get(self.nl, [4.0, 1.0, 0.25, 0.06, 0.02])  # P3-P7
         self.ssi = list(m.stride).index(16) if autobalance else 0  # stride 16 index
-        self.BCEcls, self.BCEobj, self.gr, self.hyp, self.autobalance = BCEcls, BCEobj, 1.0, h, autobalance
+        self.BCEcls, self.BCEobj, self.gr, self.autobalance = BCEcls, BCEobj, 1.0,  autobalance
         # self.na = m.na  # number of anchors
         # self.nc = m.nc  # number of classes
         # self.nl = m.nl  # number of layers
         self.anchors = anchors
         self.overlap=True # Todo
         # self.device = device
+        self.box_lg=box_lg
+        self.obj_lg=obj_lg
+        self.cls_lg=cls_lg
+        self.anchor_t=anchor_t
+
 
     def __call__(self, preds, targets, masks):  # predictions, targets
         p, proto = preds
@@ -115,18 +124,14 @@ class ComputeLoss:
             if n:
                 # pxy, pwh, _, pcls = pi[b, a, gj, gi].tensor_split((2, 4, 5), dim=1)  # faster, requires torch 1.8.0
                 pxy, pwh, _, pcls, pmask = tf.split(pi[tf.cast(b, tf.int32), tf.cast(a, tf.int32), gj, gi], (2, 2, 1, self.nc, nm), 1)
-                                            # .split((2, 2, 1, self.nc), 1))  # target-subset of predictions
-
                 # Regression
                 pxy = tf.sigmoid(pxy) * 2 - 0.5
                 pwh = (tf.sigmoid(pwh) * 2) ** 2 * anchors[i]
                 pbox = tf.concat((pxy, pwh), 1)  # predicted box
                 iou = tf.squeeze(bbox_iou(pbox, tbox[i], CIoU=True))  # iou(prediction, target)
                 lbox += (1.0 - iou).mean()  # iou loss
-
                 # Objectness
-                iou = tf.cast(tf.minimum(iou, 0), tobj.dtype)
-
+                iou = tf.cast(tf.maximum(iou, 0), tobj.dtype)
                 if self.sort_obj_iou:
                     j = iou.argsort()
                     b, a, gj, gi, iou = b[j], a[j], gj[j], gi[j], iou[j]
@@ -160,17 +165,26 @@ class ComputeLoss:
                 # Append targets to text file
                 # with open('targets.txt', 'a') as file:
                 #     [file.write('%11.5g ' * 4 % tuple(x) + '\n') for x in torch.cat((txy[i], twh[i]), 1)]
-
+            print('xx', tf.where(tobj))
             obji = self.BCEobj(pi[..., 4], tobj)
+
+            print('obji',obji, tf.where(tobj))
+            print('sum', tf.math.reduce_sum(tobj))
+            print('pi[..., 4]', pi[..., 4])
+
+
+
             lobj += obji * self.balance[i]  # obj loss
             if self.autobalance:
                 self.balance[i] = self.balance[i] * 0.9999 + 0.0001 / obji.detach().item()
 
         if self.autobalance:
             self.balance = [x / self.balance[self.ssi] for x in self.balance]
-        lbox *= self.hyp['box']
-        lobj *= self.hyp['obj']
-        lcls *= self.hyp['cls']
+        print('lobj', lobj, self.obj_lg)
+
+        lbox *= self.box_lg
+        lobj *= self.obj_lg
+        lcls *= self.cls_lg
         bs = tobj.shape[0]  # batch size
         loss = lbox + lobj + lcls + lseg
 
@@ -205,12 +219,12 @@ class ComputeLoss:
             for idx in range(batch):# loop on batch to create targets index range per image
                 num =tf.math.reduce_sum ( tf.cast(targets[:, 0:1] == idx, tf.float32)) # targets in image
                 ti.append(tf.tile(tf.range(num, dtype=tf.float32 )[None], [na,1]) + 1)  #entries shape:(na, num)
-            ti = tf.concat(ti, axis=1)  # e.g. batch=2 with 2&1 targets: [[1,2,1], [1,2,1], [1,2,1]], shape:(na, nt)
-        else:# no overlap: flat ti indices, e.g. batch=2 with 2&1 targets: [[1,2,3], [1,2,3], [1,2,3]], shape:(na, nt)
+            ti = tf.concat(ti, axis=1)  # e.g. batch=2 ,3&1 targets:[[1,2,3,1], [1,2,3,1], [1,2,3,1]],shape:(na, nt)
+        else:# no overlap: flat ti indices, e.g. batch=2, 4&1 targets: [[1,2,3,4], [1,2,3,4], [1,2,3,4]], shape:(na, nt)
             ti = tf.tile(tf.range(nt, dtype=tf.float32)[None], [na, 1])
 
         ttpa = tf.tile(targets[None], (na, 1,1)) # tile targets per anchors. shape: [na, nt, 6]
-        targets = tf.concat((ttpa, ai[..., None], ti[..., None]), 2)  # concat anchor idx and ti idx. shape: [na, nt,8]
+        targets = tf.concat((ttpa, ai[..., None], ti[..., None]), 2)  #concat targets, ai and ti idx. shape:[na, nt,8]
 
         g = 0.5  # bias
         # off = torch.tensor(
@@ -255,14 +269,9 @@ class ComputeLoss:
                 # unmatching anchor's boxes records.:
                 # Matches:
 
-                # r = tf.math.divide(t[..., 4:6],  tf.cast(anchors[:,None,:], tf.float32) )# wh/anchors ratio. shape: [na, nt,2]
                 r = (t[..., 4:6]/  tf.cast(anchors[:,None,:], tf.float32) )# wh/anchors ratio. shape: [na, nt,2]
-
-                j = tf.math.reduce_max(tf.math.maximum(r, 1 / r), axis=-1) < self.hyp['anchor_t']  # compare, bool shape: [na, nt]
-
-                # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
+                j = tf.math.reduce_max(tf.math.maximum(r, 1 / r), axis=-1) < self.anchor_t  # compare, bool shape: [na, nt]
                 t = t[j]  # filter out unmatched to anchors targets. shape:  [nt, 8] where nt changed to nt_filtered
-
 
                 # idea of offset: pred bbox center trainsformation is pxy.sigmoid()*2-0.5 giving 0.5<=pxy<=1.5 so preds
                 # may transform to adjacent gid squares-upper half of l,u and lower hald of r,d, and need ti be matched
@@ -274,15 +283,18 @@ class ComputeLoss:
                 gxy = t[:, 2:4]  # grid xy. shape: [nt,2]
                 # from tensorflow.python.ops.numpy_ops import np_config
                 # np_config.enable_numpy_behavior()
-                # gxi = tf.slice(gain, [2] ,[2]) - gxy  # inverse: offsets from square upper ends. shape: [nt,2]
+                # inverse: offsets from square right/down ends. shape: [nt,2]:
                 gxi = gain[[2, 3]] - gxy  # inverse
+                #j,k true if located in left/up half part of square, & gxy>1 False if in l/up edge square. shape:[nt]:
+                j, k = ((gxy % 1 < g) & (gxy > 1)).T
+                #l,m true if located in right/low half part of square, & gxi>1 False if in r/l edge square ( shape:[nt]:
+                l, m = ((gxi % 1 < g) & (gxi > 1)).T
+                j = tf.stack((tf.ones_like(j), j, k, l, m)) # ind to 5 adjacent squares. shape:[5,nt]
+                # print('j',j)
 
-                j, k = ((gxy % 1 < g) & (gxy > 1)).T # j,k true if gt in l,up half. gxy<=1 l,u, edge square. shape:[nt].
-                l, m = ((gxi % 1 < g) & (gxi > 1)).T# l,m true if gt in r,low half. gxi<=1 r,l, edge square. shape:[nt].
-                j = tf.stack((tf.ones_like(j), j, k, l, m)) # 5 validity ind to main &4 adjacent squares. shape:[5,nt]
+                # target coords tiled to the 5 squares, and then filtered by j to relevant squares:
                 t = tf.tile(t[None], (5, 1, 1))[j] # tile by 5 and filter valid. shape: [valid dup nt, 8]
-
-                # t = tf.tile((5, 1, 1))[j] # tile by 5 and filter valid. shape: [valid dup nt, 8]
+                # print('t',t)
 
                 offsets = (tf.zeros_like(gxy)[None] + off[:, None])[j] # gt indices offs. shpe:  [valid dup nt, 2]
             else:
@@ -291,22 +303,71 @@ class ComputeLoss:
 
             # Define
             bc, gxy, gwh, ati = tf.split(t, 4, axis=-1)  # (image, class), grid xy, grid wh, anchors
+            # print('bc', bc)
+
             (a,tidx), (b, c) =  tf.transpose(ati), tf.transpose(bc)  # anchors, image, class
+            # print('c', c)
+
             gij = tf.cast((gxy - offsets), tf.int32) # gij=gxy-offs giving left corner of grid square
+            gij = tf.clip_by_value(gij,[0,0], [shape[2] - 1,shape[3] - 1] )
+
             gi, gj = gij.T  # grid indices
 
-            # Append
-            indices.append((b, a, tf.clip_by_value(gj,0, (shape[2] - 1)), tf.clip_by_value(gi ,0, shape[3] - 1)))  # image, anchor, grid
+            # Append  b,a,gj,gi:
+            indices.append((b, a, gj, gi))
 
-            tbox.append(tf.concat((gxy - tf.cast(gij, tf.float32), gwh), 1))  # xy modified : gxy - gij i.e. box_center-grid square indices
-            # anch.append(anchors[a])  # anchors
-            # anch.append(tf.gather(anchors, [tf.cast(a, tf.int32)], axis=0))   # anchors
-            anch.append(anchors[tf.cast(a, tf.int32)])  # anchors
+            # xc,yc,w,h where xc,yc is offset from grid squares corner:
+            tbox.append(tf.concat((gxy - tf.cast(gij, tf.float32), gwh), 1)) # list.size: 3. shape: [nt, 4]
 
-            tcls.append(c)  # class
-            tidxs.append(tidx)
-            xywhn.append(tf.concat((gxy, gwh), 1) / gain[2:6])  # xywh normalized
+            anch.append(anchors[tf.cast(a, tf.int32)])   # anchor indices. list.size: 3. shape: [nt]
+
+            tcls.append(c)  # class. list.size: 3. shape: nt
+            tidxs.append(tidx) # target indices, i.e. running count of target in image shape: [nt]
+            xywhn.append(tf.concat((gxy, gwh), 1) / gain[2:6])  # xywh normalized shape: [nt, 4]
 
 
         return tcls, tbox, indices, anch, tidxs, xywhn
 
+
+# if __name__ == '__main__':
+def main():
+    # hyp, na, nl, nc, nm, anchors
+    na, nl, nc, nm =3,3,80,32
+    box: 0.05  # box loss gain
+    cls: 0.5  # cls loss gain
+    cls_pw: 1.0  # cls BCELoss positive_weight
+    obj: 1.0  # obj loss gain (scale with pixels)
+    obj_pw: 1.0  # obj BCELoss positive_weight
+    iou_t: 0.20  # IoU training threshold
+    anchor_t: 4.0  # anchor-multiple threshold
+
+    box_lg, obj_lg, cls_lg, anchor_t= 0.005, 1.0, 0.5 , 4
+    anchors_cfg= [[10, 13, 16, 30, 33, 23],  # P3/8
+     [30, 61, 62, 45, 59, 119],  # P4/16
+     [116, 90, 156, 198, 373, 326]]  # P5/32
+    anchors = tf.reshape(anchors_cfg, [3, -1, 2])
+    stride=[8,16,32]
+    anchors = tf.cast(anchors / tf.reshape(stride, (-1, 1, 1)), tf.float32)
+    fl_gamma=0
+    loss = ComputeLoss( na,nl,nc,nm,anchors, fl_gamma, box_lg, obj_lg, cls_lg, anchor_t,  autobalance=False)
+
+    b=2 # batch
+
+    p0=tf.ones([b,nl,80,80,5+nc+nm])
+    p1=tf.ones([b,nl,40,40,5+nc+nm])
+    p2=tf.ones([b,nl,20,20,5+nc+nm])
+    p=[p0,p1,p2]
+
+    proto =tf.ones([b,nm, 160,160], dtype=tf.float32)
+    pred=[p,proto]
+
+    nt=10
+    targets1 = tf.ones([int(nt/2), 6], dtype=tf.float32)
+    targets2 = tf.zeros([int(nt/2), 6], dtype=tf.float32)
+    targets = tf.concat([targets1, targets2], axis=0)
+
+    masks=tf.ones([b, 160, 160], dtype=tf.float32)
+    tot_loss, closs = loss(pred, targets, masks)
+    # print('tf: in!!!!', tot_loss, closs)
+
+    return tot_loss, closs
