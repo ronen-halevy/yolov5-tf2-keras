@@ -145,7 +145,7 @@ class ComputeLoss:
                 if self.nc > 1:  # cls loss (only if multiple classes)
                     # create [nt, nc] one_hot class array:
                     t= tf.one_hot(indices=tf.cast(tcls[i], tf.int32), depth=pcls.shape[1])
-                    lcls += self.BCEcls(pcls, t)  # BCE
+                    lcls += self.BCEcls( t, pcls)  # BCE
 
                 # Mask regression
                 if tuple(masks.shape[-2:]) != (mask_h, mask_w):  # downsample
@@ -161,18 +161,10 @@ class ComputeLoss:
                         mask_gti = masks[tidxs[i]][j]
                     lseg += self.single_mask_loss(mask_gti, pmask[j], proto[tf.cast(bi, tf.int32)], mxyxy[j], marea[j])
 
-
                 # Append targets to text file
                 # with open('targets.txt', 'a') as file:
                 #     [file.write('%11.5g ' * 4 % tuple(x) + '\n') for x in torch.cat((txy[i], twh[i]), 1)]
-            print('xx', tf.where(tobj))
-            obji = self.BCEobj(pi[..., 4], tobj)
-
-            print('obji',obji, tf.where(tobj))
-            print('sum', tf.math.reduce_sum(tobj))
-            print('pi[..., 4]', pi[..., 4])
-
-
+            obji = self.BCEobj(tobj, pi[..., 4])
 
             lobj += obji * self.balance[i]  # obj loss
             if self.autobalance:
@@ -180,35 +172,29 @@ class ComputeLoss:
 
         if self.autobalance:
             self.balance = [x / self.balance[self.ssi] for x in self.balance]
-        print('lobj', lobj, self.obj_lg)
 
         lbox *= self.box_lg
         lobj *= self.obj_lg
         lcls *= self.cls_lg
-        bs = tobj.shape[0]  # batch size
+        lseg *= self.box_lg / bs
         loss = lbox + lobj + lcls + lseg
-
-        print('loss', loss.numpy() * bs, lbox.numpy(), lobj.numpy(), lcls.numpy(), lseg.numpy())
-        return loss* bs, tf.concat((lbox, lobj, lcls), axis=-1)
+        print('loss', loss)
+        return loss* bs, tf.concat((lbox, lobj, lcls, lseg), axis=-1)
 
     def single_mask_loss(self, gt_mask, pred, proto, xyxy, area):
         pred_mask = tf.reshape(pred @ tf.reshape(proto, (self.nm, -1)),[ -1, *proto.shape[1:]])  # (n,32) @ (32,80,80) -> (n,80,80)
         bse = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction='none')
-        loss=bse(pred_mask[...,None], gt_mask[...,None])
-        return tf.math.reduce_mean(tf.math.reduce_mean(crop_mask(loss, xyxy), axis=[1,2]) / area)
-        # return (crop_mask(loss, xyxy).mean(dim=(1, 2)) / area).mean()
+        loss=bse(gt_mask[...,None], pred_mask[...,None])
 
-        # return (crop_mask(loss, xyxy).mean(dim=(1, 2)) / area).mean()
+        return tf.math.reduce_mean(tf.math.reduce_mean(crop_mask(loss, xyxy), axis=[1,2]) / area)
+
 
     def build_targets(self, p, targets):
-        # targets = targets.to_tensor() # todo
-
         # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
         na, nt = self.na, targets.shape[0]  # number of anchors, num of targets in images batch
         tcls, tbox, indices, anch, tidxs, xywhn = [], [], [], [], [], []
 
         gain = tf.ones([8])  # normalized to gridspace gain
-        # ai = torch.arange(na, device=self.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
 
         ai = tf.tile(tf.reshape(tf.range(na, dtype= tf.float32), (na, 1)), [1,nt]) # anchor index. shape: [na, nt]
 
@@ -227,17 +213,6 @@ class ComputeLoss:
         targets = tf.concat((ttpa, ai[..., None], ti[..., None]), 2)  #concat targets, ai and ti idx. shape:[na, nt,8]
 
         g = 0.5  # bias
-        # off = torch.tensor(
-        #     [
-        #         [0, 0],
-        #         [1, 0],
-        #         [0, 1],
-        #         [-1, 0],
-        #         [0, -1],  # j,k,l,m
-        #         # [1, 1], [1, -1], [-1, 1], [-1, -1],  # jk,jm,lk,lm
-        #     ],
-        #     device=self.device).float() * g  # offsets
-
         off = tf.constant(
             [
                 [0, 0],
@@ -250,17 +225,9 @@ class ComputeLoss:
         # loop on layers i.e. 3 output grids (80*80,40*40,20*20), calc target samples per each:
         for i in range(self.nl):
             anchors, shape = self.anchors[i], p[i].shape # take layer's anchors and grid. p[i] shape: [na,gy,gx]
-            # gain[2:6] = torch.tensor(shape)[[3, 2, 3, 2]]  # xyxy gain
-            # xyxy_gain = tf.tile(tf.slice(shape, [2],[2]), [2]) # todo check
-            # from tensorflow.python.ops.numpy_ops import np_config
-            # np_config.enable_numpy_behavior()
-            # xyxy_gain = tf.constant(shape)[[3, 2, 3, 2]]  # xyxy gain
-            # gain = tf.concat([gain[0:2],tf.cast(tf.constant(shape)[[3, 2, 3, 2]], tf.float32), gain[6:]], axis=0)# xyxy gain
-            # gain = tf.concat([gain[0:2],tf.cast(tf.constant(shape)[[3, 2, 3, 2]], tf.float32), gain[6:]], axis=0)# xyxy gain
             # gain: [1, 1, gs, gs, gs, gs, 1, 1] where gs is in 80,40,20 according to prediction layer
             gain = tf.tensor_scatter_nd_update(gain, [[2],[3],[4],[5]], tf.cast(tf.constant(shape)[[3, 2, 3, 2]], tf.float32))
             # gain[2:6] =
-
 
             # Match targets to anchors: resize xywh to grid size:
             t = tf.math.multiply(targets, gain)  # shape(3,nt,8)
@@ -290,11 +257,9 @@ class ComputeLoss:
                 #l,m true if located in right/low half part of square, & gxi>1 False if in r/l edge square ( shape:[nt]:
                 l, m = ((gxi % 1 < g) & (gxi > 1)).T
                 j = tf.stack((tf.ones_like(j), j, k, l, m)) # ind to 5 adjacent squares. shape:[5,nt]
-                # print('j',j)
 
                 # target coords tiled to the 5 squares, and then filtered by j to relevant squares:
                 t = tf.tile(t[None], (5, 1, 1))[j] # tile by 5 and filter valid. shape: [valid dup nt, 8]
-                # print('t',t)
 
                 offsets = (tf.zeros_like(gxy)[None] + off[:, None])[j] # gt indices offs. shpe:  [valid dup nt, 2]
             else:
@@ -303,10 +268,8 @@ class ComputeLoss:
 
             # Define
             bc, gxy, gwh, ati = tf.split(t, 4, axis=-1)  # (image, class), grid xy, grid wh, anchors
-            # print('bc', bc)
 
             (a,tidx), (b, c) =  tf.transpose(ati), tf.transpose(bc)  # anchors, image, class
-            # print('c', c)
 
             gij = tf.cast((gxy - offsets), tf.int32) # gij=gxy-offs giving left corner of grid square
             gij = tf.clip_by_value(gij,[0,0], [shape[2] - 1,shape[3] - 1] )
@@ -325,11 +288,11 @@ class ComputeLoss:
             tidxs.append(tidx) # target indices, i.e. running count of target in image shape: [nt]
             xywhn.append(tf.concat((gxy, gwh), 1) / gain[2:6])  # xywh normalized shape: [nt, 4]
 
-
         return tcls, tbox, indices, anch, tidxs, xywhn
 
 
 # if __name__ == '__main__':
+# for debug and testing:
 def main():
     # hyp, na, nl, nc, nm, anchors
     na, nl, nc, nm =3,3,80,32
@@ -368,6 +331,5 @@ def main():
 
     masks=tf.ones([b, 160, 160], dtype=tf.float32)
     tot_loss, closs = loss(pred, targets, masks)
-    # print('tf: in!!!!', tot_loss, closs)
 
     return tot_loss, closs
