@@ -150,20 +150,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         keras_model.load_weights(weights)
 
 
-    #     with torch_distributed_zero_first(LOCAL_RANK):
-    #         weights = attempt_download(weights)  # download if not found locally
-    #     ckpt = torch.load(weights, map_location='cpu')  # load checkpoint to CPU to avoid CUDA memory leak
-    #     model = SegmentationModel(cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)
-    #     exclude = ['anchor'] if (cfg or hyp.get('anchors')) and not resume else []  # exclude keys
-    #     csd = ckpt['model'].float().state_dict()  # checkpoint state_dict as FP32
-    #     csd = intersect_dicts(csd, model.state_dict(), exclude=exclude)  # intersect
-    #     model.load_state_dict(csd, strict=False)  # load
-    #     LOGGER.info(f'Transferred {len(csd)}/{len(model.state_dict())} items from {weights}')  # report
-    # else:
-    #     # model = SegmentationModel(cfg, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
-
-
-
     # Freeze
     # freeze = [f'model.{x}.' for x in (freeze if len(freeze) > 1 else range(freeze[0]))]  # layers to freeze
     # for k, v in model.named_parameters():
@@ -197,20 +183,17 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # EMA
     ema = tf.train.ExponentialMovingAverage(decay=0.9999)
 
-    # na = 3  # number of anchors
-    # nc = 80  # number of classes
-    # nl = 3  # number of layers
     # extract stride to adjust anchors:
     s = 640  # at least 2x min stride, just for getting output shape
     stride = tf.constant(
         [s / x.shape[-2] for x in keras_model(tf.zeros([1, s, s, 3], dtype=tf.float32))[0]])  # forward
 
-    nc = tf_model.nc
+    # nc = tf_model.nc  # number of classes
     anchors = tf.reshape(tf_model.anchors, [len(tf_model.anchors), -1, 2])
     anchors = tf.cast(anchors, tf.float32) / tf.reshape(stride, (-1, 1, 1))
 
-    nl = anchors.shape[0]
-    na = anchors.shape[1] # if isinstance(anchors, list) else anchors  # number of anchors
+    nl = anchors.shape[0] # number of layers (output grids)
+    na = anchors.shape[1]  # number of anchors
 
     compute_loss = ComputeLoss( na,nl,nc,nm, anchors, hyp['fl_gamma'], hyp['box'], hyp['obj'], hyp['cls'], hyp['anchor_t'], autobalance=False)  # init loss class
     dataset = dataset.batch(2)
