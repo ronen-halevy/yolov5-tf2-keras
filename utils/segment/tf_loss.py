@@ -178,7 +178,6 @@ class ComputeLoss:
         lcls *= self.cls_lg
         lseg *= self.box_lg / bs
         loss = lbox + lobj + lcls + lseg
-        print('loss', loss)
         return loss* bs, tf.concat((lbox, lobj, lcls, lseg), axis=-1)
 
     def single_mask_loss(self, gt_mask, pred, proto, xyxy, area):
