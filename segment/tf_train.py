@@ -27,11 +27,8 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-import torch
-import torch.distributed as dist
-import torch.nn as nn
+
 import yaml
-from torch.optim import lr_scheduler
 from tqdm import tqdm
 
 FILE = Path(__file__).resolve()
@@ -40,11 +37,6 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
-# import segment.val as validate  # for end-of-epoch mAP
-# from models.experimental import attempt_load
-# from models.yolo import SegmentationModel
-# from utils.autoanchor import check_anchors
-# from utils.autobatch import check_train_batch_size
 from utils.callbacks import Callbacks
 from utils.downloads import attempt_download, is_url
 from utils.general import (LOGGER, TQDM_BAR_FORMAT, check_amp, check_dataset, check_file, check_git_info,
@@ -91,12 +83,14 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         Path(opt.save_dir), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
         opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze, opt.mask_ratio
     # callbacks.run('on_pretrain_routine_start')
+    # todo to config:
+    batch_size = 1
     imgsz = [640, 640] # Todo ronen
     nm = 32 # todo TBD
     # Directories
     w = save_dir / 'weights'  # weights dir
     (w.parent if evolve else w).mkdir(parents=True, exist_ok=True)  # make dir
-    last, best = w / 'last.pt', w / 'best.pt'
+    last, best = w / 'last.h5', w / 'best.h5'
 
     # Hyperparameters
     if isinstance(hyp, str):
@@ -125,8 +119,9 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     data_dict = data_dict or check_dataset(data)  # check if None
     train_path, val_path = data_dict['train'], data_dict['val']
 
-    create_dataset=CreateDataset(640)
-    dataset=create_dataset(train_path)
+    create_dataset=CreateDataset(imgsz[0])
+    ds_train=create_dataset(train_path)
+    ds_val=create_dataset(val_path)
 
     nc = 1 if single_cls else int(data_dict['nc'])  # number of classes
     names = {0: 'item'} if single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
@@ -138,14 +133,20 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                        ref_model_seq=None, nc=80, imgsz=imgsz)
     im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else batch_size)
     # tf_model.predict(im)
+    # s=640
+    ch=3
+
     keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im))
+    # extract stride to adjust anchors:
+    stride =[imgsz[0] / x.shape[2] for x in keras_model.predict(tf.zeros([1,*imgsz, ch]))[0]]
     # keras_model.compile()
     print(keras_model.summary())
     # tf_model.run_eagerly = True
     # pred = keras_model(im)  # forward
+    best_fitness, start_epoch = 0.0, 0
 
     # check_suffix(weights, '.pt')  # check weights
-    pretrained = weights.endswith('.tf')
+    pretrained = weights.endswith('.h5')
     if pretrained:
         keras_model.load_weights(weights)
 
@@ -159,16 +160,11 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     #         LOGGER.info(f'freezing {k}')
     #         v.requires_grad = False
 
-    # Image size
-    gs = 32 # max(int(keras_model.stride.max()), 32)  # grid size (max stride)
-    # imgsz = check_img_size(opt.imgsz, gs, floor=gs * 2)  # verify imgsz is gs-multiple
-    batch_size = 1
-    logger.update_params({'batch_size': batch_size})
 
     # Optimizer
     nbs = 64  # nominal batch size
     accumulate = max(round(nbs / batch_size), 1)  # accumulate loss before optimizing
-    hyp['weight_decay'] *= batch_size * accumulate / nbs  # scale weight_decay
+    hyp['weight_decay'] *= batch_size * accumulate / nbs  # scale weight_decay # see notes: https://github.com/ultralytics/yolov5/issues/6757 https://github.com/ultralytics/yolov5/discussions/2452
     # optimizer = smart_optimizer(model, opt.optimizer, hyp['lr0'], hyp['momentum'], hyp['weight_decay'])
     optimizer = tf.keras.optimizers.Adam(learning_rate= hyp['lr0'],  weight_decay=hyp['weight_decay'])
 
@@ -181,12 +177,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)  # plot_lr_scheduler(optimizer, scheduler, epochs)
 
     # EMA
-    ema = tf.train.ExponentialMovingAverage(decay=0.9999)
-
-    # extract stride to adjust anchors:
-    s = 640  # at least 2x min stride, just for getting output shape
-    stride = tf.constant(
-        [s / x.shape[-2] for x in keras_model(tf.zeros([1, s, s, 3], dtype=tf.float32))[0]])  # forward
+    ema = tf.train.ExponentialMovingAverage(decay=0.9999) # todo
 
     # nc = tf_model.nc  # number of classes
     anchors = tf.reshape(tf_model.anchors, [len(tf_model.anchors), -1, 2])
@@ -196,13 +187,11 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     na = anchors.shape[1]  # number of anchors
 
     compute_loss = ComputeLoss( na,nl,nc,nm, anchors, hyp['fl_gamma'], hyp['box'], hyp['obj'], hyp['cls'], hyp['anchor_t'], autobalance=False)  # init loss class
-    dataset = dataset.batch(2)
+    ds_train = ds_train.batch(batch_size)
 
     for epoch in range(epochs):
-
-        for batch, (bimages,  btargets, bfilename, bshape, bsegments) in enumerate(dataset):
-            nmasks = []
-
+        # train:
+        for batch, (bimages,  btargets, bfilename, bshape, bsegments) in enumerate(ds_train):
             bmasks, bsorted_idx = polygons2masks_overlap(bimages.shape[1:3],
                                                                bsegments,
                                                                downsample_ratio=mask_ratio)
@@ -215,131 +204,32 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                 bindex=tf.cast([idx], tf.float32)[None]
                 bindex = tf.tile(bindex, [targets.shape[0],  1])
                 new_btargets.extend(tf.concat([bindex, targets.to_tensor()], axis=-1)[sorted_idx]) # [bindex,cls, xywh]
-            # btargets = tf.stack(new_btargets, axis=0) # shape: [nt, 6]
 
-            # targets = targets[sorted_idx]
             new_btargets=tf.stack(new_btargets, axis=0)
 
-
-
-            with tf.GradientTape() as tape:
+            with (tf.GradientTape() as tape):
                 # im = tf.expand_dims(image,axis=0)
                 pred = keras_model(bimages)  # forward
-
                 loss, loss_items = compute_loss(pred, new_btargets, bmasks)
-
+                lbox, lobj, lcls, lseg= tf.split(loss_items, num_or_size_splits=4, axis=-1)
 
             grads = tape.gradient(loss, keras_model.trainable_variables)
             optimizer.apply_gradients(
                     zip(grads, keras_model.trainable_variables))
-                # logging.info(
-                #     f'{epoch}_train_{batch}_lr:{optimizer.lr.numpy():.6f}, '
-                #     f'totLoss:{total_loss.numpy()}, '
-                #     f'perGrid{list(pred_loss_per_grid.numpy())}, '
-                #     f'perSource[xy,wh,obj,class]:{pred_loss_per_source.numpy()}, '
-                #     f'perGridPerSource:{[list(x.numpy()) for idx, x in enumerate(pred_loss)]}')
 
+            print(
+                f'{epoch}_train_{batch}_lr:{optimizer.lr.numpy():.4f}, '
+                f'totLoss:{loss.numpy()[0]:.4f}, '
+                f'lbox: {lbox.numpy()[0]:.4f}, '
+                f'lobj: {lobj.numpy()[0]:.4f}, '
+                f'lcls: {lcls.numpy()[0]:.4f}, '
+                f'lseg: {lseg.numpy()[0]:.4f}, ')
 
-    # lial = LoadImagesAndLabels()
-    # image_files, lables, segments = lial.load(train_path)
-    # y_segments = tf.ragged.constant(list(segments))
-    # y_lables = tf.ragged.constant(list(lables))
-    # x_train = tf.convert_to_tensor(image_files)
-    #
-    # dataset = tf.data.Dataset.from_tensor_slices((x_train, y_lables, y_segments))
-    # dataset = dataset.map(lambda x, y_lables, y_segments: decode_and_resize_image(x, imgsz,  y_lables, y_segments))
-    # # for img,  y_lables, filename, img.shape, y_masks in dataset:
-    #     # collate_fn(img,  y_lables, filename, img.shape, y_masks )
-    # dataset = dataset.map(lambda img,  y_lables, filename, shape, y_masks : collate_fn(img,  y_lables, filename, shape, y_masks))
-    # for img,  y_lables, filename, img.shape, y_masks in dataset:
-    #     pass
+        keras_model.save_weights(
+                    last)
 
 
 
-    # dataset = create_dataset()
-    # Trainloader
-    # train_loader, dataset = create_dataloader(
-    #     train_path,
-    #     imgsz,
-    #     batch_size // WORLD_SIZE,
-    #     gs,
-    #     single_cls,
-    #     hyp=hyp,
-    #     augment=True,
-    #     cache=None if opt.cache == 'val' else opt.cache,
-    #     rect=opt.rect,
-    #     rank=LOCAL_RANK,
-    #     workers=workers,
-    #     image_weights=opt.image_weights,
-    #     quad=opt.quad,
-    #     prefix=colorstr('train: '),
-    #     shuffle=True,
-    #     mask_downsample_ratio=mask_ratio,
-    #     overlap_mask=overlap,
-    # )
-    # labels = np.concatenate(dataset.labels, 0)
-    # mlc = int(labels[:, 0].max())  # max label class
-    # assert mlc < nc, f'Label class {mlc} exceeds nc={nc} in {data}. Possible class labels are 0-{nc - 1}'
-
-    # Process 0
-    # if RANK in {-1, 0}:
-    #     val_loader = create_dataloader(val_path,
-    #                                    imgsz,
-    #                                    batch_size // WORLD_SIZE * 2,
-    #                                    gs,
-    #                                    single_cls,
-    #                                    hyp=hyp,
-    #                                    cache=None if noval else opt.cache,
-    #                                    rect=True,
-    #                                    rank=-1,
-    #                                    workers=workers * 2,
-    #                                    pad=0.5,
-    #                                    mask_downsample_ratio=mask_ratio,
-    #                                    overlap_mask=overlap,
-    #                                    prefix=colorstr('val: '))[0]
-    #
-    #     if not resume:
-    #         if not opt.noautoanchor:
-    #             check_anchors(dataset, model=model, thr=hyp['anchor_t'], imgsz=imgsz)  # run AutoAnchor
-    #         model.half().float()  # pre-reduce anchor precision
-    #
-    #         if plots:
-    #             plot_labels(labels, names, save_dir)
-    #     # callbacks.run('on_pretrain_routine_end', labels, names)
-    #
-    # # DDP mode
-    # if cuda and RANK != -1:
-    #     model = smart_DDP(model)
-
-    # Model attributes
-    # nl = de_parallel(model).model[-1].nl  # number of detection layers (to scale hyps)
-    # hyp['box'] *= 3 / nl  # scale to layers
-    # hyp['cls'] *= nc / 80 * 3 / nl  # scale to classes and layers
-    # hyp['obj'] *= (imgsz / 640) ** 2 * 3 / nl  # scale to image size and layers
-    # hyp['label_smoothing'] = opt.label_smoothing
-    # model.nc = nc  # attach number of classes to model
-    # model.hyp = hyp  # attach hyperparameters to model
-    # model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device) * nc  # attach class weights
-    # model.names = names
-
-    # Start training
-    # t0 = time.time()
-    # nb = len(train_loader)  # number of batches
-    # nw = max(round(hyp['warmup_epochs'] * nb), 100)  # number of warmup iterations, max(3 epochs, 100 iterations)
-    # # nw = min(nw, (epochs - start_epoch) / 2 * nb)  # limit warmup to < 1/2 of training
-    # last_opt_step = -1
-    # maps = np.zeros(nc)  # mAP per class
-    # results = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls)
-    # scheduler.last_epoch = start_epoch - 1  # do not move
-    # scaler = torch.cuda.amp.GradScaler(enabled=amp)
-    # stopper, stop = EarlyStopping(patience=opt.patience), False
-    # compute_loss = ComputeLoss(hyp, autobalance=False)  # init loss class
-    # callbacks.run('on_train_start')
-    # LOGGER.info(f'Image sizes {imgsz} train, {imgsz} val\n'
-    #             f'Using {train_loader.num_workers * WORLD_SIZE} dataloader workers\n'
-    #             f"Logging results to {colorstr('bold', save_dir)}\n"
-    #             f'Starting training for {epochs} epochs...')
-    #
 
 def parse_opt(known=False):
     parser = argparse.ArgumentParser()
@@ -418,18 +308,7 @@ def main(opt, callbacks=Callbacks()):
             opt.name = Path(opt.cfg).stem  # use model.yaml as name
         opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))
 
-    # DDP mode
-    # device = select_device(opt.device, batch_size=opt.batch_size)
-    if LOCAL_RANK != -1:
-        msg = 'is not compatible with YOLOv5 Multi-GPU DDP training'
-        assert not opt.image_weights, f'--image-weights {msg}'
-        assert not opt.evolve, f'--evolve {msg}'
-        assert opt.batch_size != -1, f'AutoBatch with --batch-size -1 {msg}, please pass a valid --batch-size'
-        assert opt.batch_size % WORLD_SIZE == 0, f'--batch-size {opt.batch_size} must be multiple of WORLD_SIZE'
-        assert torch.cuda.device_count() > LOCAL_RANK, 'insufficient CUDA devices for DDP command'
-        torch.cuda.set_device(LOCAL_RANK)
-        device = torch.device('cuda', LOCAL_RANK)
-        dist.init_process_group(backend='nccl' if dist.is_nccl_available() else 'gloo')
+
 
     # Train
     if not opt.evolve:
@@ -539,7 +418,7 @@ def run(**kwargs):
     for k, v in kwargs.items():
         setattr(opt, k, v)
     main(opt)
-
+from tensorflow.keras.models import Sequential
 if __name__ == '__main__':
     opt = parse_opt()
     main(opt)
