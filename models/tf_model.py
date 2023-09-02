@@ -347,7 +347,8 @@ class TFSPPF(keras.layers.Layer):
 
 class TFDetect(keras.layers.Layer):
     # TF YOLOv5 Detect layer
-    def __init__(self, nc=80, anchors=(), ch=(), imgsz=(640, 640), w=None):  # detection layer
+    # todo detail params w - weights
+    def __init__(self, nc=80, anchors=(), ch=(), imgsz=(640, 640), training=True, w=None):  # detection layer
         super().__init__()
         self.stride = tf.convert_to_tensor(w.stride.numpy() if w is not None else [8,16,32], dtype=tf.float32)
         self.nc = nc  # number of classes
@@ -355,45 +356,49 @@ class TFDetect(keras.layers.Layer):
         self.nl = len(anchors)  # number of detection layers
         self.na = len(anchors[0]) // 2  # number of anchors
         self.grid = [tf.zeros(1)] * self.nl  # init grid
-        self.anchors = tf.convert_to_tensor(w.anchors.numpy(),  dtype=tf.float32) if w is not None else \
-            tf.reshape(tf.convert_to_tensor(anchors,  dtype=tf.float32), [-1,3,2])/tf.reshape(self.stride, [-1,1,1] )
-        self.anchor_grid = tf.reshape(self.anchors * tf.reshape(self.stride, [self.nl, 1, 1]), [self.nl, 1, -1, 1, 2])
+        # reshape anchors and normalize by stride values:
+        self.anchors = tf.convert_to_tensor(w.anchors.numpy(), dtype=tf.float32) if w is not None else \
+            tf.reshape(tf.convert_to_tensor(anchors, dtype=tf.float32),[self.nl,self.na,2])/tf.reshape(self.stride, [self.nl,1,1] )
+        # rescale anchors by stride values and reshape to
+        self.anchor_grid = tf.reshape(self.anchors, [self.nl, 1, self.na, 1, 2])
+        self.anchor_grid = tf.transpose(self.anchor_grid, [0, 1, 3, 2, 4])  # shape: [nl, 1,1,na,2]
+
         self.m = [TFConv2d(x, self.no * self.na, 1, w=w.m[i] if w is not None else None) for i, x in enumerate(ch)]
-        self.training = False  # set to False after building model
+        self.training = training  # set to False after building model
         self.imgsz = imgsz
         for i in range(self.nl):
             ny, nx = self.imgsz[0] // self.stride[i], self.imgsz[1] // self.stride[i]
-            self.grid[i] = self._make_grid(nx, ny)
+            xv, yv = tf.meshgrid(tf.range(nx, dtype=tf.float32), tf.range(ny, dtype=tf.float32)) # shapes: [ny,nx]
+            # stack to grid, reshape & transpose to predictions matching shape:
+            self.grid[i]= tf.reshape(tf.stack([xv, yv], 2), [1, 1, ny, nx, 2])
+            self.grid[i] = tf.transpose(self.grid[i], [0, 2, 3, 1, 4]) # shape: [1, ny, nx, 1, 2]
 
+    # @tf.function
     def call(self, inputs):
         z = []  # inference output
         x = []
         for i in range(self.nl):
             x.append(self.m[i](inputs[i]))
-            # x(bs,20,20,255) to x(bs,3,20,20,85)
             ny, nx = self.imgsz[0] // self.stride[i], self.imgsz[1] // self.stride[i]
-            x[i] = tf.reshape(x[i], [-1, ny * nx, self.na, self.no])
-
+            x[i] = tf.reshape(x[i], [-1,ny, nx, self.na,  self.no]) # from [bs,ny,nx,na*no] to [bs,ny,nx,na,no]
             if not self.training:  # inference
-                y = x[i]
-                grid = tf.transpose(self.grid[i], [0, 2, 1, 3]) - 0.5
-                anchor_grid = tf.transpose(self.anchor_grid[i], [0, 2, 1, 3]) * 4
-                xy = (tf.sigmoid(y[..., 0:2]) * 2 + grid) * self.stride[i]  # xy
-                wh = tf.sigmoid(y[..., 2:4]) ** 2 * anchor_grid
-                # Normalize xywh to 0-1 to reduce calibration error
-                xy /= tf.constant([[self.imgsz[1], self.imgsz[0]]], dtype=tf.float32)
-                wh /= tf.constant([[self.imgsz[1], self.imgsz[0]]], dtype=tf.float32)
+                y = x[i] # shape: [bs, ny,nx,na,xywh+conf+nc+nm]
+                # calulate bbox formulas:
+                xy = (tf.sigmoid(y[..., 0:2]) * 2 - 0.5 + self.grid[i]) / [nx, ny] # xy bbox formula, normalized  to 0-1
+                wh = (2*tf.sigmoid(y[..., 2:4])) ** 2 * self.anchor_grid[i]/[ny,ny] # fwh bbox formula. noremalized.
+                # cobcat modified values back together:
                 y = tf.concat([xy, wh, tf.sigmoid(y[..., 4:5 + self.nc]), y[..., 5 + self.nc:]], -1)
+                # from shape: [bs, ny,nx,na,xywh+conf+nc+nm] to  [bs,nx*ny*na,xy+wh+conf+nc,+nm]:
                 z.append(tf.reshape(y, [-1, self.na * ny * nx, self.no]))
+            else: # train
+                x[i] = tf.transpose(x[i], [0,3,1,2,4]) # from shape [bs,ny,nx,na, no] to [bs,na,ny,nx,no]
 
-        return tf.transpose(x, [0, 2, 1, 3]) if self.training else (tf.concat(z, 1), x)
+        return  x if self.training else (tf.concat(z, 1), x)
 
-    @staticmethod
-    def _make_grid(nx=20, ny=20):
-        # yv, xv = torch.meshgrid([torch.arange(ny), torch.arange(nx)])
-        # return torch.stack((xv, yv), 2).view((1, 1, ny, nx, 2)).float()
-        xv, yv = tf.meshgrid(tf.range(nx), tf.range(ny))
-        return tf.cast(tf.reshape(tf.stack([xv, yv], 2), [1, 1, ny * nx, 2]), dtype=tf.float32)
+    # @staticmethod
+    # def _make_grid(nx=20, ny=20):
+    #     xv, yv = tf.meshgrid(tf.range(nx), tf.range(ny)) # shape of xv & yv: [ny,nx]
+    #     return tf.cast(tf.reshape(tf.stack([xv, yv], 2), [1, 1, ny, nx, 2]), dtype=tf.float32)
 
     # # Solution for model saving error:
     # def get_config(self):
@@ -416,8 +421,8 @@ class TFDetect(keras.layers.Layer):
 
 class TFSegment(TFDetect):
     # YOLOv5 Segment head for segmentation models
-    def __init__(self, nc=80, anchors=(), nm=32, npr=256, ch=(), imgsz=(640, 640), w=None):
-        super().__init__(nc, anchors, ch, imgsz, w)
+    def __init__(self, nc=80, anchors=(), nm=32, npr=256, ch=(), imgsz=(640, 640), training=False, w=None):
+        super().__init__(nc, anchors, ch, imgsz, training, w)
         self.nm = nm  # number of masks
         self.npr = npr  # number of protos
         self.no = 5 + nc + self.nm  # number of outputs per anchor
@@ -509,7 +514,7 @@ class TFConcat(keras.layers.Layer):
     #     })
     #     return config
 
-def parse_model(anchors, nc, gd, gw, mlist, ch, ref_model_seq, imgsz):  # model_dict, input_channels(3)
+def parse_model(anchors, nc, gd, gw, mlist, ch, ref_model_seq, imgsz, training):  # model_dict, input_channels(3)
     LOGGER.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
     # anchors, nc, gd, gw = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple']
     na = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors
@@ -547,6 +552,7 @@ def parse_model(anchors, nc, gd, gw, mlist, ch, ref_model_seq, imgsz):  # model_
             if m_str == 'Segment':
                 args[3] = make_divisible(args[3] * gw, 8)
             args.append(imgsz)
+            args.append(training)
         else:
             c2 = ch[f]
 
@@ -573,7 +579,7 @@ def parse_model(anchors, nc, gd, gw, mlist, ch, ref_model_seq, imgsz):  # model_
 
 class TFModel:
     # TF YOLOv5 model
-    def __init__(self, cfg='', ch=3, nc=None, ref_model_seq=None, imgsz=(640, 640)):  # model, channels, classes
+    def __init__(self, cfg='', ch=3, nc=None, ref_model_seq=None, imgsz=(640, 640), training=True):  # model, channels, classes
         super().__init__()
         if isinstance(cfg, dict):
             self.yaml = cfg  # model dict
@@ -591,7 +597,8 @@ class TFModel:
 
         d = deepcopy(self.yaml)
         anchors, nc, gd, gw, mlist = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d['backbone'] + d['head']
-        self.model, self.savelist = parse_model(anchors, nc, gd, gw, mlist, ch=[ch], ref_model_seq=ref_model_seq, imgsz=imgsz)
+        self.anchors, self.nc = anchors, nc
+        self.model, self.savelist = parse_model(anchors, nc, gd, gw, mlist, ch=[ch], ref_model_seq=ref_model_seq, imgsz=imgsz, training=training)
 
     def predict(self,
                 inputs,

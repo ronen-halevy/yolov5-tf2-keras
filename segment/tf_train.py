@@ -28,8 +28,10 @@ from pathlib import Path
 
 import numpy as np
 
+
 import yaml
-from tqdm import tqdm
+# from tqdm import tqdm
+
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
@@ -39,9 +41,9 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from utils.callbacks import Callbacks
 from utils.downloads import attempt_download, is_url
-from utils.general import (LOGGER, TQDM_BAR_FORMAT, check_amp, check_dataset, check_file, check_git_info,
-                           check_git_status,  check_requirements, check_yaml, colorstr,
-                           get_latest_run, increment_path, init_seeds,
+from utils.general import (LOGGER, TQDM_BAR_FORMAT, check_dataset, check_file, check_git_info,
+                             check_yaml, colorstr,
+                           get_latest_run, increment_path,
                            print_args, print_mutation, yaml_save)
 from utils.loggers import GenericLogger
 from utils.plots import plot_evolve, plot_labels
@@ -114,7 +116,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     plots = not evolve and not opt.noplots  # create plots
     overlap = not opt.no_overlap
     # cuda = device.type != 'cpu'
-    init_seeds(opt.seed + 1 + RANK, deterministic=True)
+    # init_seeds(opt.seed + 1 + RANK, deterministic=True)
     # with torch_distributed_zero_first(LOCAL_RANK):
     data_dict = data_dict or check_dataset(data)  # check if None
     train_path, val_path = data_dict['train'], data_dict['val']
@@ -130,7 +132,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # Model
     dynamic = False
     tf_model = TFModel(cfg=cfg,
-                       ref_model_seq=None, nc=80, imgsz=imgsz)
+                       ref_model_seq=None, nc=80, imgsz=imgsz, training=True)
     im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else batch_size)
     # tf_model.predict(im)
     # s=640
@@ -279,8 +281,8 @@ def main(opt, callbacks=Callbacks()):
     # Checks
     if RANK in {-1, 0}:
         print_args(vars(opt))
-        check_git_status()
-        check_requirements(ROOT / 'requirements.txt')
+        # check_git_status()
+        # check_requirements(ROOT / 'requirements.txt')
 
     # Resume
     if opt.resume and not opt.evolve:  # resume from specified or most recent last.pt

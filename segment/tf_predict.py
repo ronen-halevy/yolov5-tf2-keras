@@ -36,9 +36,11 @@ from pathlib import Path
 
 # from models.common import DetectMultiBackend
 from utils.tf_dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams  # , LoadScreenshots, LoadStreams
+
+from utils.tf_dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams  # , LoadScreenshots, LoadStreams
 from utils.tf_general import (LOGGER, Profile, check_file, check_img_size, check_imshow, check_requirements, colorstr,
                               cv2,
-                              increment_path, non_max_suppression, print_args, scale_boxes, scale_segments
+                              increment_path, print_args, scale_boxes, scale_segments, xywh2xyxy
                               )
 from utils.tf_plots import Annotator, colors, save_one_box
 from utils.segment.tf_general import masks2segments, process_mask, process_mask_native
@@ -146,7 +148,7 @@ def run(
     else:
         dynamic = False
         tf_model = TFModel(cfg=model_cfg_file,
-                           ref_model_seq=None, nc=80, imgsz=imgsz)
+                           ref_model_seq=None, nc=80, imgsz=imgsz, training=False)
         im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else bs)
         keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im))
     if load_weights:  # normally True when load_model is false
@@ -185,14 +187,38 @@ def run(
                 pred, proto = tf_model.predict(im, visualize=visualize)
                 pred = pred.numpy()  # make it ndarray, same as keras predict output
             else:
-                pred, proto = keras_model.predict(im)
+                pred, proto = keras_model(im) # .predict(im) # To enable bp inside model code, replace .predict(im) by (im)
         #     # NMS
-        with dt[2]:
-            print('conf_thres',conf_thres)
-            nms_pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det, nm=32)
-            b, h, w, ch = tf.cast(im.shape, tf.float32)  # batch, channel, height, width
-            nms_pred = nms_pred.numpy()
-            nms_pred[..., :4] *= [w, h, w, h]  # xywh normalized to pixels
+        nm = 32 # number of masks
+        xywh_nbytes = 4
+        obj_nbytes  =1
+        nc = pred.shape[2] - (nm +xywh_nbytes+ obj_nbytes)  # number of classes
+        mi = 5 + nc  # mask start index
+        pred = tf.squeeze(pred, axis=0)
+        class_sel_prob = tf.reduce_max(pred[:, 5:mi], axis=-1, keepdims=False)
+        scores = pred[:, 4] * class_sel_prob
+        class_sel_idx = tf.math.argmax(pred[:, 5:mi], axis=-1, output_type=tf.int32)[..., tf.newaxis]
+        class_sel_idx = tf.cast(class_sel_idx, dtype=tf.float32)
+        boxes = xywh2xyxy(pred[:, :4])
+        # ind = [idx  for idx, score in enumerate(scores) if score>0.5]
+
+        ind = tf.image.non_max_suppression(boxes, scores, max_output_size=max_det, iou_threshold=iou_thres,
+                                           score_threshold=conf_thres)
+
+        # Concat before gather:
+        pred = tf.concat((boxes, scores[..., tf.newaxis], class_sel_idx, pred[:, mi:]), axis=1)
+        nms_pred = tf.gather(pred, indices=ind)
+        b, h, w, ch = tf.cast(im.shape, tf.float32)  # batch, channel, height, width
+        nms_pred = nms_pred.numpy()
+        nms_pred[..., :4] *= [w, h, w, h]  # xywh normalized to pixels
+
+        #
+        # with dt[2]:
+        #     print('conf_thres',conf_thres)
+        #     nms_pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det, nm=32)
+        #     b, h, w, ch = tf.cast(im.shape, tf.float32)  # batch, channel, height, width
+        #     nms_pred = nms_pred.numpy()
+        #     nms_pred[..., :4] *= [w, h, w, h]  # xywh normalized to pixels
         # take entry 0 - assumed image by image
         proto = proto[0]
         im = im[0]
@@ -282,27 +308,29 @@ def parse_opt():
     # parser.add_argument('--model_version', type=str, default='yolov5n',
     #                     help='model version is the prefix of model and weights files for both load and save actions')
 
-    parser.add_argument('--model_cfg_file', type=str, default='/home/ronen/devel/PycharmProjects/tf_yolov5/models/segment/yolov5l-seg.yaml',
+    parser.add_argument('--model_cfg_file', type=str, default='/home/ronen/devel/PycharmProjects/tf_yolov5/models/segment/yolov5s-seg.yaml',
                         help="model's yaml config file")
 
     parser.add_argument('--load_model', action='store_true', help='load model with ckpt. Otherwise, load weights')
     parser.add_argument('--save_model', action='store_true', help='save keras model with weights')
     parser.add_argument('--load_weights', action='store_false',
                         help='load_weights. Normally True if load_model is False')
-    parser.add_argument('--save_weights', action='store_true', help='ssaved_weights')
-    parser.add_argument('--model_load_path', type=str, default=ROOT / 'segment/saved_models/yolov5l-seg_saved_model',
+    parser.add_argument('--save_weights', action='store_true', help='save_weights')
+    parser.add_argument('--model_load_path', type=str, default=ROOT / '/home/ronen/devel/PycharmProjects/tf_yolov5/models/segment/model_saved', #'/home/ronen/devel/PycharmProjects/tf_yolov5/models/keras_model',#'/home/ronen/devel/PycharmProjects/tf_yolov5/models/segment/model_saved'
                         help='lmodel_load_path')
     parser.add_argument('--model_save_path', type=str, default=ROOT / 'segment/saved_models/yolov5l-seg_saved_model',
                         help='model_save_path')
 
-    parser.add_argument('--weights_load_path', type=str, default=ROOT / 'segment/saved_weights/yolov5l-seg_weights.tf',
+    parser.add_argument('--weights_load_path', type=str, default=ROOT / '/home/ronen/devel/PycharmProjects/tf_yolov5/models/keras_weights/rr.tf',
                         help='load weights path')
-    parser.add_argument('--weights_save_path', type=str, default=ROOT / 'segment/saved_weights/yolov5l-seg_weights.tf',
+    parser.add_argument('--weights_save_path', type=str, default=ROOT / 'segment/saved_weights/rr.tf',
                         help='save weights path')
     parser.add_argument('--source', type=str, default=ROOT / 'data/images', help='file/dir/URL/glob/screen/0(webcam)')
     parser.add_argument('--data', type=str, default=ROOT / 'data/coco128.yaml', help='(optional) dataset.yaml path')
-    parser.add_argument('--class_names_file', type=str, default=ROOT / 'data/class-names/coco.names',
-                        help='class names')
+    parser.add_argument('--class_names_file', type=str, default=ROOT / '/home/ronen/devel/PycharmProjects/shapes-dataset/dataset/class.names',
+                         help='class names')
+    # parser.add_argument('--class_names_file', type=str, default=ROOT / 'data/class-names/coco.names',
+    #                     help='class names')
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[640, 640],
                         help='inference size h,w')
     parser.add_argument('--conf_thres', type=float, default=0.1, help='confidence threshold')
@@ -326,8 +354,6 @@ def parse_opt():
     parser.add_argument('--hide-labels', default=False, action='store_true', help='hide labels')
     parser.add_argument('--hide-conf', default=False, action='store_true', help='hide confidences')
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
-    parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
-    parser.add_argument('--vid-stride', type=int, default=1, help='video frame-rate stride')
     parser.add_argument('--retina-masks', action='store_true', help='whether to plot masks in native resolution')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
