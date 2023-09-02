@@ -86,7 +86,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze, opt.mask_ratio
     # callbacks.run('on_pretrain_routine_start')
     # todo to config:
-    batch_size = 1
     imgsz = [640, 640] # Todo ronen
     nm = 32 # todo TBD
     # Directories
@@ -235,12 +234,12 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
 def parse_opt(known=False):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default=ROOT / '/segment/saved_weights/yolov5l-seg_weights.tf.', help='initial weights path')
+    parser.add_argument('--weights', type=str, default=ROOT / '/segment/saved_weights/yolov5s-seg_weights.tf.', help='initial weights path')
     parser.add_argument('--cfg', type=str, default='../models/segment/yolov5s-seg.yaml', help='model.yaml path')
     parser.add_argument('--data', type=str, default=ROOT / 'data/shapes-seg.yaml', help='dataset.yaml path')
     parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.scratch-low.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=100, help='total training epochs')
-    parser.add_argument('--batch-size', type=int, default=16, help='total batch size for all GPUs, -1 for autobatch')
+    parser.add_argument('--batch-size', type=int, default=4, help='total batch size for all GPUs, -1 for autobatch')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='train, val image size (pixels)')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
