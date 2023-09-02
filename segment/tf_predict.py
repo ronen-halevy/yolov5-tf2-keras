@@ -77,10 +77,10 @@ def run(
         save_weights=False,
         load_model=False,
         save_model=False,
-        model_load_path=ROOT / 'saved_models/yolov5s-seg_saved_model',
-        model_save_path=ROOT / 'saved_models/yolov5s-seg_saved_model',  # used if load_model=False
-        weights_load_path=ROOT / 'saved_weights/yolov5l-seg_weights.tf',  # used if load_model=False
-        weights_save_path=ROOT / 'saved_weights/yolov5l-seg_weights.tf',  # used if load_model=False
+        model_load_path=ROOT / './saved_models/yolov5s-seg_saved_model',
+        model_save_path=ROOT / './saved_models/yolov5s-seg_saved_model',  # used if load_model=False
+        weights_load_path=ROOT / './saved_weights/yolov5l-seg_weights.tf',  # used if load_model=False
+        weights_save_path=ROOT / './saved_weights/yolov5l-seg_weights.tf',  # used if load_model=False
         source=ROOT / 'data/images',  # file/dir/URL/glob/screen/0(webcam)
         class_names_file='',
         data=ROOT / 'data/coco12.yaml',  # dataset.yaml path
@@ -308,7 +308,7 @@ def parse_opt():
     # parser.add_argument('--model_version', type=str, default='yolov5n',
     #                     help='model version is the prefix of model and weights files for both load and save actions')
 
-    parser.add_argument('--model_cfg_file', type=str, default='/home/ronen/devel/PycharmProjects/tf_yolov5/models/segment/yolov5s-seg.yaml',
+    parser.add_argument('--model_cfg_file', type=str, default='../models/segment/yolov5s-seg.yaml',
                         help="model's yaml config file")
 
     parser.add_argument('--load_model', action='store_true', help='load model with ckpt. Otherwise, load weights')
@@ -316,18 +316,18 @@ def parse_opt():
     parser.add_argument('--load_weights', action='store_false',
                         help='load_weights. Normally True if load_model is False')
     parser.add_argument('--save_weights', action='store_true', help='save_weights')
-    parser.add_argument('--model_load_path', type=str, default=ROOT / '/home/ronen/devel/PycharmProjects/tf_yolov5/models/segment/model_saved', #'/home/ronen/devel/PycharmProjects/tf_yolov5/models/keras_model',#'/home/ronen/devel/PycharmProjects/tf_yolov5/models/segment/model_saved'
+    parser.add_argument('--model_load_path', type=str, default=ROOT / 'models/segment/model_saved', #'/home/ronen/devel/PycharmProjects/tf_yolov5/models/keras_model',#'/home/ronen/devel/PycharmProjects/tf_yolov5/models/segment/model_saved'
                         help='lmodel_load_path')
     parser.add_argument('--model_save_path', type=str, default=ROOT / 'segment/saved_models/yolov5l-seg_saved_model',
                         help='model_save_path')
 
-    parser.add_argument('--weights_load_path', type=str, default=ROOT / '/home/ronen/devel/PycharmProjects/tf_yolov5/models/keras_weights/rr.tf',
+    parser.add_argument('--weights_load_path', type=str, default=ROOT / 'models/keras_weights/rr.tf',
                         help='load weights path')
     parser.add_argument('--weights_save_path', type=str, default=ROOT / 'segment/saved_weights/rr.tf',
                         help='save weights path')
     parser.add_argument('--source', type=str, default=ROOT / 'data/images', help='file/dir/URL/glob/screen/0(webcam)')
     parser.add_argument('--data', type=str, default=ROOT / 'data/coco128.yaml', help='(optional) dataset.yaml path')
-    parser.add_argument('--class_names_file', type=str, default=ROOT / '/home/ronen/devel/PycharmProjects/shapes-dataset/dataset/class.names',
+    parser.add_argument('--class_names_file', type=str, default=ROOT / '../shapes-dataset/dataset/class.names',
                          help='class names')
     # parser.add_argument('--class_names_file', type=str, default=ROOT / 'data/class-names/coco.names',
     #                     help='class names')
