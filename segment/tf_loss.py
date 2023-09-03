@@ -3,16 +3,37 @@
 Loss functions
 """
 
+
+
+
+
+if __name__ == '__main__':
+    import os
+    import platform
+    import sys
+    from pathlib import Path
+    FILE = Path(__file__).resolve()
+    ROOT = FILE.parents[1]  # YOLOv5 root directory
+    print(sys.path)
+    print(str(ROOT))
+
+    if str(ROOT) not in sys.path:
+        sys.path.append(str(ROOT))  # add ROOT to PATH
+    ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
+
+
 # import torch
 # import torch.nn as nn
-from ..tf_general import xywh2xyxy
-from .tf_general import crop_mask
+from utils.tf_general import xywh2xyxy
+from utils.segment.tf_general import crop_mask
 
 from utils.tf_metrics import bbox_iou
-from utils.torch_utils import de_parallel
+# from utils.torch_utils import de_parallel
 import tensorflow as tf
 
 from tensorflow.python.ops.numpy_ops import np_config
+
+
 
 np_config.enable_numpy_behavior()
 def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441
@@ -332,3 +353,12 @@ def main():
     tot_loss, closs = loss(pred, targets, masks)
 
     return tot_loss, closs
+
+if __name__ == '__main__':
+
+    # FILE = Path(__file__).resolve()
+    # ROOT = FILE.parents[1]  # YOLOv5 root directory
+    # if str(ROOT) not in sys.path:
+    #     sys.path.append(str(ROOT))  # add ROOT to PATH
+    # ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
+    tftot_loss, tfcloss = main()
