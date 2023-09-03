@@ -131,20 +131,7 @@ class LoadImagesAndLabels:
         sa, sb = f'{os.sep}images{os.sep}', f'{os.sep}labels{os.sep}'  # /images/, /labels/ substrings
         return [sb.join(x.rsplit(sa, 1)).rsplit('.', 1)[0] + '.txt' for x in img_paths]
 
-
-    def load(self,
-             path):
-        # self.img_size = img_size
-        # self.augment = augment
-        # self.hyp = hyp
-        # self.image_weights = image_weights
-        # self.rect = False if image_weights else rect
-        # self.mosaic = self.augment and not self.rect  # load 4 images at a time into a mosaic (only during training)
-        # self.mosaic_border = [-img_size // 2, -img_size // 2]
-        # self.stride = stride
-        self.path = path
-        # self.albumentations = Albumentations(size=img_size) if augment else None
-
+    def get_file_list(self, path, ext_list):
         try:
             f = []  # image files
             for p in path if isinstance(path, list) else [path]:
@@ -160,11 +147,27 @@ class LoadImagesAndLabels:
                         # f += [p.parent / x.lstrip(os.sep) for x in t]  # to global path (pathlib)
                 else:
                     raise FileNotFoundError(f'{p} does not exist')
-            self.im_files = sorted(x.replace('/', os.sep) for x in f if x.split('.')[-1].lower() in IMG_FORMATS)
+            im_files = sorted(x.replace('/', os.sep) for x in f if x.split('.')[-1].lower() in ext_list)
             # self.img_files = sorted([x for x in f if x.suffix[1:].lower() in IMG_FORMATS])  # pathlib
-            assert self.im_files, f'{"prefix"}No images found'
+            assert im_files, f'{"prefix"}No images found'
+            return im_files
         except Exception as e:
             raise Exception(f'Error loading data from {path}: {e}') from e
+
+    def load(self,
+             path):
+        # self.img_size = img_size
+        # self.augment = augment
+        # self.hyp = hyp
+        # self.image_weights = image_weights
+        # self.rect = False if image_weights else rect
+        # self.mosaic = self.augment and not self.rect  # load 4 images at a time into a mosaic (only during training)
+        # self.mosaic_border = [-img_size // 2, -img_size // 2]
+        # self.stride = stride
+        # self.path = path
+        # self.albumentations = Albumentations(size=img_size) if augment else None
+        self.im_files =self.get_file_list(path, IMG_FORMATS)
+
 
         self.label_files = self.img2label_paths(self.im_files)  # labels
         # image_files, lables, segments = zip(*[self._create_entries(idx, self.im_file, self.label_file) for idx, (self.im_file, self.label_file) in enumerate(zip(self.im_files, self.label_files))])
@@ -406,8 +409,10 @@ class CreateDataset:
             lambda x, lables, segments: self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments))
         # dataset = dataset.map(lambda img,  y_lables, filename, shape, y_masks : collate_fn(img,  y_lables, filename, shape, y_masks))
         #
-        for img, y_lables, filename, shape, y_masks in dataset:
-            pass
+        # for img, y_lables, filename, shape, y_masks in dataset:
+        #     import cv2
+        #     cv2.imshow( 'image', img.numpy())
+        #     cv2.waitKey()
 
         # for idx, (x,  lables, filename, shapes, masks) in enumerate(ds):
         #     res = self.testt(x, filename, lables, masks, [tf.data.experimental.at(
