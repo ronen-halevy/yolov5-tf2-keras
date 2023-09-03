@@ -60,6 +60,7 @@ from tensorflow import keras
 import numpy as np
 from models.tf_model import TFModel
 
+from load_train_data import LoadTrainData
 from tf_create_dataset import CreateDataset
 
 from utils.segment.polygons2masks import polygons2masks_overlap, polygon2mask
@@ -120,9 +121,14 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     data_dict = data_dict or check_dataset(data)  # check if None
     train_path, val_path = data_dict['train'], data_dict['val']
 
+    ltd = LoadTrainData()
+    mosaic=True
+    train_image_files, train_labels, train_segments = ltd.load_data(train_path, mosaic)
     create_dataset=CreateDataset(imgsz[0])
-    ds_train=create_dataset(train_path)
-    ds_val=create_dataset(val_path)
+    ds_train=create_dataset(train_image_files, train_labels, train_segments)
+    val_image_files, val_labels, val_segments = ltd.load_data(val_path, mosaic)
+
+    ds_val=create_dataset(val_image_files, val_labels, val_segments)
 
     nc = 1 if single_cls else int(data_dict['nc'])  # number of classes
     names = {0: 'item'} if single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
@@ -239,7 +245,7 @@ def parse_opt(known=False):
     parser.add_argument('--data', type=str, default=ROOT / 'data/shapes-seg.yaml', help='dataset.yaml path')
     parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.scratch-low.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=100, help='total training epochs')
-    parser.add_argument('--batch-size', type=int, default=4, help='total batch size for all GPUs, -1 for autobatch')
+    parser.add_argument('--batch-size', type=int, default=1, help='total batch size for all GPUs, -1 for autobatch')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='train, val image size (pixels)')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
