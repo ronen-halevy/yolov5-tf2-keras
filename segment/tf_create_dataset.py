@@ -66,9 +66,8 @@ class CreateDataset:
         self.mosaic_border = [-imgsz // 2, -imgsz // 2]
         self.imgsz = imgsz
 
-    # @tf.function
+    @tf.function
     def scatter_image_to_mosaic(self, dst_image, src_image, dst_x, dst_y):
-        # tf.print("innnnnnnnnnnnnnnnnnnnn scatter_image_to_mosaic")
         y_range = tf.range(dst_y[0], dst_y[1])[..., None]
         y_ind = tf.tile(y_range, tf.constant([1, dst_x[1] - dst_x[0]]))
         x_range = tf.range(dst_x[0], dst_x[1])[None]
@@ -148,10 +147,8 @@ class CreateDataset:
 
         # return img4, y_labels, filename, img.shape, y_masks
 
-    # def load_mosaic(self):
-    # @tf.function
+    @tf.function
     def decode_and_resize_image(self, filenames, size, y_labels, y_segments):
-
         labels4, segments4 = [], []
         segments4 = None
 
@@ -164,7 +161,7 @@ class CreateDataset:
 
         w, h = size
         s = w
-
+        # arrange mosaic 4:
         for idx in range(4):
             if idx == 0:  # top left
                 x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
@@ -183,87 +180,41 @@ class CreateDataset:
             padw = x1a - x1b
             padh = y1a - y1b
 
-            if True:  # y_labels[idx].to_tensor().shape[0]:
-                y_l = y_labels[idx]#.to_tensor()
-                xyxy = self.xywhn2xyxy(y_l[:, 1:], w, h, padw, padh)  # normalized xywh to pixel xyxy format
-                xywh= self.xyxy2xywhn(xyxy,  w=640, h=640, clip=False, eps=0.0)
+            y_l = y_labels[idx]#.to_tensor()
+            xyxy = self.xywhn2xyxy(y_l[:, 1:], w, h, padw, padh)  # normalized xywh to pixel xyxy format
+            xywh= self.xyxy2xywhn(xyxy,  w=640, h=640, clip=False, eps=0.0)
 
-                y_l = tf.concat([y_l[:, 0:1], xywh], axis=-1) # concat [cls,xywh] shape: [nt, 5]
+            y_l = tf.concat([y_l[:, 0:1], xywh/2], axis=-1) # concat [cls,xywh] shape:[nt, 5]. div by 2 from 2w x 2h
+            labels4.append(y_l)
 
-                labels4.append(y_l)
-
-                ys = y_segments[idx]  # .to_tensor()
-                # segments = [self.xyn2xy(x, w, h, padw, padh) for x in ys]
-                segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=ys,
+            ys = y_segments[idx]
+            segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=ys,
                                      fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
                                                                              ragged_rank=1));
 
-                # segments4.extend(segments)
-                if segments4 is None:
-                    segments4 = segments
-                else:
-                    segments4 = tf.concat([segments4, segments], axis=0)
+            if segments4 is None:
+                segments4 = segments
+            else:
+                segments4 = tf.concat([segments4, segments], axis=0)
 
-
-        labels4 = tf.concat(labels4, axis=0)
-        labels4= tf.concat([labels4[0:1], labels4[1:]], axis =0)
-        segments4/=2.
-        img4 = tf.image.resize(img4, [640, 640])
+        labels4 = tf.concat(labels4, axis=0) # concat 4 labels of 4 mosaic images
+        segments4/=2. # rescale from mosaic expanded  2w x 2h to wxh
+        img4 = tf.image.resize(img4, size) # rescale from 2w x 2h
 
         return img4, labels4, filenames, img4.shape, segments4
 
 
     def __call__(self, image_files, labels, segments):
-        # lial = LoadSegmentationData()
-        # mosaic = True
-
-        # image_files, lables, segments = lial.load_data(train_path, self.mosaic)
-        # self.image_files=image_files
-        # self.lables=lables
-        #
-        # self.segments=segments
         y_segments = tf.ragged.constant(list(segments))
         y_labels = tf.ragged.constant(list(labels))
         x_train = tf.convert_to_tensor(image_files)
-        # self.image_files=image_files
-        # img_indices = tf.reshape(tf.convert_to_tensor(range(len(image_files))), (-1,1,1))
-        # print('y_labels',y_labels.shape)
-        # print('img_indices',img_indices.shape)
 
-        # y_labels =tf.concat([y_labels, img_indices], axis=-1)
         ds = tf.data.Dataset.from_tensor_slices((x_train, y_labels, y_segments))
-        # indices = random.choices(range(len(image_files)), k=3)  # 3 additional image indices
-        # indices = [0,0,0]
-        # ds = ds.map(lambda x, lables, segments: self.decode_and_resize_image_mult(x, [self.imgsz, self.imgsz],  lables, segments,
-        #  [tf.data.experimental.at(
-        # ds, indices[0]),tf.data.experimental.at(ds, 1),tf.data.experimental.at(ds, 2) ]  ))
 
+        # debug loop:
         # for x, lables, segments in ds:
         #     self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments)
         dataset = ds.map(
             lambda x, lables, segments: self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments))
-        # dataset = dataset.map(lambda img,  y_labels, filename, shape, y_masks : collate_fn(img,  y_labels, filename, shape, y_masks))
-        #
-        # for img, y_labels, filename, shape, y_masks in dataset:
-        #     import cv2
-        #     cv2.imshow( 'image', img.numpy())
-        #     cv2.waitKey()
-
-        # for idx, (x,  lables, filename, shapes, masks) in enumerate(ds):
-        #     res = self.testt(x, filename, lables, masks, [tf.data.experimental.at(
-        #         ds, indices[0]), tf.data.experimental.at(ds, indices[1]), tf.data.experimental.at(ds, indices[2])])
-        #     print('@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@2', res)
-        #     tf.keras.utils.save_img(f'testtttttt{idx}.jpg', res[0])
-
-        # ds=ds.take(4)
-
-        # dataset = ds.map(lambda x,  lables, filename, shapes, masks: self.testt(x, filename,  lables, masks ,[tf.data.experimental.at(
-        # ds, indices[0]),tf.data.experimental.at(ds, indices[1]),tf.data.experimental.at(ds, indices[2]) ]         ))
-        # ) )
 
         return dataset
-        # for img,  y_labels, filename, shape, y_masks in dataset:
-        #     collate_fn(img,  y_labels, filename, img.shape, y_masks )
-        # for img,  y_labels, filename, img.shape, y_masks in dataset:
-        #     pass
-        # dataset = dataset.map(lambda img,  y_labels, filename, shape, y_masks : collate_fn(img,  y_labels, filename, shape, y_masks))

@@ -9,14 +9,54 @@
 #   Description :
 #
 # ================================================================
-import glob
-import random
 from pathlib import Path
+from utils.tf_general import increment_path
 
-# from core.load_tfrecords import parse_tfrecords
-# from core.create_dataset_from_files import create_dataset_from_files
-# from core.load_tfrecords import parse_tfrecords
-from utils.tf_plots import Annotator, colors, save_one_box
+
+
+
+from PIL import ImageFont
+
+def draw_text_on_bounding_box(image, ymin, xmin, color, display_str_list=(), font_size=30):
+    """
+    Description: Draws a text which starts at xmin,ymin bbox corner
+
+    """
+    draw = ImageDraw.Draw(image)
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSansNarrow-Regular.ttf",
+                                  font_size)
+    except IOError:
+        print("Font not found, using default font.")
+        font = ImageFont.load_default()
+
+    text_margin_factor = 0.05
+
+    left, top, right, bottom = zip(*[font.getbbox(display_str) for display_str in display_str_list])
+    text_heights = tuple(map(lambda i, j: i - j, bottom, top))
+    text_widths = tuple(map(lambda i, j: i - j, right, left))
+
+    text_margins = np.ceil(text_margin_factor * np.array(text_heights))
+    text_bottoms = ymin * (ymin > text_heights) + (ymin + text_heights) * (ymin <= text_heights)
+
+    for idx, (display_str, xmint, text_bottom, text_width, text_height, text_margin) in enumerate(
+            zip(display_str_list, xmin, text_bottoms, text_widths, text_heights, text_margins)):
+        left, top, right, bottom = font.getbbox(display_str)
+        text_height = bottom - top
+        text_width = right - left
+
+        text_margin = np.ceil(text_margin_factor * text_height)
+
+        draw.rectangle(((xmint, text_bottom - text_height - 2 * text_margin),
+                        (xmint + text_width + text_margin, text_bottom)),
+                       fill=tuple(color))
+
+        draw.text((xmint + text_margin, text_bottom - text_height - 3 * text_margin),
+                  display_str,
+                  fill="black",
+                  font=font)
+    return image
+
 
 if __name__ == '__main__':
     import os
@@ -41,67 +81,62 @@ from PIL import Image as im
 from segment.tf_create_dataset import CreateDataset
 
 
-if __name__ == '__main__':
+def test_dataset_creation(imgsz=640, line_thickness = 3, save_dir='./dataset'):
+
+
     ltd = LoadTrainData()
     mosaic=True
     train_data_path = '/home/ronen/devel/PycharmProjects/shapes-dataset/dataset/train'
     image_files, labels, segments = ltd.load_data(train_data_path, mosaic)
 
 
-    imgsz=640
-    line_thickness = 3
+
+
 
     create_dataset = CreateDataset(imgsz)
     ds = create_dataset(image_files, labels, segments)
 
     # ds = ds.shuffle(10)
-    sel_ds = ds.take(1)
-    print('!!!!!!!??????????????????????!!!!!!!!!!!!!!!!!!!!')
+    sel_ds = ds.take(3)
 
-    for img, img_labels, img_filenames, img_shape, img_segments in sel_ds:
+    for idx, (img, img_labels, img_filenames, img_shape, img_segments) in enumerate(sel_ds):
         img = np.array(img* 255)
 
-        # ##
-        print('!!!!!!!!!!!!!!!!!!!!!!!!!!!')
-        # img = np.array(img)
-        # cv2.imshow('ff', img)
-        # cv2.waitKey()
-        # image = im.fromarray((img*255).astype(np.uint8))
-        # image.save('tt.jpeg')
-
-
-        # ##
-
-
         bboxes = np.array(img_labels.to_tensor())[:,1:]
+        category_names = [str(name) for name in(np.array(img_labels.to_tensor())[:,0])]
+
+
         for label, segment in zip(img_labels, img_segments):
             label =np.array(label)
             category = label[0]
-            # bboxes = label[1:]
-            segment =np.array(segment.to_tensor())
-            polygon = segment# np.asarray(polygon)
-            polygon = polygon.astype(np.int32)
-            shape = polygon.shape
-            polygon = polygon.reshape(shape[0], -1, 2)
-            pp = np.expand_dims(polygon, 0)
+            segment =np.array(segment.to_tensor()) # from ragged to tensor
+            polygon = segment.reshape(1, segment.shape[0], -1, 2).astype(np.int32)
 
             color = np.random.randint(low=0, high=255, size=3).tolist()
-            print('color ', color)
-            cv2.fillPoly(img, pp, color=color)
+            cv2.fillPoly(img, polygon, color=color)
 
         image = im.fromarray((img).astype(np.uint8))
         draw = ImageDraw.Draw(image)
         for bbox in bboxes:
-            xmin, ymin, w, h = bbox*320
+            xmin, ymin, w, h = bbox*imgsz
             color = tuple(np.random.randint(low=0, high=255, size=3).tolist())
-            print(color)
             draw.line([(xmin-w/2, ymin-h/2), (xmin-w/2, ymin + h/2), (xmin + w/2, ymin + h/2), (xmin+w/2, ymin-h/2),
                                (xmin-w/2, ymin-h/2)],
                               width=line_thickness,
                               fill=color)
-            #
+        text_box_color = [255, 255, 255]
+        draw_text_on_bounding_box(image, np.array(bboxes)[..., 1],
+                                  np.array(bboxes)[..., 0], text_box_color,
+                                  category_names, font_size=15)
         ImageDraw.Draw(image)
 
-        cv2.waitKey()
-        image.save('tt.jpeg')
+
+        image.save(save_dir/f'annotated_{idx}.jpeg')
+
+if __name__ == '__main__':
+    name='exp'
+    save_dir = increment_path(Path(f'{Path.cwd()}/results/dataset')  / name, exist_ok=False)  # increment run
+    save_dir.mkdir(parents=True, exist_ok=True)
+    test_dataset_creation(imgsz=640, line_thickness=3, save_dir=save_dir)
+    print(f"Results saved to {save_dir}")
 
