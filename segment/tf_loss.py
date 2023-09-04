@@ -115,9 +115,9 @@ class ComputeLoss:
         self.anchors = anchors
         self.overlap=True # Todo
         # self.device = device
-        self.box_lg=box_lg
-        self.obj_lg=obj_lg
-        self.cls_lg=cls_lg
+        self.box_lg=box_lg # box loss gain
+        self.obj_lg=obj_lg # obj loss gain
+        self.cls_lg=cls_lg # class loss gain
         self.anchor_t=anchor_t
 
 
@@ -196,7 +196,7 @@ class ComputeLoss:
         lcls *= self.cls_lg
         lseg *= self.box_lg / bs
         loss = lbox + lobj + lcls + lseg
-        return loss* bs, tf.concat((lbox, lobj, lcls, lseg), axis=-1)
+        return loss * bs, tf.concat((lbox, lobj, lcls, lseg), axis=-1)
 
     def single_mask_loss(self, gt_mask, pred, proto, xyxy, area):
         pred_mask = tf.reshape(pred @ tf.reshape(proto, (self.nm, -1)),[ -1, *proto.shape[1:]])  # (n,32) @ (32,80,80) -> (n,80,80)
