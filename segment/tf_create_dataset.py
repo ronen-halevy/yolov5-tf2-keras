@@ -238,8 +238,8 @@ class CreateDataset:
         #  [tf.data.experimental.at(
         # ds, indices[0]),tf.data.experimental.at(ds, 1),tf.data.experimental.at(ds, 2) ]  ))
 
-        for x, lables, segments in ds:
-            self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments)
+        # for x, lables, segments in ds:
+        #     self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments)
         dataset = ds.map(
             lambda x, lables, segments: self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments))
         # dataset = dataset.map(lambda img,  y_labels, filename, shape, y_masks : collate_fn(img,  y_labels, filename, shape, y_masks))
