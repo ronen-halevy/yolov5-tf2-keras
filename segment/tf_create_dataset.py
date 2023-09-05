@@ -66,24 +66,29 @@ class CreateDataset:
         self.mosaic_border = [-imgsz // 2, -imgsz // 2]
         self.imgsz = imgsz
 
-    @tf.function
-    def scatter_image_to_mosaic(self, dst_image, src_image, dst_x, dst_y):
-        y_range = tf.range(dst_y[0], dst_y[1])[..., None]
-        y_ind = tf.tile(y_range, tf.constant([1, dst_x[1] - dst_x[0]]))
-        x_range = tf.range(dst_x[0], dst_x[1])[None]
-        x_ind = tf.tile(x_range, tf.constant([dst_y[1] - dst_y[0], 1]))
+    # @tf.function
+    def scatter_img_to_mosaic(self, dst_img, src_img, dst_xy):
+        """
+        :param dst_img: 2w*2h*3ch 4mosaic dst img
+        :type dst_img:
+        :param src_img:
+        :type src_img:
+        :param dst_xy:
+        :type dst_xy:
+        :return: 
+        :rtype: 
+        """
+        y_range = tf.range(dst_xy[2], dst_xy[3])[..., None]
+        y_ind = tf.tile(y_range, tf.constant([1, dst_xy[1] - dst_xy[0]]))
+        x_range = tf.range(dst_xy[0], dst_xy[1])[None]
+        x_ind = tf.tile(x_range, tf.constant([dst_xy[3] - dst_xy[2], 1]))
         indices = tf.squeeze(tf.concat([y_ind[..., None], x_ind[..., None]], axis=-1))
-
         dst = tf.tensor_scatter_nd_update(
-            dst_image, indices, src_image
+            dst_img, indices, src_img
         )
-        # tf.print("out scatter_image_to_mosaic")
-
         return dst
 
     # @tf.function
-
-
     def clip_boxes(self, boxes, shape):
         # Clip boxes (xyxy) to image shape (height, width)
         tf.clip_by_value( boxes[:, 0], 0, boxes.shape[1])
@@ -100,11 +105,7 @@ class CreateDataset:
         # Convert nx4 boxes from [x1, y1, x2, y2] to [x, y, w, h] normalized where xy1=top-left, xy2=bottom-right
         if clip:
             self.clip_boxes(x, (h - eps, w - eps))  # warning: inplace clip
-        # xmin = w * (x[..., 0:1] - x[..., 2:3] / 2) + padw  # top left x
-        # ymin = h * (x[..., 1:2] - x[..., 3:] / 2) + padh  # top left y
-        # xmax = w * (x[..., 0:1] + x[..., 2:3] / 2) + padw  # bottom right x
-        # ymax = h * (x[..., 1:2] + x[..., 3:] / 2) + padh  # bottom right y
-    #     y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
+
         xc = ((x[..., 0:1] + x[..., 2:3]) / 2) / w  # x center
         yc = ((x[..., 1:2] + x[..., 3:4]) / 2) / h  # y center
         w = (x[..., 2:3] - x[..., 0:1]) / w  # width
@@ -127,6 +128,21 @@ class CreateDataset:
         return y
 
     def xywhn2xyxy(self, x, w=640, h=640, padw=0, padh=0):
+        """
+         transform scale and align bboxes: xywh to xyxy, scaled to image size, shift by padw,padh to location in mosaic
+        :param x: xywh normalized bboxes
+        :type x: float array, shape: [nboxes,4]
+        :param w: dest image width
+        :type w: int
+        :param h: dest image height
+        :type h: int
+        :param padw: shift of src image left end from mosaic left end
+        :type padw: float ]
+        :param padh: shift of src image upper end from mosaic upper end
+        :type padh: float
+        :return: scaled bboxes in xyxy coords, aligned to shifts in mosaic
+        :rtype: float array, shape: [nboxes, 4]
+        """
         # Convert nx4 boxes from [x, y, w, h] normalized to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
         # y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
         xmin = w * (x[..., 0:1] - x[..., 2:3] / 2) + padw  # top left x
@@ -138,7 +154,7 @@ class CreateDataset:
         )
         return y
 
-    def dec_res(self, filename, size):
+    def decode_resize(self, filename, size):
         img_st = tf.io.read_file(filename)
         img_dec = tf.image.decode_image(img_st, channels=3, expand_animations=False)
         img11 = tf.cast(img_dec, tf.float32)
@@ -147,41 +163,39 @@ class CreateDataset:
 
         # return img4, y_labels, filename, img.shape, y_masks
 
-    @tf.function
+    # @tf.function
     def decode_and_resize_image(self, filenames, size, y_labels, y_segments):
         labels4, segments4 = [], []
         segments4 = None
-
+        # randomly select mosaic center:
         yc, xc = (int(random.uniform(-x, 2 * self.imgsz + x)) for x in self.mosaic_border)  # mosaic center x, y
-        nch = 3
 
         img4 = tf.fill(
-            (self.imgsz * 2, self.imgsz * 2, nch), 0.0
-        )
+            (self.imgsz * 2, self.imgsz * 2, 3), 114/255
+        ) # gray background
 
         w, h = size
-        s = w
         # arrange mosaic 4:
         for idx in range(4):
-            if idx == 0:  # top left
-                x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
-                x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h  # xmin, ymin, xmax, ymax (small image)
-            elif idx == 1:  # top right
-                x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, s * 2), yc
-                x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
-            elif idx == 2:  # bottom left
-                x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(s * 2, yc + h)
-                x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
-            elif idx == 3:  # bottom right
-                x1a, y1a, x2a, y2a = xc, yc, min(xc + w, s * 2), min(s * 2, yc + h)
-                x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
-            img = self.dec_res(filenames[idx], size)
-            img4 = self.scatter_image_to_mosaic(img4, img[y1b:y2b, x1b:x2b], (x1a, x2a), (y1a, y2a))
-            padw = x1a - x1b
-            padh = y1a - y1b
+            if idx == 0:  # top left mosaic dest zone,  bottom-right aligned src image fraction:
+                x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc # xmin, ymin, xmax, ymax
+                x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h # xmin, ymin, xmax, ymax: src image fraction
+            elif idx == 1:  # top right mosaic dest zone, bottom-left aligned src image fraction:
+                x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, w * 2), yc
+                x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h  # src image fraction
+            elif idx == 2:  # bottom left mosaic dest zone, top-right aligned src image fraction:
+                x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(w * 2, yc + h)
+                x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h) # src image fraction: aligned right-up
+            elif idx == 3:  # bottom right mosaic dest zone, top-left aligned src image fraction:
+                x1a, y1a, x2a, y2a = xc, yc, min(xc + w, w * 2), min(w * 2, yc + h) #
+                x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h) # src image fraction
+            img = self.decode_resize(filenames[idx], size)
 
-            y_l = y_labels[idx]#.to_tensor()
-            xyxy = self.xywhn2xyxy(y_l[:, 1:], w, h, padw, padh)  # normalized xywh to pixel xyxy format
+            img4 = self.scatter_img_to_mosaic(dst_img=img4, src_img=img[y1b:y2b, x1b:x2b], dst_xy=(x1a, x2a,y1a, y2a))
+            padw = x1a - x1b # shift of src scattered image from mosaic left end. Used for bbox and segment alignment.
+            padh = y1a - y1b # shift of src scattered image from mosaic top end. Used for bbox and segment alignment.
+            y_l = y_labels[idx]
+            xyxy = self.xywhn2xyxy(y_l[:, 1:], w, h, padw, padh)  # transform scale and align bboxes
             xywh= self.xyxy2xywhn(xyxy,  w=640, h=640, clip=False, eps=0.0)
 
             y_l = tf.concat([y_l[:, 0:1], xywh/2], axis=-1) # concat [cls,xywh] shape:[nt, 5]. div by 2 from 2w x 2h
@@ -200,7 +214,6 @@ class CreateDataset:
         labels4 = tf.concat(labels4, axis=0) # concat 4 labels of 4 mosaic images
         segments4/=2. # rescale from mosaic expanded  2w x 2h to wxh
         img4 = tf.image.resize(img4, size) # rescale from 2w x 2h
-
         return img4, labels4, filenames, img4.shape, segments4
 
 
@@ -212,8 +225,8 @@ class CreateDataset:
         ds = tf.data.Dataset.from_tensor_slices((x_train, y_labels, y_segments))
 
         # debug loop:
-        # for x, lables, segments in ds:
-        #     self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments)
+        for x, lables, segments in ds:
+            self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments)
         dataset = ds.map(
             lambda x, lables, segments: self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments))
 
