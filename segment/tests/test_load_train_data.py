@@ -67,14 +67,14 @@ def draw_text_on_bounding_box(image, ymin, xmin, color, display_str_list=(), fon
 def draw_dataset_entry(img, img_labels, img_segments, line_thickness):
     img = np.array(img * 255)
 
-    bboxes = np.array(img_labels.to_tensor())[:, 1:]
+    bboxes = np.array(img_labels)[:, 1:]
     # use category id for category name:
-    category_names = [str(int(name)) for name in (np.array(img_labels.to_tensor())[:, 0])]
+    category_names = [str(int(name)) for name in (np.array(img_labels)[:, 0])]
 
     for label, segment in zip(img_labels, img_segments):
         label = np.array(label)
         category = label[0]
-        segment = np.array(segment.to_tensor())  # from ragged to tensor
+        segment = np.array(segment)  # from ragged to tensor
         polygon = segment.reshape(1, segment.shape[0], -1, 2).astype(np.int32)
 
         color = np.random.randint(low=0, high=255, size=3).tolist()
@@ -117,6 +117,9 @@ def test_dataset_creation(data_path, imgsz=640, line_thickness = 3, nexamples=3,
     sel_ds = ds.take(nexamples)
 
     for idx, (img, img_labels, img_filenames, img_shape, img_segments) in enumerate(sel_ds):
+        img_labels=img_labels.to_tensor() # convert from ragged
+        img_segments=img_segments.to_tensor() # convert from ragged
+
         image=draw_dataset_entry(img, img_labels, img_segments, line_thickness)
         image.save(save_dir/f'annotated_{idx}.jpeg')
 
