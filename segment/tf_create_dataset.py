@@ -60,6 +60,26 @@ for orientation in ExifTags.TAGS.keys():
         break
 
 
+import cv2
+
+
+from utils.segment.polygons2masks import polygons2masks_overlap, polygon2mask, polygons2masks_overlapn, polygons2masks_overlap2
+
+def preprocess(bimages,bsegments):
+    downsample_ratio=4
+    bmasks, bsorted_idx = polygons2masks_overlap2(bimages.shape[0:2],
+                                                 bsegments,
+                                                 downsample_ratio=downsample_ratio)
+
+    return bmasks
+
+def parse_func(img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged):
+    downsample_ratio=4
+    bmask = tf.py_function(preprocess, [img,img_segments_ragged], tf.uint8)
+    return img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged, bmask
+
+
+
 
 class CreateDataset:
     def __init__(self, imgsz):
@@ -169,6 +189,7 @@ class CreateDataset:
         segments4 = None
         # randomly select mosaic center:
         yc, xc = (int(random.uniform(-x, 2 * self.imgsz + x)) for x in self.mosaic_border)  # mosaic center x, y
+        # yc, xc = 496,642 # ronen debug todo
 
         img4 = tf.fill(
             (self.imgsz * 2, self.imgsz * 2, 3), 114/255
@@ -225,9 +246,20 @@ class CreateDataset:
         ds = tf.data.Dataset.from_tensor_slices((x_train, y_labels, y_segments))
 
         # debug loop:
-        for x, lables, segments in ds:
-            self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments)
+        # for x, lables, segments in ds:
+        #     self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments)
         dataset = ds.map(
             lambda x, lables, segments: self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments))
+        for idx, (img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged) in enumerate(dataset):
+            res=parse_func(img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged)
+
+        dataset = dataset.map(parse_func)
+        # dataset=dataset.batch(2)
+
+        # dataset = dataset.map(lambda ds,aa,bb,cc,dd: parse_func(ds,aa,bb,cc,dd))
+        dataset=dataset.batch(2)
+
+        # dataset = ds.map(
+        #     lambda img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged: parse_func(img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged))
 
         return dataset

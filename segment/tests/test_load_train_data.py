@@ -17,10 +17,16 @@ import cv2
 from PIL import ImageDraw
 from PIL import Image as im
 
+FILE = Path(__file__).resolve()
+ROOT = FILE.parents[1]  # YOLOv5 root directory
+
 from segment.load_train_data import LoadTrainData
 from segment.tf_create_dataset import CreateDataset
 from utils.tf_general import increment_path
+from utils.segment.polygons2masks import polygons2masks_overlap, polygon2mask
+from utils.segment.tf_general import masks2segments, process_mask, process_mask_native
 
+import tensorflow as tf
 
 
 def draw_text_on_bounding_box(image, ymin, xmin, color, display_str_list=(), font_size=30):
@@ -71,9 +77,7 @@ def draw_dataset_entry(img, img_labels, img_segments, line_thickness):
     # use category id for category name:
     category_names = [str(int(name)) for name in (np.array(img_labels)[:, 0])]
 
-    for label, segment in zip(img_labels, img_segments):
-        label = np.array(label)
-        category = label[0]
+    for segment in img_segments:
         segment = np.array(segment)  # from ragged to tensor
         polygon = segment.reshape(1, segment.shape[0], -1, 2).astype(np.int32)
 
@@ -113,20 +117,44 @@ def test_dataset_creation(data_path, imgsz=640, line_thickness = 3, nexamples=3,
     image_files, labels, segments = ltd.load_data(data_path, mosaic)
     create_dataset = CreateDataset(imgsz)
     ds = create_dataset(image_files, labels, segments)
-    ds = ds.shuffle(10)
+    # ds = ds.shuffle(10)
     sel_ds = ds.take(nexamples)
+    # for bidx, (bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bmask) in enumerate(sel_ds):
+    for bidx, (bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bimg_segments_ragged, bmask) in enumerate(sel_ds):
 
-    for idx, (img, img_labels, img_filenames, img_shape, img_segments) in enumerate(sel_ds):
-        img_labels=img_labels.to_tensor() # convert from ragged
-        img_segments=img_segments.to_tensor() # convert from ragged
+    # for bidx, (img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged) in enumerate(sel_ds):
+    #     for idx, (img, img_labels_ragged, img_filenames, img_shape, mask) in enumerate(zip(bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bmask)):
+        for idx, (img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged , mask) in enumerate(zip(bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bimg_segments_ragged, bmask)):
+            img_labels=img_labels_ragged.to_tensor() # convert from ragged
+            img_segments=img_segments_ragged.to_tensor() # convert from ragged
 
-        image=draw_dataset_entry(img, img_labels, img_segments, line_thickness)
-        image.save(save_dir/f'annotated_{idx}.jpeg')
+            image=draw_dataset_entry(img, img_labels, img_segments, line_thickness)
+            image.save(save_dir/f'annotated_{bidx}_{idx}.jpeg')
+
+            # bmasks, bsorted_idx = polygons2masks_overlap(img.shape[0:2],
+            #                                                        img_segments_ragged[None],
+            #                                                        downsample_ratio=4)
+
+            # tt = tf.greater(mask, 0)
+            # print('tt!!!!! ', tt)
+            #
+            # # bmasks = tf.stack(bmasks, axis=0)  # (b, 640, 640)
+            segments = masks2segments(mask[None])
+            print('segments',segments)
+            image=draw_dataset_entry(img, img_labels, segments, line_thickness)
+
+            # image.save(save_dir/f'annotatedn_{idx}.jpeg')
+            image.save(save_dir/f'annotatedm_{bidx}_{idx}.jpeg')
+
+
+
 
 if __name__ == '__main__':
     imgsz = 640
     name='exp'
-    save_dir = increment_path(Path(f'{Path.cwd()}/results/dataset')  / name, exist_ok=False)  # increment run
+    # save_dir = increment_path(Path(f'{Path.cwd()}/results/dataset')  / name, exist_ok=False)  # increment run
+    save_dir = increment_path(Path(f'{ROOT}/runs/tests/') / name, exist_ok=False)  # increment run
+
     data_path = '/home/ronen/devel/PycharmProjects/shapes-dataset/dataset/train'
 
     save_dir.mkdir(parents=True, exist_ok=True)
