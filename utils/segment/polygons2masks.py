@@ -1,5 +1,7 @@
 import cv2
 import numpy as np
+import tensorflow as tf
+
 def polygon2mask(img_size, polygon, color=1, downsample_ratio=1):
     """
     Args:
@@ -34,33 +36,36 @@ def polygons2masks(img_size, polygons, color, downsample_ratio=1):
     return np.array(masks)
 
 
-def polygons2masks_overlap(img_size, bsegments, downsample_ratio=1):
+# @tf.function
+def polygons2masks_overlap(img_size, segments, downsample_ratio=1):
     """Return a (640, 640) overlap mask."""
-    bindex = []
-    bmasks = []
-    for segments in bsegments:
-        masks = np.zeros((img_size[0] // downsample_ratio, img_size[1] // downsample_ratio),
-                         dtype=np.int32 if segments.shape[0] > 255 else np.uint8)
-        areas = []
-        ms = []
+    # bindex = []
+    # bmasks = []
+    # for segments in bsegments:
+    masks = np.zeros((img_size[0] // downsample_ratio, img_size[1] // downsample_ratio),
+                     dtype=np.int32 if segments.shape[0] > 255 else np.uint8)
+    areas = []
+    ms = []
+    for si in range(segments.shape[0]):
+        mask = polygon2mask(
+                img_size,
 
-        for si in range(segments.shape[0]):
-            mask = polygon2mask(
-                    img_size,
-                    [segments[si].to_tensor().reshape(-1)],
-                    downsample_ratio=downsample_ratio,
-                    color=1,
-                )
-            ms.append(mask)
-            areas.append(mask.sum())
-        areas = np.asarray(areas)
-        index = np.argsort(-areas)
-        ms = np.array(ms)[index]
-        for i in range(segments.shape[0]):
-            mask = ms[i] * (i + 1)
-            masks = masks + mask
-            masks = np.clip(masks, a_min=0, a_max=i + 1)
-        bmasks.append(masks)
-        bindex.append(index)
+                [ tf.reshape(segments[si].to_tensor(), [-1])],
+                downsample_ratio=downsample_ratio,
+                color=1,
+            )
+        ms.append(mask)
+        areas.append(mask.sum())
+    areas = np.asarray(areas)
+    index = np.argsort(-areas)
+    ms = np.array(ms)[index]
+    for i in range(segments.shape[0]):
+        mask = ms[i] * (i + 1)
+        masks = masks + mask
+        masks = np.clip(masks, a_min=0, a_max=i + 1)
 
-    return bmasks, bindex
+    # bmasks.append(masks)
+    # bindex.append(index)
+    # print('len(bmasks)', len(bmasks))
+
+    return masks, index #, bindex

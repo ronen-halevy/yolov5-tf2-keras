@@ -120,16 +120,16 @@ def test_dataset_creation(data_path, imgsz=640, line_thickness = 3, nexamples=3,
     # ds = ds.shuffle(10)
     sel_ds = ds.take(nexamples)
     # for bidx, (bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bmask) in enumerate(sel_ds):
-    for bidx, (bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bimg_segments_ragged, bmask) in enumerate(sel_ds):
+    for bidx, (bimg, bimg_labels_ragged, bimg_filenames, bimg_shape,  bmask) in enumerate(sel_ds):
 
     # for bidx, (img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged) in enumerate(sel_ds):
     #     for idx, (img, img_labels_ragged, img_filenames, img_shape, mask) in enumerate(zip(bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bmask)):
-        for idx, (img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged , mask) in enumerate(zip(bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bimg_segments_ragged, bmask)):
+        for idx, (img, img_labels_ragged, img_filenames, img_shape,  mask) in enumerate(zip(bimg, bimg_labels_ragged, bimg_filenames, bimg_shape,  bmask)):
             img_labels=img_labels_ragged.to_tensor() # convert from ragged
-            img_segments=img_segments_ragged.to_tensor() # convert from ragged
-
-            image=draw_dataset_entry(img, img_labels, img_segments, line_thickness)
-            image.save(save_dir/f'annotated_{bidx}_{idx}.jpeg')
+            # img_segments=img_segments_ragged.to_tensor() # convert from ragged
+            #
+            # image=draw_dataset_entry(img, img_labels, img_segments, line_thickness)
+            # image.save(save_dir/f'annotated_{bidx}_{idx}.jpeg')
 
             # bmasks, bsorted_idx = polygons2masks_overlap(img.shape[0:2],
             #                                                        img_segments_ragged[None],
@@ -139,8 +139,9 @@ def test_dataset_creation(data_path, imgsz=640, line_thickness = 3, nexamples=3,
             # print('tt!!!!! ', tt)
             #
             # # bmasks = tf.stack(bmasks, axis=0)  # (b, 640, 640)
-            segments = masks2segments(mask[None])
-            print('segments',segments)
+            mask=tf.squeeze(tf.image.resize(mask[...,None],[mask.shape[0]*4,mask.shape[1]*4]))
+            segments = cv2.findContours(mask.numpy().astype('uint8'), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
+
             image=draw_dataset_entry(img, img_labels, segments, line_thickness)
 
             # image.save(save_dir/f'annotatedn_{idx}.jpeg')

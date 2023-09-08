@@ -63,8 +63,6 @@ from models.tf_model import TFModel
 from load_train_data import LoadTrainData
 from tf_create_dataset import CreateDataset
 
-from utils.segment.polygons2masks import polygons2masks_overlap, polygon2mask
-
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
 WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
@@ -194,23 +192,19 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     na = anchors.shape[1]  # number of anchors
 
     compute_loss = ComputeLoss( na,nl,nc,nm, anchors, hyp['fl_gamma'], hyp['box'], hyp['obj'], hyp['cls'], hyp['anchor_t'], autobalance=False)  # init loss class
-    ds_train = ds_train.batch(batch_size)
+    # ds_train = ds_train.batch(batch_size)
 
     for epoch in range(epochs):
         # train:
-        for batch, (bimages,  btargets, bfilename, bshape, bsegments) in enumerate(ds_train):
-            bmasks, bsorted_idx = polygons2masks_overlap(bimages.shape[1:3],
-                                                               bsegments,
-                                                               downsample_ratio=mask_ratio)
-            bmasks = tf.stack(bmasks, axis=0)  # (b, 640, 640)
+        for batch, (bimages,  btargets, bfilename, bshape, bmasks) in enumerate(ds_train):
 
 
             # concat image index word to targets. result targets shape: [nt, 6] where nt total of target objectd
             new_btargets = []
-            for idx, (targets, sorted_idx) in enumerate(zip(btargets, bsorted_idx)):
+            for idx, targets in enumerate(btargets):
                 bindex=tf.cast([idx], tf.float32)[None]
                 bindex = tf.tile(bindex, [targets.shape[0],  1])
-                new_btargets.extend(tf.concat([bindex, targets.to_tensor()], axis=-1)[sorted_idx]) # [bindex,cls, xywh]
+                new_btargets.extend(tf.concat([bindex, targets.to_tensor()], axis=-1)) # [bindex,cls, xywh]
 
             new_btargets=tf.stack(new_btargets, axis=0)
 
@@ -245,7 +239,7 @@ def parse_opt(known=False):
     parser.add_argument('--data', type=str, default=ROOT / 'data/shapes-seg.yaml', help='dataset.yaml path')
     parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.scratch-low.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=100, help='total training epochs')
-    parser.add_argument('--batch-size', type=int, default=1, help='total batch size for all GPUs, -1 for autobatch')
+    parser.add_argument('--batch-size', type=int, default=4, help='total batch size for all GPUs, -1 for autobatch')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='train, val image size (pixels)')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
