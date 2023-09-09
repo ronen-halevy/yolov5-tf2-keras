@@ -113,9 +113,9 @@ if __name__ == '__main__':
 def test_dataset_creation(data_path, imgsz=640, line_thickness = 3, nexamples=3, save_dir='./dataset'):
 
     ltd = LoadTrainData()
-    mosaic=True
+    mosaic=True# False
     image_files, labels, segments = ltd.load_data(data_path, mosaic)
-    create_dataset = CreateDataset(imgsz)
+    create_dataset = CreateDataset(imgsz, mosaic)
     ds = create_dataset(image_files, labels, segments)
     # ds = ds.shuffle(10)
     sel_ds = ds.take(nexamples)
