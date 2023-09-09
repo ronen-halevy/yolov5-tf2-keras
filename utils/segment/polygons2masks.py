@@ -50,7 +50,7 @@ def polygons2masks_overlap(img_size, segments, downsample_ratio=1):
         mask = polygon2mask(
                 img_size,
 
-                [ tf.reshape(segments[si].to_tensor(), [-1])],
+                [ tf.reshape(segments[si], [-1])],
                 downsample_ratio=downsample_ratio,
                 color=1,
             )

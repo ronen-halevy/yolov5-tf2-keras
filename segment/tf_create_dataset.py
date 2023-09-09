@@ -121,6 +121,15 @@ class CreateDataset:
             boxes[..., [0, 2]] = boxes[..., [0, 2]].clip(0, shape[1])  # x1, x2
             boxes[..., [1, 3]] = boxes[..., [1, 3]].clip(0, shape[0])  # y1, y2
 
+    def append_padxy(self, x, padw, padh):
+        xmin = x[..., 0:1] + padw  # top left x
+        ymin = x[..., 1:2]  + padh  # top left y
+        y = tf.concat(
+            [xmin, ymin], axis=-1, name='concat'
+        )
+        return y
+
+
     def xyxy2xywhn(self, x, w=640, h=640, clip=False, eps=0.0):
         # Convert nx4 boxes from [x1, y1, x2, y2] to [x, y, w, h] normalized where xy1=top-left, xy2=bottom-right
         if clip:
@@ -206,10 +215,8 @@ class CreateDataset:
             padw = x1a - x1b # shift of src scattered image from mosaic left end. Used for bbox and segment alignment.
             padh = y1a - y1b # shift of src scattered image from mosaic top end. Used for bbox and segment alignment.
             y_l = y_labels[idx]
-            xyxy = self.xywhn2xyxy(y_l[:, 1:], w, h, padw, padh)  # transform scale and align bboxes
-            xywh= self.xyxy2xywhn(xyxy,  w=640, h=640, clip=False, eps=0.0)
-
-            y_l = tf.concat([y_l[:, 0:1], xywh / 2], axis=-1)  # concat [cls,xywh] shape:[nt, 5]. div by 2 - 2w x 2h
+            xy= self.append_padxy(y_l[:,1:3], padw/w, padh/h)
+            y_l = tf.concat([y_l[:, 0:1], xy / 2, y_l[:,3:]/2], axis=-1)  #  [cls,xywh] shape:[nt, 5]. div by 2: 2w x 2h
             labels4.append(y_l)
 
             ys = y_segments[idx]
@@ -243,20 +250,12 @@ class CreateDataset:
             img, labels, segments=self.load_mosaic(filename, size, y_labels, y_segments)
         else:
             img = self.decode_resize(filename, size)
-            labels, segments = y_labels, y_segments
+            labels = y_labels
             padw, padh=0,0
-            xyxy = self.xywhn2xyxy(labels[:, 1:], size[0], size[1], padw, padh)  # transform scale and align bboxes
-            xywh = self.xyxy2xywhn(xyxy, w=640, h=640, clip=False, eps=0.0)
-
-            y_l = tf.concat([y_l[:, 0:1], xywh / 2], axis=-1)  # concat [cls,xywh] shape:[nt, 5]. div by 2 from 2w x 2h
-            labels4.append(y_l)
-
-            ys = y_segments[idx]
-            segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=ys,
+            w, h = size
+            segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=y_segments,
                                  fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
                                                                          ragged_rank=1));
-
-
 
 
 
