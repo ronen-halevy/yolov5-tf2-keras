@@ -87,7 +87,7 @@ def draw_dataset_entry(img, img_labels, img_segments, line_thickness):
     image = im.fromarray((img).astype(np.uint8))
     draw = ImageDraw.Draw(image)
     for bbox in bboxes:
-        xmin, ymin, w, h = bbox * imgsz
+        xmin, ymin, w, h = bbox #* imgsz
         color = tuple(np.random.randint(low=0, high=255, size=3).tolist())
         draw.line([(xmin - w / 2, ymin - h / 2), (xmin - w / 2, ymin + h / 2), (xmin + w / 2, ymin + h / 2),
                    (xmin + w / 2, ymin - h / 2),
@@ -95,8 +95,8 @@ def draw_dataset_entry(img, img_labels, img_segments, line_thickness):
                   width=line_thickness,
                   fill=color)
     text_box_color = [255, 255, 255]
-    draw_text_on_bounding_box(image, (np.array(bboxes)[..., 1] - np.array(bboxes)[..., 3] / 2) * imgsz,
-                              (np.array(bboxes)[..., 0] - np.array(bboxes)[..., 2] / 2) * imgsz, text_box_color,
+    draw_text_on_bounding_box(image, (np.array(bboxes)[..., 1] - np.array(bboxes)[..., 3] / 2) ,
+                              (np.array(bboxes)[..., 0] - np.array(bboxes)[..., 2] / 2) , text_box_color,
                               category_names, font_size=15)
     ImageDraw.Draw(image)
     return image
@@ -115,7 +115,8 @@ def test_dataset_creation(data_path, imgsz=640, line_thickness = 3, nexamples=3,
     ltd = LoadTrainData()
     mosaic=True# False
     image_files, labels, segments = ltd.load_data(data_path, mosaic)
-    create_dataset = CreateDataset(imgsz, mosaic)
+    degrees, translate, scale, shear, perspective = 0,0,0,0,0
+    create_dataset = CreateDataset(imgsz, mosaic, degrees, translate, scale, shear, perspective)
     ds = create_dataset(image_files, labels, segments)
     # ds = ds.shuffle(10)
     sel_ds = ds.take(nexamples)

@@ -99,6 +99,12 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     LOGGER.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
     opt.hyp = hyp.copy()  # for saving hyps to checkpoints
 
+    degrees = opt.hyp['degrees']
+    translate = opt.hyp['translate']
+    scale = opt.hyp['scale']
+    shear = opt.hyp['shear']
+    perspective = opt.hyp['perspective']
+
     # Save run settings
     if not evolve:
         yaml_save(save_dir / 'hyp.yaml', hyp)
@@ -122,7 +128,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     ltd = LoadTrainData()
     mosaic=True
     train_image_files, train_labels, train_segments = ltd.load_data(train_path, mosaic)
-    create_dataset=CreateDataset(imgsz[0])
+    create_dataset=CreateDataset(imgsz[0], degrees, translate, scale, shear, perspective)
     ds_train=create_dataset(train_image_files, train_labels, train_segments)
     val_image_files, val_labels, val_segments = ltd.load_data(val_path, mosaic)
 
