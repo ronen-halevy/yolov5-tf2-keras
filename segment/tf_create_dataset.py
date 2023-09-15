@@ -209,12 +209,12 @@ class CreateDataset:
     #     """
     #     # Convert nx4 boxes from [x, y, w, h] normalized to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
     #     # y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
-        xmin = w * (x[..., 0:1] - x[..., 2:3] / 2) + padw  # top left x
-        ymin = h * (x[..., 1:2] - x[..., 3:4] / 2) + padh  # top left y
-        xmax = w * (x[..., 0:1] + x[..., 2:3] / 2) + padw  # bottom right x
-        ymax = h * (x[..., 1:2] + x[..., 3:4] / 2) + padh  # bottom right y
+        xmin = w * (x[..., 1:2] - x[..., 3:4] / 2) + padw  # top left x
+        ymin = h * (x[..., 2:3] - x[..., 4:5] / 2) + padh  # top left y
+        xmax = w * (x[...,1:2] + x[..., 3:4] / 2) + padw  # bottom right x
+        ymax = h * (x[..., 2:3] + x[..., 4:5] / 2) + padh  # bottom right y
         y = tf.concat(
-            [xmin, ymin, xmax, ymax], axis=-1, name='concat'
+            [x[..., 0:1], xmin, ymin, xmax, ymax], axis=-1, name='concat'
         )
         return y
 
@@ -340,7 +340,7 @@ class CreateDataset:
 
 
             # box_candidates(box1, box2, wh_thr=2, ar_thr=100, area_thr=0.1, eps=1e-16):  # box1(4,n), box2(4,n)
-        i = box_candidates(box1=tf.transpose(targets.to_tensor()) * scale, box2=tf.transpose(tf.squeeze(segments, axis=1)), area_thr=0.01)
+        i = box_candidates(box1=tf.transpose(targets.to_tensor()[...,1:]) * s, box2=tf.transpose(tf.squeeze(segments, axis=1)), area_thr=0.01)
 
         # # tf.print(segments)
             # for i, segment in enumerate(segments):
@@ -408,7 +408,7 @@ class CreateDataset:
             padh = y1a - y1b # shift of src scattered image from mosaic top end. Used for bbox and segment alignment.
 
             # resize normalized and add pad values to bboxes and segments:
-            y_l = self.xywhn2xyxy(y_labels[idx][...,1:5], w,h, padw, padh)
+            y_l = self.xywhn2xyxy(y_labels[idx], w,h, padw, padh)
             y_s = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=y_segments[idx],
                                      fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
                                                                              ragged_rank=1));
@@ -423,6 +423,14 @@ class CreateDataset:
 
 
         labels4 = tf.concat(labels4, axis=0)  # concat 4 labels of 4 mosaic images
+
+        clipped_bboxes =tf.clip_by_value(
+            labels4[:,1:], 0, 2*w, name=None
+        )
+        labels4=tf.concat([labels4[...,0:1], clipped_bboxes],axis=-1)
+
+        # for x in (labels4[:, 1:], *segments4):
+        #     np.clip(x, 0, 2 * s, out=x)  # clip when using random_perspective()
         # temp resize::
         # segments4 /= 2.  # rescale from mosaic expanded  2w x 2h to wxh
         # img4 = tf.image.resize(img4, size)  # rescale from 2w x 2h
