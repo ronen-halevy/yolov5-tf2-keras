@@ -330,16 +330,30 @@ class CreateDataset:
             # segments = tf.map_fn(fn=lambda segment: self.create_hcoords(segment, M,s), elems=[segments, targets],
             #                       fn_output_signature=tf.TensorSpec(shape=[1, 4], dtype=tf.float32,
             #                                                               ));
-            segments = tf.map_fn(fn=lambda segment: self.create_hcoords(segment, M,s), elems=[segments, targets],
-                                  fn_output_signature=tf.TensorSpec(shape=[1, 4], dtype=tf.float32,
-                                                                          ));
+            bboxes, segments = tf.map_fn(fn=lambda segment: self.create_hcoords(segment, M,s), elems=[segments, targets],
+                                  fn_output_signature=(tf.TensorSpec(shape=[4,], dtype=tf.float32,
+                                                                          ),tf.TensorSpec(shape=[1000, 2], dtype=tf.float32,
+                                                                          )));
 
 
             # xy = tf.matmul(segments[0], tf.cast(tf.transpose(M), tf.float32) ) # transform
 
 
             # box_candidates(box1, box2, wh_thr=2, ar_thr=100, area_thr=0.1, eps=1e-16):  # box1(4,n), box2(4,n)
-        i = box_candidates(box1=tf.transpose(targets.to_tensor()[...,1:]) * s, box2=tf.transpose(tf.squeeze(segments, axis=1)), area_thr=0.01)
+        indices = box_candidates(box1=tf.transpose(targets.to_tensor()[...,1:]) * s, box2=tf.transpose(bboxes), area_thr=0.01)
+        bboxes=bboxes[indices]
+        segments=segments[indices]
+        print(bboxes)
+        # downsample_ratio = 4
+        # bmasks, bsorted_idx = polygons2masks_overlap(im.shape[0:2],
+        #                                              segments,
+        #                                              downsample_ratio=downsample_ratio)
+
+
+        # bboxes=tf.gather(
+        #     bboxes, indices, validate_indices=None, axis=None, batch_dims=0, name=None
+        # )
+        pass
 
         # # tf.print(segments)
             # for i, segment in enumerate(segments):
@@ -615,7 +629,7 @@ class CreateDataset:
         # x, y = segment.T  # segment xy
 
         # inside = (x >= 0) & (y >= 0) & (x <= width) & (y <= height)
-        return bbox[None]
+        return bbox, seg_coords
         return seg_coords
 
         # tf.print(xx.shape[1])
@@ -674,11 +688,8 @@ class CreateDataset:
         ds = tf.data.Dataset.from_tensor_slices((x_train, y_labels, y_segments))
 
         # debug loop:
-        for x, lables, segments in ds:
-            ss=  lables.to_tensor()
-            yy = segments
-            ee = labels
-            aa=self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments)
+        # for x, lables, segments in ds:
+        #      aa=self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments)
         dataset = ds.map(
             lambda x, lables, segments: self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments))
 
