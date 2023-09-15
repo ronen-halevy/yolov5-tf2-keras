@@ -270,7 +270,6 @@ class CreateDataset:
 
         # Combined rotation matrix
         M = T @ S @ R @ P @ C  # order of operations (right to left) is IMPORTANT
-        # print('M', M)
 
         # M = T  @ C # order of operations (right to left) is IMPORTANT
         # return im, targets, segments
@@ -481,11 +480,14 @@ class CreateDataset:
 
     def seg_interp(self, x, seg_coords):
         seg_coords=seg_coords.to_tensor()
+
+        seg_coords = tf.concat([seg_coords, seg_coords[0:1,:]], axis=0) #  last polygon's section for interpolation
+
         # y_ref=tf.reshape(y_ref.to_tensor(), [-1])
         segment = [tfp.math.interp_regular_1d_grid(
             x=x,
             x_ref_min=0,  # tf.constant(0.),
-            x_ref_max=5,  # shape0,  # tf.constant(len(s)),
+            x_ref_max=4,  # shape0,  # tf.constant(len(s)),
             y_ref=seg_coords[...,idx],
             axis=-1,
             fill_value='constant_extension',
@@ -494,11 +496,24 @@ class CreateDataset:
             grid_regularizing_transform=None,
             name=None
         ) for idx in range(2)]
-        tf.print('xxxxx', x)
+        ####
+        segment = np.concatenate([segment])
+        segment = tf.reshape(segment, [2,-1])
+        segment = tf.transpose(segment)
+
+        segment=tf.concat([segment, tf.ones([1000,1], dtype=tf.float32)], axis=-1)
+
+        # segment = tf.matmul(segment, tf.cast(tf.transpose(M), tf.float32))  # transform
+        ####
+
+
+
+
+        # tf.print('xxxxx', x)
         # tf.print('y_ref', y_ref)
-        tf.print('segment!!!!!!!!', segment)
+        # tf.print('segment!!!!!!!!', segment)
         shape0=4
-        segment=tf.concat([tf.expand_dims(segment[0],-1), tf.expand_dims(segment[1], -1), tf.ones([1000,1], dtype=tf.float32)], axis=-1)
+        # segment=tf.concat([tf.expand_dims(segment[0],-1), tf.expand_dims(segment[1], -1), tf.ones([1000,1], dtype=tf.float32)], axis=-1)#set homogenouse coords
 
         # hseg_coords = hseg_coords @ M.T  # transform
         # tf.print(' M.T', M.T)
@@ -545,10 +560,9 @@ class CreateDataset:
         # x = tf.cast(tf.linspace(0., tf.cast(tf.math.subtract(shape0 - 1.), tf.float32), n), dtype=tf.float32)  # n interpolation points. n points array
        #
 
-        x = tf.cast(tf.linspace(0., 4 - 1, 1000), dtype=tf.float32)  # n interpolation points. n points array
+        x = tf.cast(tf.linspace(0., 5 - 1, 1000), dtype=tf.float32)  # n interpolation points. n points array
 
         # y_ref=seg_coords[..., 0:1]
-
 
         seg_coords = tf.py_function(self.seg_interp, [x, seg_coords],  tf.float32)
         seg_coords = tf.matmul(seg_coords, tf.cast(tf.transpose(M), tf.float32))  # transform

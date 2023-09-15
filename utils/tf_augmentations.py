@@ -303,7 +303,7 @@ def box_candidates(box1, box2, wh_thr=2, ar_thr=100, area_thr=0.1, eps=1e-16):  
     # return (w2 > wh_thr) & (h2 > wh_thr) & (w2 * h2 / (w1 * h1 + eps) > area_thr) & (ar < ar_thr)  # candidates
     wh_bounded = tf.math.logical_and(tf.math.greater(w2 , wh_thr), tf.math.greater(h2 ,wh_thr))
     area_bounded = tf.math.greater(w2 * h2 / (w1 * h1 + eps), area_thr)
-    ar_bounded = tf.math.greater(ar, ar_thr)
+    ar_bounded = tf.math.less(ar, ar_thr)
     return tf.math.logical_and(
         tf.math.logical_and(wh_bounded,area_bounded),ar_bounded)
 
