@@ -23,6 +23,8 @@ import contextlib
 import numpy as np
 import tensorflow as tf
 
+import tensorflow_probability as tfp
+
 import contextlib
 import glob
 import hashlib
@@ -64,19 +66,44 @@ import cv2
 
 
 from utils.segment.polygons2masks import polygons2masks_overlap, polygon2mask
+from utils.tf_augmentations import box_candidates
+
+
 
 def preprocess(bimages,bsegments):
     downsample_ratio=4
     bmasks, bsorted_idx = polygons2masks_overlap(bimages.shape[0:2],
                                                  bsegments,
                                                  downsample_ratio=downsample_ratio)
-
     return bmasks
 
 def parse_func(img, img_segments_ragged):
     downsample_ratio=4
     bmask = tf.py_function(preprocess, [img,img_segments_ragged], tf.uint8)
     return bmask
+
+def affaine_preprocess(img):
+    # img = cv2.warpAffine(img, M[:2], dsize=(1280, 1280), borderValue=(114, 114, 114))
+    img=tf.keras.preprocessing.image.apply_affine_transform(
+        img,
+        theta=180,
+        tx=4,
+        ty=4,
+        shear=20,
+        zx=1,
+        zy=1,
+        row_axis=1,
+        col_axis=2,
+        channel_axis=0,
+        fill_mode='nearest',
+        cval=0.0,
+        order=1
+    )
+
+    return img
+def affaine_transform(img):
+    img = tf.py_function(affaine_preprocess, [img], tf.float32)
+    return img
 
 
 
@@ -129,13 +156,13 @@ class CreateDataset:
             boxes[..., [0, 2]] = boxes[..., [0, 2]].clip(0, shape[1])  # x1, x2
             boxes[..., [1, 3]] = boxes[..., [1, 3]].clip(0, shape[0])  # y1, y2
 
-    def xywhn2xyxy(self, x, w,h, padw, padh):
-        xmin = x[..., 1:2] * w + padw  # top left x
-        ymin = x[..., 2:3] * h + padh  # top left y
-        y_w = x[:,3:4]*w
-        y_h = x[:,4:5]*h
-        y_l = tf.concat([x[:, 0:1], xmin / 2, ymin/2, y_w/2, y_h/2], axis=-1)  # [cls,xywh] shape:[nt, 5].div by 2: 2w x 2h
-        return y_l
+    # def xywhn2xyxy(self, x, w,h, padw, padh):
+    #     xmin = x[..., 1:2] * w + padw  # top left x
+    #     ymin = x[..., 2:3] * h + padh  # top left y
+    #     y_w = x[:,3:4]*w
+    #     y_h = x[:,4:5]*h
+    #     y_l = tf.concat([x[:, 0:1], xmin , ymin, y_w, y_h], axis=-1)  # [cls,xywh] shape:[nt, 5].
+    #     return y_l
 
 
     def xyxy2xywhn(self, x, w=640, h=640, clip=False, eps=0.0):
@@ -164,7 +191,7 @@ class CreateDataset:
         # y= tf.RaggedTensor.from_tensor(y)
         return y
 
-    # def xywhn2xyxy(self, x, w=640, h=640, padw=0, padh=0):
+    def xywhn2xyxy(self, x, w=640, h=640, padw=0, padh=0):
     #     """
     #      transform scale and align bboxes: xywh to xyxy, scaled to image size, shift by padw,padh to location in mosaic
     #     :param x: xywh normalized bboxes
@@ -182,14 +209,14 @@ class CreateDataset:
     #     """
     #     # Convert nx4 boxes from [x, y, w, h] normalized to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
     #     # y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
-    #     xmin = w * (x[..., 0:1] - x[..., 2:3] / 2) + padw  # top left x
-    #     ymin = h * (x[..., 1:2] - x[..., 3:] / 2) + padh  # top left y
-    #     xmax = w * (x[..., 0:1] + x[..., 2:3] / 2) + padw  # bottom right x
-    #     ymax = h * (x[..., 1:2] + x[..., 3:] / 2) + padh  # bottom right y
-    #     y = tf.concat(
-    #         [xmin, ymin, xmax, ymax], axis=-1, name='concat'
-    #     )
-    #     return y
+        xmin = w * (x[..., 0:1] - x[..., 2:3] / 2) + padw  # top left x
+        ymin = h * (x[..., 1:2] - x[..., 3:4] / 2) + padh  # top left y
+        xmax = w * (x[..., 0:1] + x[..., 2:3] / 2) + padw  # bottom right x
+        ymax = h * (x[..., 1:2] + x[..., 3:4] / 2) + padh  # bottom right y
+        y = tf.concat(
+            [xmin, ymin, xmax, ymax], axis=-1, name='concat'
+        )
+        return y
 
     def random_perspective(self, im,
                            targets=(),
@@ -202,7 +229,7 @@ class CreateDataset:
                            border=(0, 0)):
         # torchvision.transforms.RandomAffine(degrees=(-10, 10), translate=(.1, .1), scale=(.9, 1.1), shear=(-10, 10))
         # targets = [cls, xyxy]
-
+        random.seed(0) # ronen todo!!
         height = im.shape[0] + border[0] * 2  # shape(h,w,c)
         width = im.shape[1] + border[1] * 2
 
@@ -223,8 +250,8 @@ class CreateDataset:
         s = random.uniform(1 - scale, 1 + scale)
         # s = 2 ** random.uniform(-scale, scale)
         R[:2] = cv2.getRotationMatrix2D(angle=a, center=(0, 0), scale=s)
-        print('angle', a)
-        print('scale', s)
+        # print('angle', a)
+        # print('scale', s)
 
         # Shear
         S = np.eye(3)
@@ -235,16 +262,18 @@ class CreateDataset:
         T = np.eye(3)
         T[0, 2] = (random.uniform(0.5 - translate, 0.5 + translate) * width)  # x translation (pixels)
         T[1, 2] = (random.uniform(0.5 - translate, 0.5 + translate) * height)  # y translation (pixels)
-        print('translate', translate)
+        # print('translate', translate)
 
-        print('T', T)
-        print('C', C)
+        # print('T', T)
+
+        # print('C', C)
 
         # Combined rotation matrix
-        M = T @ C  # order of operations (right to left) is IMPORTANT
-        print('M', M)
+        M = T @ S @ R @ P @ C  # order of operations (right to left) is IMPORTANT
+        # print('M', M)
 
         # M = T  @ C # order of operations (right to left) is IMPORTANT
+        # return im, targets, segments
 
         # M=C
         # M = np.eye(3)
@@ -253,15 +282,29 @@ class CreateDataset:
                 im = cv2.warpPerspective(im, M, dsize=(width, height), borderValue=(114, 114, 114))
             else:  # affine
                 from utils.segment.dataloaders import debugplt
-
-                # imm = cv2.warpAffine(np.asarray(im), M[:2], dsize=(1280, 1280), borderValue=(114, 114, 114))
+                # im = tf.keras.preprocessing.image.apply_affine_transform(
+                #     im,
+                #     theta=tf.constant(4.),
+                #     tx=10,
+                #     ty=0,
+                #     shear=0,
+                #     zx=1,
+                #     zy=1,
+                #     row_axis=1,
+                #     col_axis=2,
+                #     channel_axis=0,
+                #     fill_mode='nearest',
+                #     cval=0.0,
+                #     order=1
+                # )
+                # im = cv2.warpAffine(np.asarray(im), M[:2], dsize=(1280, 1280), borderValue=(114, 114, 114))
                 # cv2.imshow('laaauuu', cv2.resize(imm, [640, 640]))
                 # cv2.waitKey()
-                im = cv2.warpAffine(np.asarray(im), M[:2], dsize=(width, height), borderValue=(114, 114, 114))
+                # im = cv2.warpAffine(np.asarray(im), M[:2], dsize=(width, height), borderValue=(114, 114, 114))
 
                 # debugplt(im, segments, msg='aaauuu')
-                cv2.imshow('aaauuu', im)
-                cv2.waitKey()
+                # cv2.imshow('aaauuu', im)
+                # cv2.waitKey()
 
         # Visualize
         # import matplotlib.pyplot as plt
@@ -270,26 +313,62 @@ class CreateDataset:
         # ax[1].imshow(im2[:, :, ::-1])  # warped
 
         # Transform label coordinates
-        n = len(targets)
+        # n = len(targets)
+        ## debug!!
+        # return im, targets, segments
         new_segments = []
-        if n:
-            new = np.zeros((n, 4))
-            segments = resample_segments(segments)  # upsample
-            for i, segment in enumerate(segments):
-                xy = np.ones((len(segment), 3))
-                xy[:, :2] = segment
-                xy = xy @ M.T  # transform
-                xy = (xy[:, :2] / xy[:, 2:3] if perspective else xy[:, :2])  # perspective rescale or affine
 
-                # clip
-                new[i] = segment2box(xy, width, height)
-                new_segments.append(xy)
+##
 
+
+        ##
+
+        if True: #if n:
+            # new = np.zeros((n, 4))
+            new = []
+            # segments = resample_segments(segments)  # upsample
+            # # set homogenius coords before transform:
+            # segments = tf.map_fn(fn=lambda segment: self.create_hcoords(segment, M,s), elems=[segments, targets],
+            #                       fn_output_signature=tf.TensorSpec(shape=[1, 4], dtype=tf.float32,
+            #                                                               ));
+            segments = tf.map_fn(fn=lambda segment: self.create_hcoords(segment, M,s), elems=[segments, targets],
+                                  fn_output_signature=tf.TensorSpec(shape=[1, 4], dtype=tf.float32,
+                                                                          ));
+
+
+            # xy = tf.matmul(segments[0], tf.cast(tf.transpose(M), tf.float32) ) # transform
+
+
+            # box_candidates(box1, box2, wh_thr=2, ar_thr=100, area_thr=0.1, eps=1e-16):  # box1(4,n), box2(4,n)
+        i = box_candidates(box1=tf.transpose(targets.to_tensor()) * scale, box2=tf.transpose(tf.squeeze(segments, axis=1)), area_thr=0.01)
+
+        # # tf.print(segments)
+            # for i, segment in enumerate(segments):
+            #     xy = np.ones((segment.shape[0], 3))
+            #     xy[:, :2] = segment
+            #     xy = xy @ M.T  # transform
+            #     xy = (xy[:, :2] / xy[:, 2:3] if perspective else xy[:, :2])  # perspective rescale or affine
+            #
+            #     # clip
+            #     new.append(segment2box(xy, width, height))
+            #     new_segments.append(xy)
+
+            # for xx in new:
+            #     print(xx)
             # filter candidates
-            i = box_candidates(box1=targets[:, 1:5].T * s, box2=new.T, area_thr=0.01)
-            targets = targets[i]
-            targets[:, 1:5] = new[i]
-            new_segments = np.array(new_segments)[i]
+            # www=targets[..., 1:5]
+            # ddd=tf.transpose(targets[..., 1:5].to_tensor())
+            # ddd = ddd*s
+            # eee=tf.transpose(tf.constant(new))
+            # i = box_candidates(box1=tf.transpose(targets[:, 1:5].to_tensor()) * s, box2=tf.transpose(tf.cast(new, dtype=tf.float32)), area_thr=0.01)
+            # # i = box_candidates(box1=targets[:, 1:5].T * s, box2=new.T, area_thr=0.01)
+            #
+            # targets = targets.to_tensor()[i]
+            # # targets[:, 1:5] = new[i]
+            # # ttt = tf.cast(new, tf.float32)[i]
+            # targets = tf.concat([targets[...,0:1],  tf.cast(new, tf.float32)[i] ], axis=-1)
+            #
+            # new_segments = np.array(new_segments)[i]
 
         return im, targets, new_segments
 
@@ -297,8 +376,10 @@ class CreateDataset:
         labels4, segments4 = [], []
         segments4 = None
         # randomly select mosaic center:
+        # todo - change to f.random.uniform - requires a complete conversion to tf
         yc, xc = (int(random.uniform(-x, 2 * self.imgsz + x)) for x in self.mosaic_border)  # mosaic center x, y
-        # yc, xc = 496, 642  # ronen debug todo
+
+        yc, xc = 496, 642  # ronen debug todo
 
         img4 = tf.fill(
             (self.imgsz * 2, self.imgsz * 2, 3), 114 / 255
@@ -327,7 +408,7 @@ class CreateDataset:
             padh = y1a - y1b # shift of src scattered image from mosaic top end. Used for bbox and segment alignment.
 
             # resize normalized and add pad values to bboxes and segments:
-            y_l = self.xywhn2xyxy(y_labels[idx], w,h, padw, padh)
+            y_l = self.xywhn2xyxy(y_labels[idx][...,1:5], w,h, padw, padh)
             y_s = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=y_segments[idx],
                                      fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
                                                                              ragged_rank=1));
@@ -339,49 +420,13 @@ class CreateDataset:
                 segments4 = tf.concat([segments4, y_s], axis=0)
 
 
-            ########
-            # y_s=y_segments[idx]
-            # y_l = y_labels[idx]
-            # if y_l.shape[0]:
-            #     # rescale and add pad values - both bboxes and segments:
-            #     y_l = self.xywhn2xyxy(y_l, w,h, padw, padh)
-            #     y_s = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=y_s,
-            #                          fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
-            #                                                                  ragged_rank=1));
-            # labels4.append(y_l)
-            # if segments4 is None:
-            #     segments4 = y_s
-            # else:
-            #     segments4 = tf.concat([segments4, y_s], axis=0)
 
-            ########
-
-            # y_s=y_segments[idx]
-            # if y_l.shape[0]:
-            #     y_l = self.xywhn2xyxy(y_labels[idx], w,h, padw, padh)
-            #     y_s = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=y_s,
-            #                          fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
-            #                                                                  ragged_rank=1));
-            # labels4.append(y_l)
-            # if segments4 is None:
-            #     segments4 = y_s
-            # else:
-            #     segments4 = tf.concat([segments4, y_s], axis=0)
-            # modify rescale normalized segment coords and shift by pad values:
-
-            # modify rescale normalized segment coords and shift by pad values:
-            # segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=ys,
-            #                      fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
-            #                                                              ragged_rank=1));
-            #
-            # if segments4 is None:
-            #     segments4 = segments
-            # else:
 
         labels4 = tf.concat(labels4, axis=0)  # concat 4 labels of 4 mosaic images
-        segments4 /= 2.  # rescale from mosaic expanded  2w x 2h to wxh
-        img4 = tf.image.resize(img4, size)  # rescale from 2w x 2h
-
+        # temp resize::
+        # segments4 /= 2.  # rescale from mosaic expanded  2w x 2h to wxh
+        # img4 = tf.image.resize(img4, size)  # rescale from 2w x 2h
+        #
         img4, labels4, segments4 = self.random_perspective(img4,
                                                       labels4,
                                                       segments4,
@@ -391,9 +436,172 @@ class CreateDataset:
                                                       shear=self.shear,
                                                       perspective=self.perspective,
                                                       border=self.mosaic_border)  # border to remove
+        # tf.print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+        segments4 /= 2.  # rescale from mosaic expanded  2w x 2h to wxh
+        img4 = tf.image.resize(img4, size)  # rescale from 2w x 2h
 
         return img4, labels4, segments4
 
+    def segment2box(segment, width=640, height=640):
+        # Convert 1 segment label to 1 box label, applying inside-image constraint, i.e. (xy1, xy2, ...) to (xyxy)
+        x, y = segment.T  # segment xy
+        inside = (x >= 0) & (y >= 0) & (x <= width) & (y <= height)
+        x, y, = x[inside], y[inside]
+        return np.array([x.min(), y.min(), x.max(), y.max()]) if any(x) else np.zeros((4))  # xyxy
+
+    def get_shape0(self, tens):
+        return tens.shape[0]
+
+    def arrange_bbox(self, seg_coords):
+        width=height=640
+        x, y = tf.transpose(seg_coords)  # segment xy
+        tf.print('xy,AA',x,y)
+        ge = tf.math.logical_and(tf.math.greater_equal(x,0), tf.math.greater_equal(y, 0))
+        le = tf.math.logical_and(tf.math.less_equal(x,width), tf.math.less_equal(y, height))
+        inside =tf.math.logical_and(ge,le)
+        # inside = (x >= 0) & (y >= 0) & (x <= width) & (y<= height)
+        x, y, = x[inside], y[inside]
+        tf.print('xy,',x,y)
+        bbox = tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x), tf.math.reduce_max(y)],axis=0) if any(x) else tf.zeros((4))
+        any_positive=tf.math.greater(tf.reduce_max(tf.math.abs(x)), 0)
+        bbox=tf.where(any_positive ,
+                 tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x), tf.math.reduce_max(y)],axis=0),
+                 tf.zeros((4)))
+            # condition, x=None, y=None, name=None
+        # )
+        return bbox
+
+    def seg_interp(self, x, seg_coords):
+        seg_coords=seg_coords.to_tensor()
+        # y_ref=tf.reshape(y_ref.to_tensor(), [-1])
+        segment = [tfp.math.interp_regular_1d_grid(
+            x=x,
+            x_ref_min=0,  # tf.constant(0.),
+            x_ref_max=5,  # shape0,  # tf.constant(len(s)),
+            y_ref=seg_coords[...,idx],
+            axis=-1,
+            fill_value='constant_extension',
+            fill_value_below=None,
+            fill_value_above=None,
+            grid_regularizing_transform=None,
+            name=None
+        ) for idx in range(2)]
+        tf.print('xxxxx', x)
+        # tf.print('y_ref', y_ref)
+        tf.print('segment!!!!!!!!', segment)
+        shape0=4
+        segment=tf.concat([tf.expand_dims(segment[0],-1), tf.expand_dims(segment[1], -1), tf.ones([1000,1], dtype=tf.float32)], axis=-1)
+
+        # hseg_coords = hseg_coords @ M.T  # transform
+        # tf.print(' M.T', M.T)
+        # tf.print('hseg_coords', hseg_coords)
+
+        # hseg_coords = tf.matmul(hseg_coords, tf.cast(M.T, tf.float32))
+        #
+        # # hseg_coords = hseg_coords @ M.T
+        #
+        # hseg_coords = hseg_coords[...,0:2]
+        #
+
+
+        return segment
+        ###
+
+    # create h coords - add ones row
+    def create_hcoords(self, xxx, M, scale):
+        seg_coords=xxx[0]
+        target=xxx[1]
+
+        shape0 = tf.py_function(self.get_shape0, [seg_coords],  tf.uint32)
+
+
+        # seg_coords = resample_segments(seg_coords)  # upsample
+        # x = tf.cast(tf.linspace(0., 4 - 1, 1000), dtype=tf.float32)  # n interpolation points. n points array
+        # #
+        # segment = tfp.math.interp_regular_1d_grid(
+        #     x=x,
+        #     x_ref_min=0,  # tf.constant(0.),
+        #     x_ref_max=5,  # tf.constant(len(s)),
+        #     y_ref=tf.constant([0.4,0.6,0.8,0.9]),
+        #     axis=-1,
+        #     fill_value='constant_extension',
+        #     fill_value_below=None,
+        #     fill_value_above=None,
+        #     grid_regularizing_transform=None,
+        #     name=None
+        # )
+
+
+        ###
+        n=1000
+        # x = tf.cast(tf.linspace(0., tf.cast(tf.math.subtract(shape0 - 1.), tf.float32), n), dtype=tf.float32)  # n interpolation points. n points array
+       #
+
+        x = tf.cast(tf.linspace(0., 4 - 1, 1000), dtype=tf.float32)  # n interpolation points. n points array
+
+        # y_ref=seg_coords[..., 0:1]
+
+
+        seg_coords = tf.py_function(self.seg_interp, [x, seg_coords],  tf.float32)
+        seg_coords = tf.matmul(seg_coords, tf.cast(tf.transpose(M), tf.float32))  # transform
+        seg_coords = seg_coords[..., 0:2]
+        bbox = tf.py_function(self.arrange_bbox, [seg_coords],  tf.float32)
+
+    # def seg_interp(self, x, y_ref):
+    #
+    #     segment = tfp.math.interp_regular_1d_grid(
+    #         x=x,
+    #         x_ref_min=0,  # tf.constant(0.),
+    #         x_ref_max=5,#shape0,  # tf.constant(len(s)),
+    #         y_ref=y_ref,
+    #         axis=-1,
+    #         fill_value='constant_extension',
+    #         fill_value_below=None,
+    #         fill_value_above=None,
+    #         grid_regularizing_transform=None,
+    #         name=None
+    #     )
+    #     return segment
+        ###
+
+        # get shape[0 ] by py_function, otherwise shaoe is None in graphmode
+        # hseg_coords=tf.concat([seg_coords[...,0:2], tf.ones([shape0,1], dtype=tf.float32)], axis=-1)
+        # hseg_coords = hseg_coords @ M.T  # transform
+        # tf.print(' M.T', M.T)
+        # tf.print('hseg_coords', hseg_coords)
+
+        # seg_coords = tf.matmul(seg_coords, tf.cast(M.T, tf.float32))
+        # segment2box:
+        # seg_coords = seg_coords @ M.T
+
+        # seg_coords = seg_coords[...,0:2]
+        # return seg_coords
+        # shape0 = tf.py_function(self.transpose, [seg_coords],  tf.uint32)
+
+
+        # x, y = hseg_coords.T  # segment xy
+        # width=height=640
+        # x, y = tf.transpose(seg_coords)  # segment xy
+        # tf.print('xy,AA',x,y)
+        #
+        # inside = (x >= 0) & (y >= 0) & (x <= width) & (y<= height)
+        # x, y, = x[inside], y[inside]
+        # tf.print('xy,',x,y)
+        # bbox = tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x), tf.math.reduce_max(y)],axis=0)# if any(x) else tf.zeros((4))
+        # i = box_candidates(box1=tf.transpose(target) * scale, box2=tf.transpose(bbox), area_thr=0.01)
+        # tf.print('i',i)
+        # x, y = segment.T  # segment xy
+
+        # inside = (x >= 0) & (y >= 0) & (x <= width) & (y <= height)
+        return bbox[None]
+        return seg_coords
+
+        # tf.print(xx.shape[1])
+        # xx = tf.concat([xx[...,0:1], xx[...,1:2], tf.ones([xx.shape[0],1], dtype=tf.float32)], axis=-1)
+        # xx = tf.concat([xx, tf.ones([xx.shape[0],1], dtype=tf.float32)], axis=-1)
+        # xx=tf.expand_dims(xx, axis=-1)
+        # pass
+        # return xx
     def decode_resize(self, filename, size):
         img_st = tf.io.read_file(filename)
         img_dec = tf.image.decode_image(img_st, channels=3, expand_animations=False)
@@ -418,15 +626,23 @@ class CreateDataset:
                                                                          ragged_rank=1));
 
 
+        # im = cv2.warpAffine(np.asarray(im), M[:2], dsize=(1280, 1280), borderValue=(114, 114, 114))
+        # hsegments = tf.map_fn(fn=lambda segment: self.create_hcoords(segment), elems=segments,
+        #                 fn_output_signature=tf.RaggedTensorSpec(shape=[None, 3], dtype=tf.float32,
+        #                                                         ragged_rank=1));
+        # bmask=parse_func(img, segments)
+        # image=affaine_transform(img)
+        # img=image
+        return(img, labels,   filename, img.shape, segments, )
+        # return (img, labels, filename, img
+        #         .shape,  bmask)
 
-
-
-        bmask=parse_func(img, segments)
-        return (img, labels, filename, img
-                .shape,  bmask)
-
-
-
+    def image_affine(self, bimages):
+        image=affaine_transform(bimages)
+        return image
+    # def segment_affine(self, segment):
+    #     segment=segment_affaine_transform(segment)
+    #     return segment
 
     def __call__(self, image_files, labels, segments):
         y_segments = tf.ragged.constant(list(segments))
@@ -437,9 +653,27 @@ class CreateDataset:
 
         # debug loop:
         for x, lables, segments in ds:
+            ss=  lables.to_tensor()
+            yy = segments
+            ee = labels
             aa=self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments)
         dataset = ds.map(
             lambda x, lables, segments: self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments))
+
+        dataset = dataset.map(
+            lambda bimages,  btargets, bfilename, bshape, segments: (self.image_affine(bimages),  btargets, bfilename, bshape, segments))
+
+        # dataset = dataset.map(
+        #     lambda bimages, btargets, bfilename, bshape, segments: (
+        #     bimages, btargets, bfilename, bshape, self.segment_affine(segments)))
+
+        dataset = dataset.map(
+            lambda bimages,  btargets, bfilename, bshape, segments: (bimages,  btargets, parse_func(bimages, segments), bfilename, bshape))
+
+
+        # dataset = dataset.map(
+        #     lambda bimages,  btargets, bfilename, bshape, bmasks: self.segments_affine(bimages,  btargets, bfilename, bshape, bmasks))
+
 
         for batch, (bimages,  btargets, bfilename, bshape, bmasks) in enumerate(dataset):
             pass
@@ -457,3 +691,5 @@ class CreateDataset:
         #     lambda img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged: parse_func(img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged))
 
         return dataset
+
+
