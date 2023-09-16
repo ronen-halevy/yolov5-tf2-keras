@@ -70,18 +70,20 @@ from utils.tf_augmentations import box_candidates
 
 
 
-def preprocess(bimages,bsegments):
+def preprocess(imgsz,bsegments):
     downsample_ratio=4
-    bmasks, bsorted_idx = polygons2masks_overlap(bimages.shape[0:2],
+    bmasks = polygons2masks_overlap(imgsz,
                                                  bsegments,
                                                  downsample_ratio=downsample_ratio)
     return bmasks
 
-def parse_func(img, img_segments_ragged):
+def parse_func( img_segments_ragged):
     downsample_ratio=4
-    bmask = tf.py_function(preprocess, [img,img_segments_ragged], tf.uint8)
+    imgsz=[640, 640]# [640, 640] # todo - forced here
+    bmask = tf.py_function(preprocess, [imgsz,img_segments_ragged], tf.uint8)
     return bmask
 
+# @tf.function
 def affaine_preprocess(img):
     # img = cv2.warpAffine(img, M[:2], dsize=(1280, 1280), borderValue=(114, 114, 114))
     img=tf.keras.preprocessing.image.apply_affine_transform(
@@ -99,8 +101,9 @@ def affaine_preprocess(img):
         cval=0.0,
         order=1
     )
-
+    img=tf.image.resize(img, [640,640])
     return img
+# @tf.function
 def affaine_transform(img):
     img = tf.py_function(affaine_preprocess, [img], tf.float32)
     return img
@@ -130,7 +133,7 @@ class CreateDataset:
         :type src_img:
         :param dst_xy:
         :type dst_xy:
-        :return: 
+        :return:
         :rtype: 
         """
         y_range = tf.range(dst_xy[2], dst_xy[3])[..., None]
@@ -342,6 +345,9 @@ class CreateDataset:
             # box_candidates(box1, box2, wh_thr=2, ar_thr=100, area_thr=0.1, eps=1e-16):  # box1(4,n), box2(4,n)
         indices = box_candidates(box1=tf.transpose(targets.to_tensor()[...,1:]) * s, box2=tf.transpose(bboxes), area_thr=0.01)
         bboxes=bboxes[indices]
+
+        targets = targets.to_tensor()[indices]
+        bboxes=tf.concat([targets[:,0:1], bboxes], axis=-1)
         segments=segments[indices]
         print(bboxes)
         # downsample_ratio = 4
@@ -383,7 +389,7 @@ class CreateDataset:
             #
             # new_segments = np.array(new_segments)[i]
 
-        return im, targets, new_segments
+        return im, bboxes, segments
 
     def load_mosaic(self,  filenames, size, y_labels, y_segments):
         labels4, segments4 = [], []
@@ -457,9 +463,8 @@ class CreateDataset:
                                                       shear=self.shear,
                                                       perspective=self.perspective,
                                                       border=self.mosaic_border)  # border to remove
-        # tf.print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
-        segments4 /= 2.  # rescale from mosaic expanded  2w x 2h to wxh
-        img4 = tf.image.resize(img4, size)  # rescale from 2w x 2h
+        # segments4 /= 2.  # rescale from mosaic expanded  2w x 2h to wxh
+        # img4 = tf.image.resize(img4, size)  # rescale from 2w x 2h
 
         return img4, labels4, segments4
 
@@ -476,13 +481,13 @@ class CreateDataset:
     def arrange_bbox(self, seg_coords):
         width=height=640
         x, y = tf.transpose(seg_coords)  # segment xy
-        tf.print('xy,AA',x,y)
+        # tf.print('xy,AA',x,y)
         ge = tf.math.logical_and(tf.math.greater_equal(x,0), tf.math.greater_equal(y, 0))
         le = tf.math.logical_and(tf.math.less_equal(x,width), tf.math.less_equal(y, height))
         inside =tf.math.logical_and(ge,le)
         # inside = (x >= 0) & (y >= 0) & (x <= width) & (y<= height)
         x, y, = x[inside], y[inside]
-        tf.print('xy,',x,y)
+        # tf.print('xy,',x,y)
         bbox = tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x), tf.math.reduce_max(y)],axis=0) if any(x) else tf.zeros((4))
         any_positive=tf.math.greater(tf.reduce_max(tf.math.abs(x)), 0)
         bbox=tf.where(any_positive ,
@@ -627,7 +632,6 @@ class CreateDataset:
         # i = box_candidates(box1=tf.transpose(target) * scale, box2=tf.transpose(bbox), area_thr=0.01)
         # tf.print('i',i)
         # x, y = segment.T  # segment xy
-
         # inside = (x >= 0) & (y >= 0) & (x <= width) & (y <= height)
         return bbox, seg_coords
         return seg_coords
@@ -701,7 +705,7 @@ class CreateDataset:
         #     bimages, btargets, bfilename, bshape, self.segment_affine(segments)))
 
         dataset = dataset.map(
-            lambda bimages,  btargets, bfilename, bshape, segments: (bimages,  btargets, parse_func(bimages, segments), bfilename, bshape))
+            lambda bimages,  btargets, bfilename, bshape, segments: (bimages,  btargets, parse_func(segments), bfilename, bshape))
 
 
         # dataset = dataset.map(
