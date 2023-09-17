@@ -101,7 +101,6 @@ def affaine_preprocess(img):
         cval=0.0,
         order=1
     )
-    img=tf.image.resize(img, [640,640])
     return img
 # @tf.function
 def affaine_transform(img):
@@ -311,7 +310,7 @@ class CreateDataset:
             # segments = tf.map_fn(fn=lambda segment: self.create_hcoords(segment, M,s), elems=[segments, targets],
             #                       fn_output_signature=tf.TensorSpec(shape=[1, 4], dtype=tf.float32,
             #                                                               ));
-            bboxes, segments = tf.map_fn(fn=lambda segment: self.create_hcoords(segment, M,s), elems=segments,
+            bboxes, segments = tf.map_fn(fn=lambda segment: self.create_hcoords(segment, M), elems=segments,
                                   fn_output_signature=(tf.TensorSpec(shape=[4,], dtype=tf.float32,
                                                                           ),tf.TensorSpec(shape=[1000, 2], dtype=tf.float32,
                                                                           )));
@@ -327,7 +326,7 @@ class CreateDataset:
         targets = targets.to_tensor()[indices]
         bboxes=tf.concat([targets[:,0:1], bboxes], axis=-1)
         segments=segments[indices]
-        print(bboxes)
+        # print(bboxes)
         # downsample_ratio = 4
         # bmasks, bsorted_idx = polygons2masks_overlap(im.shape[0:2],
         #                                              segments,
@@ -446,7 +445,10 @@ class CreateDataset:
 
         return img4, labels4, segments4
 
-    def segment2box(segment, width=640, height=640):
+
+
+
+
         # Convert 1 segment label to 1 box label, applying inside-image constraint, i.e. (xy1, xy2, ...) to (xyxy)
         x, y = segment.T  # segment xy
         inside = (x >= 0) & (y >= 0) & (x <= width) & (y <= height)
@@ -458,22 +460,28 @@ class CreateDataset:
 
     def arrange_bbox(self, seg_coords):
         width=height=640
+
+        # bbox = segment2box(seg_coords) # replace with this:
+
         x, y = tf.transpose(seg_coords)  # segment xy
         # tf.print('xy,AA',x,y)
-        ge = tf.math.logical_and(tf.math.greater_equal(x,0), tf.math.greater_equal(y, 0))
-        le = tf.math.logical_and(tf.math.less_equal(x,width), tf.math.less_equal(y, height))
-        inside =tf.math.logical_and(ge,le)
+        ge = tf.math.logical_and(tf.math.greater_equal(x, 0), tf.math.greater_equal(y, 0))
+        le = tf.math.logical_and(tf.math.less_equal(x, width), tf.math.less_equal(y, height))
+        inside = tf.math.logical_and(ge, le)
         # inside = (x >= 0) & (y >= 0) & (x <= width) & (y<= height)
         x, y, = x[inside], y[inside]
         # tf.print('xy,',x,y)
-        bbox = tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x), tf.math.reduce_max(y)],axis=0) if any(x) else tf.zeros((4))
-        any_positive=tf.math.greater(tf.reduce_max(tf.math.abs(x)), 0)
-        bbox=tf.where(any_positive ,
-                 tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x), tf.math.reduce_max(y)],axis=0),
-                 tf.zeros((4)))
-            # condition, x=None, y=None, name=None
-        # )
+        bbox = tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x), tf.math.reduce_max(y)],
+                        axis=0) if any(x) else tf.zeros((4))
+        any_positive = tf.math.greater(tf.reduce_max(tf.math.abs(x)), 0)
+        bbox = tf.where(any_positive,
+                        tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x),
+                                  tf.math.reduce_max(y)], axis=0),
+                        tf.zeros((4)))
+
         return bbox
+
+
 
     def seg_interp(self, x, seg_coords):
         seg_coords=seg_coords.to_tensor()
@@ -528,8 +536,12 @@ class CreateDataset:
         ###
 
     # create h coords - add ones row
-    def create_hcoords(self, seg_coords, M, s):
+    def create_hcoords(self, seg_coords, M):
         # shape0 = tf.py_function(self.get_shape0, [seg_coords],  tf.uint32)
+
+        seg_coords = tf.clip_by_value(
+            seg_coords, 0, 2 * 640, name=None # todo 640
+        )
 
 
         # seg_coords = resample_segments(seg_coords)  # upsample
@@ -639,9 +651,11 @@ class CreateDataset:
             segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=y_segments,
                                  fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
                                                                          ragged_rank=1));
+        img=tf.image.resize(img, size)
 
-
+        # tf.print('img.shape[1], h=img.shape[0]',img.shape[1],img.shape[0])
         labels = xyxy2xywhn(labels, w=img.shape[1], h=img.shape[0], clip=True, eps=1e-3) # return xywh normalized
+        # img=self.image_affine(img) # todo this added - is the problem
 
 
         # im = cv2.warpAffine(np.asarray(im), M[:2], dsize=(1280, 1280), borderValue=(114, 114, 114))
@@ -672,8 +686,8 @@ class CreateDataset:
         ds = tf.data.Dataset.from_tensor_slices((x_train, y_labels, y_segments))
 
         # debug loop:
-        # for x, lables, segments in ds:
-        #      aa=self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments)
+        for x, lables, segments in ds:
+             aa=self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments)
         dataset = ds.map(
             lambda x, lables, segments: self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments))
 
@@ -684,8 +698,8 @@ class CreateDataset:
         #     lambda bimages, btargets, bfilename, bshape, segments: (
         #     bimages, btargets, bfilename, bshape, self.segment_affine(segments)))
         # debug loop:
-        # for batch, (bimages,  btargets, bfilename, bshape, segments) in enumerate(dataset):
-        #     mask= parse_func(segments)
+        for batch, (bimages,  btargets, bfilename, bshape, segments) in enumerate(dataset):
+            mask= parse_func(segments)
 
         dataset = dataset.map(
             lambda bimages,  btargets, bfilename, bshape, segments: (bimages,  btargets, parse_func(segments), bfilename, bshape))

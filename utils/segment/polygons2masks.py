@@ -41,7 +41,6 @@ def polygon2mask1(img_size, segment, color=1, downsample_ratio=1):
     points = np.array([[910, 641], [206, 632], [696, 488], [458, 485]]).astype(np.int32)
     # points.dtype => 'int64'
     cv2.fillPoly(mask, np.int32([points]), 1)
-    tf.print(points.shape)
     # cv2.fillPoly(mask, [segment],1)
     # mask=tf.py_function(cv2.fillPoly,(mask, [segment], color), tf.float32)
     # mask=tf.py_function(ttt,(mask, [segment], color), tf.float32)
