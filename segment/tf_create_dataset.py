@@ -376,7 +376,7 @@ class CreateDataset:
         # todo - change to f.random.uniform - requires a complete conversion to tf
         yc, xc = (int(random.uniform(-x, 2 * self.imgsz + x)) for x in self.mosaic_border)  # mosaic center x, y
 
-        yc, xc = 496, 642  # ronen debug todo
+        # yc, xc = 496, 642  # ronen debug todo
 
         img4 = tf.fill(
             (self.imgsz * 2, self.imgsz * 2, 3), 114 / 255
@@ -528,7 +528,7 @@ class CreateDataset:
         ###
 
     # create h coords - add ones row
-    def create_hcoords(self, xxx, M, scale):
+    def create_hcoords(self, xxx, M, s):
         seg_coords=xxx[0]
         target=xxx[1]
 
@@ -644,7 +644,7 @@ class CreateDataset:
                                                                          ragged_rank=1));
 
 
-        xywhn = xyxy2xywhn(labels, w=img.shape[1], h=img.shape[0], clip=True, eps=1e-3) # return xywh normalized
+        labels = xyxy2xywhn(labels, w=img.shape[1], h=img.shape[0], clip=True, eps=1e-3) # return xywh normalized
 
 
         # im = cv2.warpAffine(np.asarray(im), M[:2], dsize=(1280, 1280), borderValue=(114, 114, 114))
@@ -654,6 +654,8 @@ class CreateDataset:
         # bmask=parse_func(img, segments)
         # image=affaine_transform(img)
         # img=image
+        labels=tf.RaggedTensor.from_tensor(labels, padding=-1)
+
         return(img, labels,   filename, img.shape, segments, )
         # return (img, labels, filename, img
         #         .shape,  bmask)
