@@ -16,7 +16,7 @@ from pathlib import Path
 # from core.create_dataset_from_files import create_dataset_from_files
 # from core.load_tfrecords import parse_tfrecords
 
-from utils.tf_general import segment2box, resample_segments
+from utils.tf_general import segment2box,  xyxy2xywhn
 import os
 from PIL import ExifTags, Image, ImageOps
 import contextlib
@@ -79,8 +79,8 @@ def preprocess(imgsz,bsegments):
 
 def parse_func( img_segments_ragged):
     downsample_ratio=4
-    imgsz=[640, 640]# [640, 640] # todo - forced here
-    bmask = tf.py_function(preprocess, [imgsz,img_segments_ragged], tf.uint8)
+    imgsz=[640, 640]# [640, 640] # todo - forced hereimg_segments_ragged
+    bmask = tf.py_function(preprocess, [imgsz,img_segments_ragged], Tout=tf.float32)
     return bmask
 
 # @tf.function
@@ -147,17 +147,7 @@ class CreateDataset:
         return dst
 
     # @tf.function
-    def clip_boxes(self, boxes, shape):
-        # Clip boxes (xyxy) to image shape (height, width)
-        tf.clip_by_value( boxes[:, 0], 0, boxes.shape[1])
-        if isinstance(boxes, torch.Tensor):  # faster individually
-            boxes[..., 0].clamp_(0, shape[1])  # x1
-            boxes[..., 1].clamp_(0, shape[0])  # y1
-            boxes[..., 2].clamp_(0, shape[1])  # x2
-            boxes[..., 3].clamp_(0, shape[0])  # y2
-        else:  # np.array (faster grouped)
-            boxes[..., [0, 2]] = boxes[..., [0, 2]].clip(0, shape[1])  # x1, x2
-            boxes[..., [1, 3]] = boxes[..., [1, 3]].clip(0, shape[0])  # y1, y2
+
 
     # def xywhn2xyxy(self, x, w,h, padw, padh):
     #     xmin = x[..., 1:2] * w + padw  # top left x
@@ -168,19 +158,7 @@ class CreateDataset:
     #     return y_l
 
 
-    def xyxy2xywhn(self, x, w=640, h=640, clip=False, eps=0.0):
-        # Convert nx4 boxes from [x1, y1, x2, y2] to [x, y, w, h] normalized where xy1=top-left, xy2=bottom-right
-        if clip:
-            self.clip_boxes(x, (h - eps, w - eps))  # warning: inplace clip
 
-        xc = ((x[..., 0:1] + x[..., 2:3]) / 2) / w  # x center
-        yc = ((x[..., 1:2] + x[..., 3:4]) / 2) / h  # y center
-        w = (x[..., 2:3] - x[..., 0:1]) / w  # width
-        h= (x[..., 3:4] - x[..., 1:2]) / h  # height
-        y = tf.concat(
-            [xc, yc, w, h], axis=-1, name='concat'
-        )
-        return y
 
     def xyn2xy(self, x, w=640, h=640, padw=0, padh=0):
         # Convert normalized segments into pixel segments, shape (n,2)
@@ -666,6 +644,9 @@ class CreateDataset:
                                                                          ragged_rank=1));
 
 
+        xywhn = xyxy2xywhn(labels, w=img.shape[1], h=img.shape[0], clip=True, eps=1e-3) # return xywh normalized
+
+
         # im = cv2.warpAffine(np.asarray(im), M[:2], dsize=(1280, 1280), borderValue=(114, 114, 114))
         # hsegments = tf.map_fn(fn=lambda segment: self.create_hcoords(segment), elems=segments,
         #                 fn_output_signature=tf.RaggedTensorSpec(shape=[None, 3], dtype=tf.float32,
@@ -703,6 +684,9 @@ class CreateDataset:
         # dataset = dataset.map(
         #     lambda bimages, btargets, bfilename, bshape, segments: (
         #     bimages, btargets, bfilename, bshape, self.segment_affine(segments)))
+        # debug loop:
+        # for batch, (bimages,  btargets, bfilename, bshape, segments) in enumerate(dataset):
+        #     mask= parse_func(segments)
 
         dataset = dataset.map(
             lambda bimages,  btargets, bfilename, bshape, segments: (bimages,  btargets, parse_func(segments), bfilename, bshape))
@@ -712,7 +696,7 @@ class CreateDataset:
         #     lambda bimages,  btargets, bfilename, bshape, bmasks: self.segments_affine(bimages,  btargets, bfilename, bshape, bmasks))
 
 
-        for batch, (bimages,  btargets, bfilename, bshape, bmasks) in enumerate(dataset):
+        for batch, (bimages,  btargets, bmasks, bshape, bfilename) in enumerate(dataset):
             pass
 
         # for idx, (img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged) in enumerate(dataset):

@@ -141,12 +141,12 @@ def set_logging(name=LOGGING_NAME, verbose=True):
             name: {
                 'class': 'logging.StreamHandler',
                 'formatter': name,
-                'level': level,}},
+                'level': level, }},
         'loggers': {
             name: {
                 'level': level,
                 'handlers': [name],
-                'propagate': False,}}})
+                'propagate': False, }}})
 
 
 set_logging(LOGGING_NAME)  # run before defining LOGGER
@@ -388,6 +388,8 @@ def check_version(current='0.0.0', minimum='0.0.0', name='version ', pinned=Fals
     if verbose and not result:
         LOGGER.warning(s)
     return result
+
+
 @TryExcept()
 def check_requirements(requirements=ROOT / 'requirements.txt', exclude=(), install=True, cmds=''):
     # Check installed dependencies meet YOLOv5 requirements (pass *.txt file or list of packages or single package str)
@@ -421,7 +423,6 @@ def check_requirements(requirements=ROOT / 'requirements.txt', exclude=(), insta
             LOGGER.info(s)
         except Exception as e:
             LOGGER.warning(f'{prefix} ❌ {e}')
-
 
 
 def check_img_size(imgsz, s=32, floor=0):
@@ -794,11 +795,13 @@ def xyxy2xywhn(x, w=640, h=640, clip=False, eps=0.0):
     # Convert nx4 boxes from [x1, y1, x2, y2] to [x, y, w, h] normalized where xy1=top-left, xy2=bottom-right
     if clip:
         clip_boxes(x, (h - eps, w - eps))  # warning: inplace clip
-    y = x.clone() if isinstance(x, tf.Tensor) else np.copy(x)
-    y[..., 0] = ((x[..., 0] + x[..., 2]) / 2) / w  # x center
-    y[..., 1] = ((x[..., 1] + x[..., 3]) / 2) / h  # y center
-    y[..., 2] = (x[..., 2] - x[..., 0]) / w  # width
-    y[..., 3] = (x[..., 3] - x[..., 1]) / h  # height
+
+    xc = ((x[..., 1:2] + x[..., 3:4]) / 2) / w  # x center
+    yc = ((x[..., 2:3] + x[..., 4:5]) / 2) / h  # y center
+    w = (x[..., 3:4] - x[..., 1:2]) / w  # width
+    h = (x[..., 4:5] - x[..., 2:3]) / h  # height
+    y = tf.concat(
+        [x[..., 0:1], xc, yc, w, h], axis=-1, name='concat')  # label xywh
     return y
 
 
@@ -815,7 +818,7 @@ def segment2box(segment, width=640, height=640):
     x, y = segment.T  # segment xy
     inside = (x >= 0) & (y >= 0) & (x <= width) & (y <= height)
     x, y, = x[inside], y[inside]
-    return np.array([x.min(), y.min(), x.max(), y.max()]) if any(x) else np.zeros((1, 4))  # xyxy
+    return np.array([x.min(), y.min(), x.max(), y.max()]) if any(x) else np.zeros((4))  # xyxy
 
 
 def segments2boxes(segments):
@@ -826,15 +829,6 @@ def segments2boxes(segments):
         boxes.append([x.min(), y.min(), x.max(), y.max()])  # cls, xyxy
     return xyxy2xywh(np.array(boxes))  # cls, xywh
 
-
-def resample_segments(segments, n=1000):
-    # Up-sample an (n,2) segment
-    for i, s in enumerate(segments):
-        s = np.concatenate((s, s[0:1, :]), axis=0)
-        x = np.linspace(0, len(s) - 1, n)
-        xp = np.arange(len(s))
-        segments[i] = np.concatenate([np.interp(x, xp, s[:, i]) for i in range(2)]).reshape(2, -1).T  # segment xy
-    return segments
 
 
 # find image's padding size, shift boxes' coords accordingly.
@@ -876,14 +870,12 @@ def scale_segments(img1_shape, segments, img0_shape, ratio_pad=None, normalize=F
 
 def clip_boxes(boxes, shape):
     # Clip boxes (xyxy) to image shape (height, width)
-    if isinstance(boxes, tf.Tensor):  # faster individually
-        boxes[..., 0].clamp_(0, shape[1])  # x1
-        boxes[..., 1].clamp_(0, shape[0])  # y1
-        boxes[..., 2].clamp_(0, shape[1])  # x2
-        boxes[..., 3].clamp_(0, shape[0])  # y2
-    else:  # np.array (faster grouped)
-        boxes[..., [0, 2]] = boxes[..., [0, 2]].clip(0, shape[1])  # x1, x2
-        boxes[..., [1, 3]] = boxes[..., [1, 3]].clip(0, shape[0])  # y1, y2
+    b0=tf.clip_by_value(boxes[:, 0], 0, shape[1])
+    b1=tf.clip_by_value(boxes[:, 1], 0, shape[0])
+    b2=tf.clip_by_value(boxes[:, 2], 0, shape[1])
+    b3=tf.clip_by_value(boxes[:, 3], 0, shape[0])
+    return tf.concat([b0,b1,b2,b3],axis=-1)
+
 
 
 def clip_segments(segments, shape):
@@ -894,6 +886,7 @@ def clip_segments(segments, shape):
     else:  # np.array (faster grouped)
         segments[:, 0] = segments[:, 0].clip(0, shape[1])  # x
         segments[:, 1] = segments[:, 1].clip(0, shape[0])  # y
+
 
 #
 # def non_max_suppression(
@@ -926,8 +919,6 @@ def clip_segments(segments, shape):
 #     pred = tf.concat((boxes , scores[...,tf.newaxis], class_sel_idx,  pred[:, mi:] ), axis=1)
 #     output= tf.gather(pred, indices=ind)
 #     return output
-
-
 
 
 # def strip_optimizer(f='best.pt', s=''):  # from utils.general import *; strip_optimizer()
