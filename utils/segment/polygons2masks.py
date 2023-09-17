@@ -18,11 +18,12 @@ def polygon2mask(img_size, polygon, color=1, downsample_ratio=1):
     nh, nw = (img_size[0] // downsample_ratio, img_size[1] // downsample_ratio)
     # tf.print('nh, nw', nh, nw, downsample_ratio, img_size)
     # print('p-nh, nw', nh, nw, downsample_ratio, img_size)
+    mask=tf.image.resize(mask[None][...,None], [ nh, nw])
 
     # NOTE: fillPoly firstly then resize is trying the keep the same way
     # of loss calculation when mask-ratio=1.
     # mask = cv2.resize(mask, (nw, nh))
-    return mask
+    return tf.squeeze(mask)
 
 def polygon2mask1(img_size, segment, color=1, downsample_ratio=1):
     """
@@ -78,11 +79,11 @@ def polygons2masks_overlap(image_size, segments, downsample_ratio=1):
     # masks = np.zeros((tf.math.floordiv(img_size[0], downsample_ratio), tf.math.floordiv(img_size[1], downsample_ratio)),
     #                  dtype=np.int32 if segments.shape[0] > 255 else np.uint8)
     # imgsz=640
-    masks = tf.zeros((tf.math.floordiv(640, downsample_ratio), tf.math.floordiv(640, downsample_ratio)),
+    masks = tf.zeros((tf.math.floordiv(image_size[0], downsample_ratio), tf.math.floordiv(image_size[1], downsample_ratio)),
                      dtype=np.int32 )
     areas = []
     ms = []
-    downsample_ratio=4
+    # downsample_ratio=4
     for si in range(segments.shape[0]):
         mask = polygon2mask(
                 image_size,
@@ -92,8 +93,9 @@ def polygons2masks_overlap(image_size, segments, downsample_ratio=1):
                 color=1,
             )
         ms.append(mask)
-        areas.append(mask.sum())
-    return ms
+        areas.append(tf.math.reduce_sum(mask))
+    pass
+    # return ms
     areas = np.asarray(areas)
     index = np.argsort(-areas)
     ms = np.array(ms)[index]
@@ -104,6 +106,5 @@ def polygons2masks_overlap(image_size, segments, downsample_ratio=1):
 
     # bmasks.append(masks)
     # bindex.append(index)
-    # print('len(bmasks)', len(bmasks))
 
-    return masks, index #, bindex
+    return masks#, index #, bindex
