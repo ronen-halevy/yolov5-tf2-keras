@@ -105,7 +105,7 @@ class LoadTrainData:
                 assert (lb >= 0).all(), f'negative label values {lb[lb < 0]}'
                 assert (lb[:,
                         2:] <= 1).all(), f'non-normalized or out of bounds coordinates {lb[:, 2:][lb[:, 2:] > 1]}'
-                _, i = np.unique(lb, axis=1, return_index=True)
+                _, i = np.unique(lb, axis=0, return_index=True)
                 if len(i) < nl:  # duplicate row check
                     lb = lb[i]  # remove duplicates
                     if segments:
@@ -131,7 +131,7 @@ class LoadTrainData:
         sa, sb = f'{os.sep}images{os.sep}', f'{os.sep}labels{os.sep}'  # /images/, /labels/ substrings
         return [sb.join(x.rsplit(sa, 1)).rsplit('.', 1)[0] + '.txt' for x in img_paths]
 
-    def get_file_list(self, path, ext_list):
+    def make_file_list(self, path, ext_list):
         try:
             f = []  # image files
             for p in path if isinstance(path, list) else [path]:
@@ -155,7 +155,7 @@ class LoadTrainData:
             raise Exception(f'Error loading data from {path}: {e}') from e
 
     def prepare_entries(self, path):
-        self.im_files = self.get_file_list(path, IMG_FORMATS)
+        self.im_files = self.make_file_list(path, IMG_FORMATS)
 
         self.label_files = self.img2label_paths(self.im_files)  # labels
         # image_files, lables, segments = zip(*[self._create_entries(idx, self.im_file, self.label_file) for idx, (self.im_file, self.label_file) in enumerate(zip(self.im_files, self.label_files))])
@@ -174,10 +174,10 @@ class LoadTrainData:
         labels_mosaic = []
         segments_mosaic = []
         for entry_idx, (im_file, label, segment) in enumerate(zip(image_files, labels, segments)):
-            mos_sel_indices = random.choices(range(len(image_files)), k=3)  # select 3 reandom images
-            files4 = [im_file]
-            labels4 = [label]
-            segments4 = [segment]
+            mos_sel_indices = random.choices(range(len(image_files)), k=3)  # select 3 reandom images todo!!!
+            files4 = [image_files[0]]
+            labels4 = [labels[0]]
+            segments4 = [segments[0]]
 
             for mos_ind in mos_sel_indices:
                 files4.append(image_files[mos_ind])
@@ -209,6 +209,7 @@ class LoadTrainData:
             image_files = image_files_mosaic
             labels = labels_mosaic
             segments = segments_mosaic
+
 
         # image_files: list, str, size ds_size, labels: list of arrays(nt, 6), size: ds_size segments: list of arrays(nt, 6), size: ds_size
 

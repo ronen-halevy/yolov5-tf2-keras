@@ -89,11 +89,11 @@ def draw_dataset_entry(img, img_labels, img_segments, line_thickness):
     image = im.fromarray((img).astype(np.uint8))
     draw = ImageDraw.Draw(image)
     for bbox in bboxes:
-        xmin, ymin, w, h = bbox #* imgsz
+        xc, yc, w, h = tf.math.multiply(bbox, (img.shape[0],img.shape[1], img.shape[0],img.shape[1]))
         color = tuple(np.random.randint(low=0, high=255, size=3).tolist())
-        draw.line([(xmin - w / 2, ymin - h / 2), (xmin - w / 2, ymin + h / 2), (xmin + w / 2, ymin + h / 2),
-                   (xmin + w / 2, ymin - h / 2),
-                   (xmin - w / 2, ymin - h / 2)],
+        draw.line([(xc - w / 2, yc - h / 2), (xc - w / 2, yc + h / 2), (xc + w / 2, yc + h / 2),
+                   (xc + w / 2, yc - h / 2),
+                   (xc - w / 2, yc - h / 2)],
                   width=line_thickness,
                   fill=color)
     text_box_color = [255, 255, 255]

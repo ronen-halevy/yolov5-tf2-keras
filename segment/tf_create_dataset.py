@@ -311,7 +311,7 @@ class CreateDataset:
             # segments = tf.map_fn(fn=lambda segment: self.create_hcoords(segment, M,s), elems=[segments, targets],
             #                       fn_output_signature=tf.TensorSpec(shape=[1, 4], dtype=tf.float32,
             #                                                               ));
-            bboxes, segments = tf.map_fn(fn=lambda segment: self.create_hcoords(segment, M,s), elems=[segments, targets],
+            bboxes, segments = tf.map_fn(fn=lambda segment: self.create_hcoords(segment, M,s), elems=segments,
                                   fn_output_signature=(tf.TensorSpec(shape=[4,], dtype=tf.float32,
                                                                           ),tf.TensorSpec(shape=[1000, 2], dtype=tf.float32,
                                                                           )));
@@ -528,11 +528,8 @@ class CreateDataset:
         ###
 
     # create h coords - add ones row
-    def create_hcoords(self, xxx, M, s):
-        seg_coords=xxx[0]
-        target=xxx[1]
-
-        shape0 = tf.py_function(self.get_shape0, [seg_coords],  tf.uint32)
+    def create_hcoords(self, seg_coords, M, s):
+        # shape0 = tf.py_function(self.get_shape0, [seg_coords],  tf.uint32)
 
 
         # seg_coords = resample_segments(seg_coords)  # upsample
