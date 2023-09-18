@@ -813,12 +813,51 @@ def xyn2xy(x, w=640, h=640, padw=0, padh=0):
     return y
 
 
+# def segment2box(segment, width=640, height=640):
+#     # Convert 1 segment label to 1 box label, applying inside-image constraint, i.e. (xy1, xy2, ...) to (xyxy)
+#     x, y = segment.T  # segment xy
+#     inside = (x >= 0) & (y >= 0) & (x <= width) & (y <= height)
+#     x, y, = x[inside], y[inside]
+#     return np.array([x.min(), y.min(), x.max(), y.max()]) if any(x) else np.zeros((4))  # xyxy
 def segment2box(segment, width=640, height=640):
-    # Convert 1 segment label to 1 box label, applying inside-image constraint, i.e. (xy1, xy2, ...) to (xyxy)
-    x, y = segment.T  # segment xy
-    inside = (x >= 0) & (y >= 0) & (x <= width) & (y <= height)
+
+    ###############
+    x, y = tf.transpose(segment)  # segment xy
+    ge = tf.math.logical_and(tf.math.greater_equal(x, 0), tf.math.greater_equal(y, 0))
+    le = tf.math.logical_and(tf.math.less_equal(x, width), tf.math.less_equal(y, height))
+    inside = tf.math.logical_and(ge, le)
+    # inside = (x >= 0) & (y >= 0) & (x <= width) & (y<= height)
     x, y, = x[inside], y[inside]
-    return np.array([x.min(), y.min(), x.max(), y.max()]) if any(x) else np.zeros((4))  # xyxy
+    # tf.print('xy,',x,y)
+    # bbox = tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x), tf.math.reduce_max(y)],
+    #                 axis=0) if any(x) else tf.zeros((4))
+    any_positive = tf.math.greater(tf.reduce_max(tf.math.abs(x)), 0)
+    # todo check if positive term
+    bbox = tf.where(any_positive,
+                    tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x),
+                              tf.math.reduce_max(y)], axis=0),
+                    tf.zeros((4)))
+
+    # bbox = tf.cond(tf.equal(tf.size(x), 0), lambda:tf.stack(
+    #     [tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x), tf.math.reduce_max(y)], axis=0),
+    #                lambda:tf.zeros((4), dtype=tf.float32))
+
+
+
+
+    #############
+    # x, y = tf.transpose(segment)  # seperate segment coords x & y
+    # # inside = (x >= 0) & (y >= 0) & (x <= width) & (y<= height):
+    # ge = tf.math.logical_and(tf.math.greater_equal(x, 0), tf.math.greater_equal(y, 0))
+    # le = tf.math.logical_and(tf.math.less_equal(x, width), tf.math.less_equal(y, height))
+    # inside = tf.math.logical_and(ge, le)
+    # x, y, = x[inside], y[inside]
+    #
+    # # positive_seg_coords=tf.math.greater(tf.reduce_max(tf.math.abs(x)), 0)
+    # bbox = tf.cond(tf.equal(tf.size(x), 0), lambda:tf.stack(
+    #     [tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x), tf.math.reduce_max(y)], axis=0),
+    #                lambda:tf.zeros((4), dtype=tf.float32))
+    return bbox
 
 
 def segments2boxes(segments):
@@ -870,11 +909,11 @@ def scale_segments(img1_shape, segments, img0_shape, ratio_pad=None, normalize=F
 
 def clip_boxes(boxes, shape):
     # Clip boxes (xyxy) to image shape (height, width)
-    b0=tf.clip_by_value(boxes[:, 0], 0, shape[1])
-    b1=tf.clip_by_value(boxes[:, 1], 0, shape[0])
-    b2=tf.clip_by_value(boxes[:, 2], 0, shape[1])
-    b3=tf.clip_by_value(boxes[:, 3], 0, shape[0])
-    return tf.concat([b0,b1,b2,b3],axis=-1)
+    b0 = tf.clip_by_value(boxes[:, 0], 0, shape[1])
+    b1 = tf.clip_by_value(boxes[:, 1], 0, shape[0])
+    b2 = tf.clip_by_value(boxes[:, 2], 0, shape[1])
+    b3 = tf.clip_by_value(boxes[:, 3], 0, shape[0])
+    return tf.concat([b0, b1, b2, b3], axis=-1)
 
 
 

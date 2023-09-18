@@ -461,23 +461,22 @@ class CreateDataset:
     def arrange_bbox(self, seg_coords):
         width=height=640
 
-        # bbox = segment2box(seg_coords) # replace with this:
+        bbox = segment2box(seg_coords) # replace with this:
 
-        x, y = tf.transpose(seg_coords)  # segment xy
-        # tf.print('xy,AA',x,y)
-        ge = tf.math.logical_and(tf.math.greater_equal(x, 0), tf.math.greater_equal(y, 0))
-        le = tf.math.logical_and(tf.math.less_equal(x, width), tf.math.less_equal(y, height))
-        inside = tf.math.logical_and(ge, le)
-        # inside = (x >= 0) & (y >= 0) & (x <= width) & (y<= height)
-        x, y, = x[inside], y[inside]
-        # tf.print('xy,',x,y)
-        bbox = tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x), tf.math.reduce_max(y)],
-                        axis=0) if any(x) else tf.zeros((4))
-        any_positive = tf.math.greater(tf.reduce_max(tf.math.abs(x)), 0)
-        bbox = tf.where(any_positive,
-                        tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x),
-                                  tf.math.reduce_max(y)], axis=0),
-                        tf.zeros((4)))
+        # x, y = tf.transpose(seg_coords)  # segment xy
+        # ge = tf.math.logical_and(tf.math.greater_equal(x, 0), tf.math.greater_equal(y, 0))
+        # le = tf.math.logical_and(tf.math.less_equal(x, width), tf.math.less_equal(y, height))
+        # inside = tf.math.logical_and(ge, le)
+        # # inside = (x >= 0) & (y >= 0) & (x <= width) & (y<= height)
+        # x, y, = x[inside], y[inside]
+        # # tf.print('xy,',x,y)
+        # bbox = tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x), tf.math.reduce_max(y)],
+        #                 axis=0) if any(x) else tf.zeros((4))
+        # any_positive = tf.math.greater(tf.reduce_max(tf.math.abs(x)), 0)
+        # bbox = tf.where(any_positive,
+        #                 tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x),
+        #                           tf.math.reduce_max(y)], axis=0),
+        #                 tf.zeros((4)))
 
         return bbox
 
