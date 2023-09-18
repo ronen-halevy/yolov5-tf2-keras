@@ -480,9 +480,10 @@ class CreateDataset:
     # create h coords - add ones row
     def create_hcoords(self, seg_coords):
         n=1000
-        bbox = tf.py_function(self.arrange_bbox, [seg_coords],  tf.float32)
+        # bbox = tf.py_function(self.arrange_bbox, [seg_coords],  tf.float32)
+        bbox = segment2box(seg_coords) # replace with this:
+
         return bbox
-        return seg_coords
 
         # tf.print(xx.shape[1])
         # xx = tf.concat([xx[...,0:1], xx[...,1:2], tf.ones([xx.shape[0],1], dtype=tf.float32)], axis=-1)
