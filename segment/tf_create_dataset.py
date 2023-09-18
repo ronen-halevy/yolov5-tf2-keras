@@ -325,7 +325,6 @@ class CreateDataset:
         labels4, segments4 = [], []
         segments4 = None
         # randomly select mosaic center:
-        # todo - change to f.random.uniform - requires a complete conversion to tf
         yc, xc = (tf.random.uniform((), -x, 2 * self.imgsz + x, dtype=tf.int32) for x in self.mosaic_border)  # mosaic center x, y
 
         # yc, xc = 496, 642  # ronen debug todo
