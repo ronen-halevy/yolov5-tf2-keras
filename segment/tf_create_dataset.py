@@ -136,39 +136,24 @@ class CreateDataset:
         :rtype: 
         """
         y_range = tf.range(dst_xy[2], dst_xy[3])[..., None]
-        y_ind = tf.tile(y_range, tf.constant([1, dst_xy[1] - dst_xy[0]]))
+        y_ind = tf.tile(y_range, [1, dst_xy[1] - dst_xy[0]])
         x_range = tf.range(dst_xy[0], dst_xy[1])[None]
-        x_ind = tf.tile(x_range, tf.constant([dst_xy[3] - dst_xy[2], 1]))
+        x_ind = tf.tile(x_range,[dst_xy[3] - dst_xy[2], 1])
         indices = tf.squeeze(tf.concat([y_ind[..., None], x_ind[..., None]], axis=-1))
         dst = tf.tensor_scatter_nd_update(
             dst_img, indices, src_img
         )
         return dst
 
-    # @tf.function
-
-
-    # def xywhn2xyxy(self, x, w,h, padw, padh):
-    #     xmin = x[..., 1:2] * w + padw  # top left x
-    #     ymin = x[..., 2:3] * h + padh  # top left y
-    #     y_w = x[:,3:4]*w
-    #     y_h = x[:,4:5]*h
-    #     y_l = tf.concat([x[:, 0:1], xmin , ymin, y_w, y_h], axis=-1)  # [cls,xywh] shape:[nt, 5].
-    #     return y_l
-
-
-
 
     def xyn2xy(self, x, w=640, h=640, padw=0, padh=0):
         # Convert normalized segments into pixel segments, shape (n,2)
-        # y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
-        # x=x.to_tensor()
-        xcoord = w * x[:, 0:1] + padw  # top left x
-        ycoord = h * x[:, 1:2] + padh  # top left y
+
+        xcoord =  tf.math.multiply(tf.cast(w, tf.float32),  x[:, 0:1]) + tf.cast(padw, tf.float32)  # top left x
+        ycoord = tf.math.multiply(tf.cast(h, tf.float32), x[:, 1:2]) + tf.cast(padh, tf.float32)  # top left y
         y = tf.concat(
             [xcoord, ycoord], axis=-1, name='stack'
         )
-        # y= tf.RaggedTensor.from_tensor(y)
         return y
 
     def xywhn2xyxy(self, x, w=640, h=640, padw=0, padh=0):
@@ -189,10 +174,10 @@ class CreateDataset:
     #     """
     #     # Convert nx4 boxes from [x, y, w, h] normalized to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
     #     # y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
-        xmin = w * (x[..., 1:2] - x[..., 3:4] / 2) + padw  # top left x
-        ymin = h * (x[..., 2:3] - x[..., 4:5] / 2) + padh  # top left y
-        xmax = w * (x[...,1:2] + x[..., 3:4] / 2) + padw  # bottom right x
-        ymax = h * (x[..., 2:3] + x[..., 4:5] / 2) + padh  # bottom right y
+        xmin = tf.math.multiply(tf.cast(w, tf.float32), (x[..., 1:2] - x[..., 3:4] / 2)) + tf.cast(padw, tf.float32)  # top left x
+        ymin = tf.math.multiply(tf.cast(h, tf.float32), (x[..., 2:3] - x[..., 4:5] / 2)) + tf.cast(padh, tf.float32) # top left y
+        xmax = tf.math.multiply(tf.cast(w, tf.float32), (x[...,1:2] + x[..., 3:4] / 2)) + tf.cast(padw, tf.float32)   # bottom right x
+        ymax = tf.math.multiply(tf.cast(h, tf.float32),(x[..., 2:3] + x[..., 4:5] / 2)) + tf.cast(padh, tf.float32)  # bottom right y
         y = tf.concat(
             [x[..., 0:1], xmin, ymin, xmax, ymax], axis=-1, name='concat'
         )
@@ -341,7 +326,7 @@ class CreateDataset:
         segments4 = None
         # randomly select mosaic center:
         # todo - change to f.random.uniform - requires a complete conversion to tf
-        yc, xc = (int(random.uniform(-x, 2 * self.imgsz + x)) for x in self.mosaic_border)  # mosaic center x, y
+        yc, xc = (tf.random.uniform((), -x, 2 * self.imgsz + x, dtype=tf.int32) for x in self.mosaic_border)  # mosaic center x, y
 
         # yc, xc = 496, 642  # ronen debug todo
 
@@ -353,18 +338,18 @@ class CreateDataset:
         # arrange mosaic 4:
         for idx in range(4):
             if idx == 0:  # top left mosaic dest zone,  bottom-right aligned src image fraction:
-                x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax
+                x1a, y1a, x2a, y2a = tf.math.maximum(xc - w, 0), tf.math.maximum(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax
                 x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (
                             y2a - y1a), w, h  # xmin, ymin, xmax, ymax: src image fraction
             elif idx == 1:  # top right mosaic dest zone, bottom-left aligned src image fraction:
-                x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, w * 2), yc
-                x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h  # src image fraction
+                x1a, y1a, x2a, y2a = xc, tf.math.maximum(yc - h, 0), tf.math.minimum(xc + w, w * 2), yc
+                x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), tf.math.minimum(w, x2a - x1a), h  # src image fraction
             elif idx == 2:  # bottom left mosaic dest zone, top-right aligned src image fraction:
-                x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(w * 2, yc + h)
-                x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)  # src image fraction: aligned right-up
+                x1a, y1a, x2a, y2a = tf.math.maximum(xc - w, 0), yc, xc, tf.math.minimum(w * 2, yc + h)
+                x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, tf.math.minimum(y2a - y1a, h)  # src image fraction: aligned right-up
             elif idx == 3:  # bottom right mosaic dest zone, top-left aligned src image fraction:
-                x1a, y1a, x2a, y2a = xc, yc, min(xc + w, w * 2), min(w * 2, yc + h)  #
-                x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)  # src image fraction
+                x1a, y1a, x2a, y2a = xc, yc, tf.math.minimum(xc + w, w * 2), tf.math.minimum(w * 2, yc + h)  #
+                x1b, y1b, x2b, y2b = 0, 0, tf.math.minimum(w, x2a - x1a), tf.math.minimum(y2a - y1a, h)  # src image fraction
             img = self.decode_resize(filenames[idx], size)
 
             img4 = self.scatter_img_to_mosaic(dst_img=img4, src_img=img[y1b:y2b, x1b:x2b], dst_xy=(x1a, x2a,y1a, y2a))
@@ -389,7 +374,7 @@ class CreateDataset:
         labels4 = tf.concat(labels4, axis=0)  # concat 4 labels of 4 mosaic images
 
         clipped_bboxes =tf.clip_by_value(
-            labels4[:,1:], 0, 2*w, name=None
+            labels4[:,1:], 0, 2*tf.cast(w, tf.float32), name=None
         )
         labels4=tf.concat([labels4[...,0:1], clipped_bboxes],axis=-1)
 
@@ -480,8 +465,8 @@ class CreateDataset:
     # create h coords - add ones row
     def create_hcoords(self, seg_coords):
         n=1000
-        # bbox = tf.py_function(self.arrange_bbox, [seg_coords],  tf.float32)
-        bbox = segment2box(seg_coords) # replace with this:
+        bbox = tf.py_function(self.arrange_bbox, [seg_coords],  tf.float32)
+        # bbox = segment2box(seg_coords) # replace with this:
 
         return bbox
 
