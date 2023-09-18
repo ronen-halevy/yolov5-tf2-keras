@@ -310,62 +310,30 @@ class CreateDataset:
             # segments = tf.map_fn(fn=lambda segment: self.create_hcoords(segment, M,s), elems=[segments, targets],
             #                       fn_output_signature=tf.TensorSpec(shape=[1, 4], dtype=tf.float32,
             #                                                               ));
-            bboxes, segments = tf.map_fn(fn=lambda segment: self.create_hcoords(segment, M), elems=segments,
-                                  fn_output_signature=(tf.TensorSpec(shape=[4,], dtype=tf.float32,
-                                                                          ),tf.TensorSpec(shape=[1000, 2], dtype=tf.float32,
-                                                                          )));
+            ########################################################
+            segments = tf.clip_by_value(
+                segments, 0, 2 * 640, name=None  # todo 640
+            )
 
+            x = tf.cast(tf.linspace(0., 5 - 1, 1000), dtype=tf.float32)  # n interpolation points. n points array
 
-            # xy = tf.matmul(segments[0], tf.cast(tf.transpose(M), tf.float32) ) # transform
+            segments = tf.map_fn(fn=lambda segment: self.seg_interp(x, segment), elems=segments,
+                                  fn_output_signature=tf.TensorSpec(shape=[1000,3], dtype=tf.float32,
+                                                                          ));
+            segments = tf.matmul(segments, tf.cast(tf.transpose(M), tf.float32))  # transform
+            segments = tf.gather(segments, [0, 1], axis=-1)
+            # bboxes = segment2box(segments)  # replace with this:
 
-
-            # box_candidates(box1, box2, wh_thr=2, ar_thr=100, area_thr=0.1, eps=1e-16):  # box1(4,n), box2(4,n)
+            #
+            bboxes = tf.map_fn(fn=lambda segment: self.create_hcoords(segment), elems=segments,
+                                  fn_output_signature=tf.TensorSpec(shape=[4,], dtype=tf.float32
+                                                                          ));
         indices = box_candidates(box1=tf.transpose(targets.to_tensor()[...,1:]) * s, box2=tf.transpose(bboxes), area_thr=0.01)
         bboxes=bboxes[indices]
 
         targets = targets.to_tensor()[indices]
         bboxes=tf.concat([targets[:,0:1], bboxes], axis=-1)
         segments=segments[indices]
-        # print(bboxes)
-        # downsample_ratio = 4
-        # bmasks, bsorted_idx = polygons2masks_overlap(im.shape[0:2],
-        #                                              segments,
-        #                                              downsample_ratio=downsample_ratio)
-
-
-        # bboxes=tf.gather(
-        #     bboxes, indices, validate_indices=None, axis=None, batch_dims=0, name=None
-        # )
-        pass
-
-        # # tf.print(segments)
-            # for i, segment in enumerate(segments):
-            #     xy = np.ones((segment.shape[0], 3))
-            #     xy[:, :2] = segment
-            #     xy = xy @ M.T  # transform
-            #     xy = (xy[:, :2] / xy[:, 2:3] if perspective else xy[:, :2])  # perspective rescale or affine
-            #
-            #     # clip
-            #     new.append(segment2box(xy, width, height))
-            #     new_segments.append(xy)
-
-            # for xx in new:
-            #     print(xx)
-            # filter candidates
-            # www=targets[..., 1:5]
-            # ddd=tf.transpose(targets[..., 1:5].to_tensor())
-            # ddd = ddd*s
-            # eee=tf.transpose(tf.constant(new))
-            # i = box_candidates(box1=tf.transpose(targets[:, 1:5].to_tensor()) * s, box2=tf.transpose(tf.cast(new, dtype=tf.float32)), area_thr=0.01)
-            # # i = box_candidates(box1=targets[:, 1:5].T * s, box2=new.T, area_thr=0.01)
-            #
-            # targets = targets.to_tensor()[i]
-            # # targets[:, 1:5] = new[i]
-            # # ttt = tf.cast(new, tf.float32)[i]
-            # targets = tf.concat([targets[...,0:1],  tf.cast(new, tf.float32)[i] ], axis=-1)
-            #
-            # new_segments = np.array(new_segments)[i]
-
         return im, bboxes, segments
 
     def load_mosaic(self,  filenames, size, y_labels, y_segments):
@@ -501,125 +469,19 @@ class CreateDataset:
             name=None
         ) for idx in range(2)]
         ####
-        segment = np.concatenate([segment])
+        segment = tf.concat([segment], axis=0)
         segment = tf.reshape(segment, [2,-1])
         segment = tf.transpose(segment)
 
         segment=tf.concat([segment, tf.ones([1000,1], dtype=tf.float32)], axis=-1)
-
-        # segment = tf.matmul(segment, tf.cast(tf.transpose(M), tf.float32))  # transform
-        ####
-
-
-
-
-        # tf.print('xxxxx', x)
-        # tf.print('y_ref', y_ref)
-        # tf.print('segment!!!!!!!!', segment)
-        shape0=4
-        # segment=tf.concat([tf.expand_dims(segment[0],-1), tf.expand_dims(segment[1], -1), tf.ones([1000,1], dtype=tf.float32)], axis=-1)#set homogenouse coords
-
-        # hseg_coords = hseg_coords @ M.T  # transform
-        # tf.print(' M.T', M.T)
-        # tf.print('hseg_coords', hseg_coords)
-
-        # hseg_coords = tf.matmul(hseg_coords, tf.cast(M.T, tf.float32))
-        #
-        # # hseg_coords = hseg_coords @ M.T
-        #
-        # hseg_coords = hseg_coords[...,0:2]
-        #
-
-
         return segment
         ###
 
     # create h coords - add ones row
-    def create_hcoords(self, seg_coords, M):
-        # shape0 = tf.py_function(self.get_shape0, [seg_coords],  tf.uint32)
-
-        seg_coords = tf.clip_by_value(
-            seg_coords, 0, 2 * 640, name=None # todo 640
-        )
-
-
-        # seg_coords = resample_segments(seg_coords)  # upsample
-        # x = tf.cast(tf.linspace(0., 4 - 1, 1000), dtype=tf.float32)  # n interpolation points. n points array
-        # #
-        # segment = tfp.math.interp_regular_1d_grid(
-        #     x=x,
-        #     x_ref_min=0,  # tf.constant(0.),
-        #     x_ref_max=5,  # tf.constant(len(s)),
-        #     y_ref=tf.constant([0.4,0.6,0.8,0.9]),
-        #     axis=-1,
-        #     fill_value='constant_extension',
-        #     fill_value_below=None,
-        #     fill_value_above=None,
-        #     grid_regularizing_transform=None,
-        #     name=None
-        # )
-
-
-        ###
+    def create_hcoords(self, seg_coords):
         n=1000
-        # x = tf.cast(tf.linspace(0., tf.cast(tf.math.subtract(shape0 - 1.), tf.float32), n), dtype=tf.float32)  # n interpolation points. n points array
-       #
-
-        x = tf.cast(tf.linspace(0., 5 - 1, 1000), dtype=tf.float32)  # n interpolation points. n points array
-
-        # y_ref=seg_coords[..., 0:1]
-
-        seg_coords = tf.py_function(self.seg_interp, [x, seg_coords],  tf.float32)
-        seg_coords = tf.matmul(seg_coords, tf.cast(tf.transpose(M), tf.float32))  # transform
-        seg_coords = seg_coords[..., 0:2]
         bbox = tf.py_function(self.arrange_bbox, [seg_coords],  tf.float32)
-
-    # def seg_interp(self, x, y_ref):
-    #
-    #     segment = tfp.math.interp_regular_1d_grid(
-    #         x=x,
-    #         x_ref_min=0,  # tf.constant(0.),
-    #         x_ref_max=5,#shape0,  # tf.constant(len(s)),
-    #         y_ref=y_ref,
-    #         axis=-1,
-    #         fill_value='constant_extension',
-    #         fill_value_below=None,
-    #         fill_value_above=None,
-    #         grid_regularizing_transform=None,
-    #         name=None
-    #     )
-    #     return segment
-        ###
-
-        # get shape[0 ] by py_function, otherwise shaoe is None in graphmode
-        # hseg_coords=tf.concat([seg_coords[...,0:2], tf.ones([shape0,1], dtype=tf.float32)], axis=-1)
-        # hseg_coords = hseg_coords @ M.T  # transform
-        # tf.print(' M.T', M.T)
-        # tf.print('hseg_coords', hseg_coords)
-
-        # seg_coords = tf.matmul(seg_coords, tf.cast(M.T, tf.float32))
-        # segment2box:
-        # seg_coords = seg_coords @ M.T
-
-        # seg_coords = seg_coords[...,0:2]
-        # return seg_coords
-        # shape0 = tf.py_function(self.transpose, [seg_coords],  tf.uint32)
-
-
-        # x, y = hseg_coords.T  # segment xy
-        # width=height=640
-        # x, y = tf.transpose(seg_coords)  # segment xy
-        # tf.print('xy,AA',x,y)
-        #
-        # inside = (x >= 0) & (y >= 0) & (x <= width) & (y<= height)
-        # x, y, = x[inside], y[inside]
-        # tf.print('xy,',x,y)
-        # bbox = tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x), tf.math.reduce_max(y)],axis=0)# if any(x) else tf.zeros((4))
-        # i = box_candidates(box1=tf.transpose(target) * scale, box2=tf.transpose(bbox), area_thr=0.01)
-        # tf.print('i',i)
-        # x, y = segment.T  # segment xy
-        # inside = (x >= 0) & (y >= 0) & (x <= width) & (y <= height)
-        return bbox, seg_coords
+        return bbox
         return seg_coords
 
         # tf.print(xx.shape[1])
