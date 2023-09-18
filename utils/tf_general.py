@@ -827,14 +827,10 @@ def segment2box(segment, width=640, height=640):
     ge = tf.math.logical_and(tf.math.greater_equal(x, 0), tf.math.greater_equal(y, 0))
     le = tf.math.logical_and(tf.math.less_equal(x, width), tf.math.less_equal(y, height))
     inside = tf.math.logical_and(ge, le)
-    # inside = (x >= 0) & (y >= 0) & (x <= width) & (y<= height)
+
     x, y, = x[inside], y[inside]
-    # tf.print('xy,',x,y)
-    # bbox = tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x), tf.math.reduce_max(y)],
-    #                 axis=0) if any(x) else tf.zeros((4))
-    any_positive = tf.math.greater(tf.reduce_max(tf.math.abs(x)), 0)
-    # todo check if positive term
-    bbox = tf.where(any_positive,
+    is_not_empty = tf.math.not_equal(tf.size(x), 0)
+    bbox = tf.where(is_not_empty,
                     tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x),
                               tf.math.reduce_max(y)], axis=0),
                     tf.zeros((4)))
