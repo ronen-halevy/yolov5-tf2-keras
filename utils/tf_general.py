@@ -63,6 +63,8 @@ os.environ['NUMEXPR_MAX_THREADS'] = str(NUM_THREADS)  # NumExpr max threads
 os.environ['OMP_NUM_THREADS'] = '1' if platform.system() == 'darwin' else str(NUM_THREADS)  # OpenMP (PyTorch and SciPy)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # suppress verbose TF compiler warnings in Colab
 
+def get_shape0(ind):
+    return ind.shape[0]
 
 def is_ascii(s=''):
     # Is string composed of all ASCII (no UTF) characters? (note str().isascii() introduced in python 3.7)
@@ -819,16 +821,17 @@ def xyn2xy(x, w=640, h=640, padw=0, padh=0):
 #     x, y, = x[inside], y[inside]
 #     return np.array([x.min(), y.min(), x.max(), y.max()]) if any(x) else np.zeros((4))  # xyxy
 def segment2box(segment, width=640, height=640):
-
-    ###############
-    # x, y = tf.transpose(segment)  # segment xy
     x=tf.gather(segment,[0],axis=-1)
     y=tf.gather(segment,[1],axis=-1)
+    # select segment inside image: inside=(x >= 0) & (y >= 0) & (x <= width) & (y<= height):
     ge = tf.math.logical_and(tf.math.greater_equal(x, 0), tf.math.greater_equal(y, 0))
     le = tf.math.logical_and(tf.math.less_equal(x, width), tf.math.less_equal(y, height))
     inside = tf.math.logical_and(ge, le)
 
-    x, y, = x[inside], y[inside]
+    # x, y, = x[inside], y[inside]:
+    x=tf.boolean_mask(x, inside)
+    y=tf.boolean_mask(y, inside)
+
     is_not_empty = tf.math.not_equal(tf.size(x), 0)
     bbox = tf.where(is_not_empty,
                     tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x),
@@ -836,6 +839,46 @@ def segment2box(segment, width=640, height=640):
                     tf.zeros((4)))
     return bbox
 
+def segment2box2(segment, width=640, height=640):
+    ###############
+    x=tf.gather(segment,[0],axis=-1)
+    y=tf.gather(segment,[1],axis=-1)
+
+
+    # outside = (x < 0) | (y < 0) | (x > width) | (y > height):
+    ge = tf.math.logical_or(tf.math.less(x, 0), tf.math.less(y, 0))
+    le = tf.math.logical_or(tf.math.greater(x, width), tf.math.greater(y, height))
+    outside = tf.math.logical_or(ge, le)
+    indices = tf.where(outside)
+    shape0  =tf.py_function(get_shape0, [indices], Tout=tf.int32)
+    updates = tf.fill([shape0], 100000.)
+    x= tf.tensor_scatter_nd_update(
+        x, indices, updates, name=None
+    )
+    x0= tf.math.reduce_min(x,axis=1)
+    y = tf.tensor_scatter_nd_update(
+        y, indices, updates, name=None
+    )
+    y0 = tf.math.reduce_min(y, axis=1)
+    updates = tf.fill([shape0], -100000.)
+
+    x= tf.tensor_scatter_nd_update(
+        x, indices, updates, name=None
+    )
+    x1= tf.math.reduce_max(x,axis=1)
+
+
+    y= tf.tensor_scatter_nd_update(
+        y, indices, updates, name=None
+    )
+    y1= tf.math.reduce_max(y,axis=1)
+
+    bbox = tf.concat([x0, y0,x1,
+              y1], axis=-1)
+
+    ind = tf.logical_and(tf.math.greater(bbox, -1e4), tf.math.less(bbox, 1e4))
+    bbox = tf.where(ind, bbox, [0, 0, 0, 0])
+    return bbox
 
 def segments2boxes(segments):
     # Convert segment labels to box labels, i.e. (cls, xy1, xy2, ...) to (cls, xywh)
