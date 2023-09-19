@@ -847,11 +847,11 @@ def segments2boxes_exclude_outbound_points(segments, width=640, height=640):
     indices=get_outbound_indices(segments, width, height)
 
     # before min search: scatter infinity to entirely outbound points
-    updates = tf.gather(tf.zeros_like(indices, name=None),[0],axis=-1) #update excluded with same indices shape
+    updates = tf.gather(tf.zeros_like(indices, name='updates'),[0],axis=-1) #update excluded with same indices shape
     updates=tf.cast(tf.squeeze(updates, axis=-1), tf.float32) # shape: indices.shape[0]
     updates+=100000.# increase outbounds to unparticipate max selection. Selection zeroed later if all points unbounded
     segments = tf.tensor_scatter_nd_update(
-        segments, indices , updates, name=None
+        segments, indices , updates, name='segments'
     )
     xmin= tf.math.reduce_min(segments[...,0:1],axis=1)
     ymin = tf.math.reduce_min(segments[...,1:2], axis=1)
@@ -859,7 +859,7 @@ def segments2boxes_exclude_outbound_points(segments, width=640, height=640):
     # before max search: scatter -infinity to entirely outbound points
     updates-=2*100000. # decrease excluded entries to exclude from max selection:
     segments = tf.tensor_scatter_nd_update(
-        segments, indices, updates, name=None
+        segments, indices, updates, name='segments'
     )
     # set bbox:
     xmax = tf.math.reduce_max(segments[..., 0:1], axis=1)
@@ -869,7 +869,7 @@ def segments2boxes_exclude_outbound_points(segments, width=640, height=640):
 
     # zero boxes of entirely outbound segments
     ind = tf.logical_and(tf.math.greater(bbox, -1e4), tf.math.less(bbox, 1e4))
-    bbox = tf.where(ind, bbox, [0, 0, 0, 0])
+    bbox = tf.where(ind, bbox, [0., 0., 0., 0.])
     return bbox
 
 def segments2boxes(segments):
