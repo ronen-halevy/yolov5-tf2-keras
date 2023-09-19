@@ -97,9 +97,9 @@ def draw_dataset_entry(img, img_labels, img_segments, line_thickness):
                   width=line_thickness,
                   fill=color)
     text_box_color = [255, 255, 255]
-    draw_text_on_bounding_box(image, (np.array(bboxes)[..., 1] - np.array(bboxes)[..., 3] / 2) ,
-                              (np.array(bboxes)[..., 0] - np.array(bboxes)[..., 2] / 2) , text_box_color,
-                              category_names, font_size=15)
+    box_xmin = (np.array(bboxes)[..., 0] - np.array(bboxes)[..., 2] / 2)*img.shape[0]
+    box_ymin = (np.array(bboxes)[..., 1] - np.array(bboxes)[..., 3] / 2)*img.shape[1]
+    draw_text_on_bounding_box(image, box_ymin , box_xmin , text_box_color, category_names, font_size=15)
     ImageDraw.Draw(image)
     return image
 
