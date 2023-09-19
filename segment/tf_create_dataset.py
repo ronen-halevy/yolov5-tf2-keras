@@ -16,7 +16,7 @@ from pathlib import Path
 # from core.create_dataset_from_files import create_dataset_from_files
 # from core.load_tfrecords import parse_tfrecords
 
-from utils.tf_general import segment2box,  xyxy2xywhn
+from utils.tf_general import segment2box,  xyxy2xywhn, segments2boxes_exclude_outbound_points
 import os
 from PIL import ExifTags, Image, ImageOps
 import contextlib
@@ -307,12 +307,8 @@ class CreateDataset:
                                                                           ));
             segments = tf.matmul(segments, tf.cast(tf.transpose(M), tf.float32))  # transform
             segments = tf.gather(segments, [0, 1], axis=-1)
-            # bboxes = segment2box(segments)  # replace with this:
 
-            #
-            bboxes = tf.map_fn(fn=lambda segment: self.create_hcoords(segment), elems=segments,
-                                  fn_output_signature=tf.TensorSpec(shape=[4,], dtype=tf.float32
-                                                                          ));
+            bboxes=segments2boxes_exclude_outbound_points(segments)
         indices = box_candidates(box1=tf.transpose(targets.to_tensor()[...,1:]) * s, box2=tf.transpose(bboxes), area_thr=0.01)
         bboxes=bboxes[indices]
 
@@ -410,29 +406,6 @@ class CreateDataset:
     def get_shape0(self, tens):
         return tens.shape[0]
 
-    def arrange_bbox(self, seg_coords):
-        width=height=640
-
-        bbox = segment2box(seg_coords) # replace with this:
-
-        # x, y = tf.transpose(seg_coords)  # segment xy
-        # ge = tf.math.logical_and(tf.math.greater_equal(x, 0), tf.math.greater_equal(y, 0))
-        # le = tf.math.logical_and(tf.math.less_equal(x, width), tf.math.less_equal(y, height))
-        # inside = tf.math.logical_and(ge, le)
-        # # inside = (x >= 0) & (y >= 0) & (x <= width) & (y<= height)
-        # x, y, = x[inside], y[inside]
-        # # tf.print('xy,',x,y)
-        # bbox = tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x), tf.math.reduce_max(y)],
-        #                 axis=0) if any(x) else tf.zeros((4))
-        # any_positive = tf.math.greater(tf.reduce_max(tf.math.abs(x)), 0)
-        # bbox = tf.where(any_positive,
-        #                 tf.stack([tf.math.reduce_min(x), tf.math.reduce_min(y), tf.math.reduce_max(x),
-        #                           tf.math.reduce_max(y)], axis=0),
-        #                 tf.zeros((4)))
-
-        return bbox
-
-
 
     def seg_interp(self, x, seg_coords):
         seg_coords=seg_coords.to_tensor()
@@ -461,20 +434,6 @@ class CreateDataset:
         return segment
         ###
 
-    # create h coords - add ones row
-    def create_hcoords(self, seg_coords):
-        n=1000
-        bbox = tf.py_function(self.arrange_bbox, [seg_coords],  tf.float32)
-        # bbox = segment2box(seg_coords) # replace with this:
-
-        return bbox
-
-        # tf.print(xx.shape[1])
-        # xx = tf.concat([xx[...,0:1], xx[...,1:2], tf.ones([xx.shape[0],1], dtype=tf.float32)], axis=-1)
-        # xx = tf.concat([xx, tf.ones([xx.shape[0],1], dtype=tf.float32)], axis=-1)
-        # xx=tf.expand_dims(xx, axis=-1)
-        # pass
-        # return xx
     def decode_resize(self, filename, size):
         img_st = tf.io.read_file(filename)
         img_dec = tf.image.decode_image(img_st, channels=3, expand_animations=False)
@@ -544,8 +503,8 @@ class CreateDataset:
         #     lambda bimages, btargets, bfilename, bshape, segments: (
         #     bimages, btargets, bfilename, bshape, self.segment_affine(segments)))
         # debug loop:
-        for batch, (bimages,  btargets, bfilename, bshape, segments) in enumerate(dataset):
-            mask= parse_func(segments)
+        # for batch, (bimages,  btargets, bfilename, bshape, segments) in enumerate(dataset):
+        #     mask= parse_func(segments)
 
         dataset = dataset.map(
             lambda bimages,  btargets, bfilename, bshape, segments: (bimages,  btargets, parse_func(segments), bfilename, bshape))
