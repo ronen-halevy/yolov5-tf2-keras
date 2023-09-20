@@ -17,45 +17,14 @@ from pathlib import Path
 # from core.load_tfrecords import parse_tfrecords
 
 from utils.tf_general import segment2box, xyxy2xywhn, segments2boxes_exclude_outbound_points
-import os
-from PIL import ExifTags, Image, ImageOps
-import contextlib
-import numpy as np
 import tensorflow as tf
-
 import tensorflow_probability as tfp
-
-import contextlib
-import glob
-import hashlib
-import json
 import math
-import os
 import random
-import shutil
-import time
-from itertools import repeat
-from multiprocessing.pool import Pool, ThreadPool
-from pathlib import Path
-from threading import Thread
-from urllib.parse import urlparse
-
 import numpy as np
-import psutil
-import torch
-import torch.nn.functional as F
-import torchvision
-import yaml
 from PIL import ExifTags, Image, ImageOps
-from torch.utils.data import DataLoader, Dataset, dataloader, distributed
-from tqdm import tqdm
-from utils.general import LOGGER, colorstr
-
-#
-# from load_train_data import LoadSegmentationData
 
 
-# IMG_FORMATS = 'bmp', 'dng', 'jpeg', 'jpg', 'mpo', 'png', 'tif', 'tiff', 'webp', 'pfm'  # include image suffixes
 
 for orientation in ExifTags.TAGS.keys():
     if ExifTags.TAGS[orientation] == 'Orientation':
@@ -154,7 +123,6 @@ class CreateDataset:
         #     :rtype: float array, shape: [nboxes, 4]
         #     """
         #     # Convert nx4 boxes from [x, y, w, h] normalized to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
-        #     # y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
         xmin = tf.math.multiply(tf.cast(w, tf.float32), (x[..., 1:2] - x[..., 3:4] / 2)) + tf.cast(padw,
                                                                                                    tf.float32)  # top left x
         ymin = tf.math.multiply(tf.cast(h, tf.float32), (x[..., 2:3] - x[..., 4:5] / 2)) + tf.cast(padh,
@@ -200,8 +168,7 @@ class CreateDataset:
         s = random.uniform(1 - scale, 1 + scale)
         # s = 2 ** random.uniform(-scale, scale)
         R[:2] = cv2.getRotationMatrix2D(angle=a, center=(0, 0), scale=s)
-        # print('angle', a)
-        # print('scale', s)
+
 
         # Shear
         S = np.eye(3)
@@ -212,20 +179,10 @@ class CreateDataset:
         T = np.eye(3)
         T[0, 2] = (random.uniform(0.5 - translate, 0.5 + translate) * width)  # x translation (pixels)
         T[1, 2] = (random.uniform(0.5 - translate, 0.5 + translate) * height)  # y translation (pixels)
-        # print('translate', translate)
-
-        # print('T', T)
-
-        # print('C', C)
 
         # Combined rotation matrix
         M = T @ S @ R @ P @ C  # order of operations (right to left) is IMPORTANT
 
-        # M = T  @ C # order of operations (right to left) is IMPORTANT
-        # return im, targets, segments
-
-        # M=C
-        # M = np.eye(3)
         if (border[0] != 0) or (border[1] != 0) or (M != np.eye(3)).any():  # image changed
             if perspective:
                 im = cv2.warpPerspective(im, M, dsize=(width, height), borderValue=(114, 114, 114))
@@ -324,12 +281,6 @@ class CreateDataset:
             segments4, 0, 2 * 640, name='segments4'  # todo 640
         )
 
-        # for x in (labels4[:, 1:], *segments4):
-        #     np.clip(x, 0, 2 * s, out=x)  # clip when using random_perspective()
-        # temp resize::
-        # segments4 /= 2.  # rescale from mosaic expanded  2w x 2h to wxh
-        # img4 = tf.image.resize(img4, size)  # rescale from 2w x 2h
-        #
 
         img4, labels4, segments4 = self.random_perspective(img4,
                                                            labels4,
@@ -340,12 +291,6 @@ class CreateDataset:
                                                            shear=self.shear,
                                                            perspective=self.perspective,
                                                            border=self.mosaic_border)  # border to remove
-        segments4 /= 2.  # rescale from mosaic expanded  2w x 2h to wxh
-        labels4 /= 2.  # rescale from mosaic expanded  2w x 2h to wxh
-
-        # cv2.imshow('hh', img4.numpy())
-        # cv2.waitKey()
-        # img4 = tf.image.resize(img4, size)  # rescale from 2w x 2h
         return img4, labels4, segments4
 
         # Convert 1 segment label to 1 box label, applying inside-image constraint, i.e. (xy1, xy2, ...) to (xyxy)
@@ -389,7 +334,6 @@ class CreateDataset:
         img11 = tf.image.resize(img11 / 255, size)
         return img11
 
-        # return img4, y_labels, filename, img.shape, y_masks
 
     # @tf.function
     def decode_and_resize_image(self, filename, size, y_labels, y_segments):
@@ -404,23 +348,16 @@ class CreateDataset:
             segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=y_segments,
                                  fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
                                                                          ragged_rank=1));
-        # img = tf.image.resize(img, size)
-        # labels=labels.to_tensor()
-        # tf.print('img.shape[1], h=img.shape[0]',img.shape[1],img.shape[0])
-        w,h=640,640 #img.shape[0]
+
+        downsample_ratio = 4
+        masks = tf.py_function(polygons2masks_overlap, [[self.imgsz, self.imgsz], segments, downsample_ratio], Tout=tf.float32)
+
 
         labels = xyxy2xywhn(labels, w=640, h=640, clip=True, eps=1e-3)  # return xywh normalized
         labels = tf.RaggedTensor.from_tensor(labels, padding=-1)
 
-        return (img, labels, filename, segments,)
-        # return (img, labels, filename, img
-        #         .shape,  bmask)
+        return (img, labels, filename, masks,)
 
-
-
-    # def segment_affine(self, segment):
-    #     segment=segment_affaine_transform(segment)
-    #     return segment
 
     def __call__(self, image_files, labels, segments):
         y_segments = tf.ragged.constant(list(segments))
@@ -430,43 +367,13 @@ class CreateDataset:
         ds = tf.data.Dataset.from_tensor_slices((x_train, y_labels, y_segments))
 
         # debug loop:
-        # for x, lables, segments in ds:
-        #     aa = self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments)
+        for x, lables, segments in ds:
+            aa = self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments)
         dataset = ds.map(
             lambda x, lables, segments: self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments))
 
-        # dataset = dataset.map(
-        #     lambda bimages, btargets, bfilename, bshape, segments: (
-        #     self.image_affine(bimages), btargets, bfilename, bshape, segments))
 
-        # dataset = dataset.map(
-        #     lambda bimages, btargets, bfilename, bshape, segments: (
-        #     bimages, btargets, bfilename, bshape, self.segment_affine(segments)))
-        # debug loop:
-        # for batch, (bimages,  btargets, bfilename, bshape, segments) in enumerate(dataset):
-        #     mask= parse_func(segments)
-
-        dataset = dataset.map(
-            lambda bimages, btargets, bfilename, segments: (
-            bimages, btargets, parse_func(segments), bfilename))
-
-
-        # dataset = dataset.map(
-        #     lambda bimages,  btargets, bfilename, bshape, bmasks: (affaine_transform(bimages),  btargets, bfilename, bshape, bmasks))
-
-        # for batch, (bimages, btargets, bmasks, bshape, bfilename) in enumerate(dataset):
-        #     pass
-
-        # for idx, (img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged) in enumerate(dataset):
-        #     res=parse_func(img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged)
-
-        # dataset = dataset.map(parse_func)
-        # dataset=dataset.batch(2)
-
-        # dataset = dataset.map(lambda ds,aa,bb,cc,dd: parse_func(ds,aa,bb,cc,dd))
         dataset = dataset.batch(2)
 
-        # dataset = ds.map(
-        #     lambda img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged: parse_func(img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged))
 
         return dataset

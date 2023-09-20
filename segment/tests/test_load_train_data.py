@@ -126,11 +126,11 @@ def test_dataset_creation(data_path, imgsz=640, line_thickness = 3, nexamples=3,
     # ds = ds.shuffle(10)
     sel_ds = ds.take(nexamples)
     # for bidx, (bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bmask) in enumerate(sel_ds):
-    for bidx, (bimg, bimg_labels_ragged,  bmask, bimg_filenames) in enumerate(sel_ds):
+    for bidx, (bimg, bimg_labels_ragged, bimg_filenames,  bmask) in enumerate(sel_ds):
 
     # for bidx, (img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged) in enumerate(sel_ds):
     #     for idx, (img, img_labels_ragged, img_filenames, img_shape, mask) in enumerate(zip(bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bmask)):
-        for idx, (img, img_labels_ragged,  mask, img_filenames) in enumerate(zip(bimg, bimg_labels_ragged,  bmask, bimg_filenames)):
+        for idx, (img, img_labels_ragged, img_filenames,  mask) in enumerate(zip(bimg, bimg_labels_ragged, bimg_filenames,  bmask)):
             img_labels=img_labels_ragged#.to_tensor() # convert from ragged
             d_s_factor=4
             mask=tf.squeeze(tf.image.resize(mask[...,None],[mask.shape[0]*d_s_factor,mask.shape[1]*d_s_factor]))
