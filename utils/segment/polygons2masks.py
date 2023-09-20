@@ -78,9 +78,9 @@ def polygons2masks_overlap(image_size, segments, downsample_ratio=1):
     # masks = np.zeros((tf.math.floordiv(img_size[0], downsample_ratio), tf.math.floordiv(img_size[1], downsample_ratio)),
     #                  dtype=np.int32 if segments.shape[0] > 255 else np.uint8)
     # imgsz=640
-    masks = tf.zeros((tf.math.floordiv(image_size[0], downsample_ratio), tf.math.floordiv(image_size[1], downsample_ratio)),
-                     dtype=np.int32 )
-    areas = []
+    # masks = tf.zeros((tf.math.floordiv(image_size[0], downsample_ratio), tf.math.floordiv(image_size[1], downsample_ratio)),
+    #                  dtype=np.int32 )
+    # areas = []
     ms = []
     # downsample_ratio=4
     for si in range(segments.shape[0]):
@@ -92,10 +92,18 @@ def polygons2masks_overlap(image_size, segments, downsample_ratio=1):
                 color=1,
             )
         ms.append(mask)
-        areas.append(tf.math.reduce_sum(mask))
-    pass
+        # areas.append(tf.math.reduce_sum(mask))
+    ms = np.asarray(ms) # shape: [nmasks, 160,160]
+    return ms
+
+    # mask_id = np.arange(1, ms.shape[0]+1, dtype=np.float32) # s !ms.shape is only avail in eager mode (py_function)
+    # ms = ms * np.reshape(mask_id, [-1,1,1])
+    #
+    # return ms
+
     # return ms
     areas = np.asarray(areas)
+
     index = np.argsort(-areas)
     ms = np.array(ms)[index]
     for i in range(segments.shape[0]):

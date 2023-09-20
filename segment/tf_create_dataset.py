@@ -24,8 +24,6 @@ import random
 import numpy as np
 from PIL import ExifTags, Image, ImageOps
 
-
-
 for orientation in ExifTags.TAGS.keys():
     if ExifTags.TAGS[orientation] == 'Orientation':
         break
@@ -36,19 +34,19 @@ from utils.segment.polygons2masks import polygons2masks_overlap, polygon2mask
 from utils.tf_augmentations import box_candidates
 
 
-def preprocess(imgsz, bsegments):
-    downsample_ratio = 4
-    bmasks = polygons2masks_overlap(imgsz,
-                                    bsegments,
-                                    downsample_ratio=downsample_ratio)
-    return bmasks
+# def preprocess(imgsz, bsegments):
+#     downsample_ratio = 4
+#     bmasks = polygons2masks_overlap(imgsz,
+#                                     bsegments,
+#                                     downsample_ratio=downsample_ratio)
+#     return bmasks
 
 
-def parse_func(img_segments_ragged):
-    downsample_ratio = 4
-    imgsz = [640, 640]  # [640, 640] # todo - forced hereimg_segments_ragged
-    bmask = tf.py_function(preprocess, [imgsz, img_segments_ragged], Tout=tf.float32)
-    return bmask
+# def parse_func(img_segments_ragged):
+#     downsample_ratio = 4
+#     imgsz = [640, 640]  # [640, 640] # todo - forced hereimg_segments_ragged
+#     bmask = tf.py_function(preprocess, [imgsz, img_segments_ragged], Tout=tf.float32)
+#     return bmask
 
 
 # @tf.function
@@ -74,7 +72,7 @@ class CreateDataset:
         # img = tf.keras.preprocessing.image.apply_affine_transform(img,theta=0,tx=0,ty=0,shear=0,zx=1,zy=1,row_axis=0,col_axis=1,channel_axis=2,fill_mode='nearest',cval=0.0,order=1 )
         return img
 
-   # @tf.function
+    # @tf.function
     def scatter_img_to_mosaic(self, dst_img, src_img, dst_xy):
         """
         :param dst_img: 2w*2h*3ch 4mosaic dst img
@@ -147,7 +145,10 @@ class CreateDataset:
                            border=(0, 0)):
         # torchvision.transforms.RandomAffine(degrees=(-10, 10), translate=(.1, .1), scale=(.9, 1.1), shear=(-10, 10))
         # targets = [cls, xyxy]
-        random.seed(0)  # ronen todo!!
+        # random.seed(0)
+        tf.random.set_seed(
+            0
+        )  # ronen todo!!
         height = im.shape[0] + border[0] * 2  # shape(h,w,c)
         width = im.shape[1] + border[1] * 2
 
@@ -157,28 +158,21 @@ class CreateDataset:
         C[1, 2] = -im.shape[0] / 2  # y translation (pixels)
 
         # Perspective
-        P = np.eye(3)
-        P[2, 0] = random.uniform(-perspective, perspective)  # x perspective (about y)
-        P[2, 1] = random.uniform(-perspective, perspective)  # y perspective (about x)
+        P = tf.eye(3)
+        presp = tf.random.uniform([2], -perspective, perspective, dtype=tf.float32)
+        P = tf.tensor_scatter_nd_update(tf.eye(3), [[2, 0], [2, 1]], presp)  # x perspective (about y)
 
         # Rotation and Scale
-        R = np.eye(3)
-        a = random.uniform(-degrees, degrees)
-        # a += random.choice([-180, -90, 0, 90])  # add 90deg rotations to small rotations
-        s = random.uniform(1 - scale, 1 + scale)
-        # s = 2 ** random.uniform(-scale, scale)
-        R[:2] = cv2.getRotationMatrix2D(angle=a, center=(0, 0), scale=s)
-
-
+        a = tf.random.uniform((), -degrees, degrees, dtype=tf.float32)
+        s = tf.random.uniform((), 1 - scale, 1 + scale, dtype=tf.float32)
+        R = [[s * tf.math.cos(a), s * tf.math.sin(a), 0], [- s * tf.math.sin(a), s * tf.math.cos(a), 0], [0, 0, 1]]
         # Shear
-        S = np.eye(3)
-        S[0, 1] = math.tan(random.uniform(-shear, shear) * math.pi / 180)  # x shear (deg)
-        S[1, 0] = math.tan(random.uniform(-shear, shear) * math.pi / 180)  # y shear (deg)
+        shearval = tf.math.tan(tf.random.uniform([2], -shear, shear, dtype=tf.float32) * math.pi / 180)  # x shear (deg)
+        S = tf.tensor_scatter_nd_update(tf.eye(3), [[0, 1], [1, 0]], shearval)  # x perspective (about y)
 
         # Translation
-        T = np.eye(3)
-        T[0, 2] = (random.uniform(0.5 - translate, 0.5 + translate) * width)  # x translation (pixels)
-        T[1, 2] = (random.uniform(0.5 - translate, 0.5 + translate) * height)  # y translation (pixels)
+        transn = tf.random.uniform([2], 0.5 - translate, 0.5 + translate) * [width, height]
+        T = tf.tensor_scatter_nd_update(tf.eye(3), [[0, 2], [1, 2]], transn)  # x perspective (about y)
 
         # Combined rotation matrix
         M = T @ S @ R @ P @ C  # order of operations (right to left) is IMPORTANT
@@ -188,8 +182,6 @@ class CreateDataset:
                 im = cv2.warpPerspective(im, M, dsize=(width, height), borderValue=(114, 114, 114))
             else:  # affine
                 im = tf.py_function(self.affaine_transform, [im, M], Tout=tf.float32)
-
-
 
         if True:  # if n:
             # new = np.zeros((n, 4))
@@ -201,9 +193,8 @@ class CreateDataset:
             #                                                               ));
             ########################################################
 
-
             x = tf.cast(tf.linspace(0., 5 - 1, 1000), dtype=tf.float32)  # n interpolation points. n points array
-
+            # before interpolation, segments is a ragged tensor, accordingly tf.map_fn required:
             segments = tf.map_fn(fn=lambda segment: self.seg_interp(x, segment), elems=segments,
                                  fn_output_signature=tf.TensorSpec(shape=[1000, 3], dtype=tf.float32,
                                                                    ));
@@ -281,7 +272,6 @@ class CreateDataset:
             segments4, 0, 2 * 640, name='segments4'  # todo 640
         )
 
-
         img4, labels4, segments4 = self.random_perspective(img4,
                                                            labels4,
                                                            segments4,
@@ -298,7 +288,6 @@ class CreateDataset:
         # inside = (x >= 0) & (y >= 0) & (x <= width) & (y <= height)
         # x, y, = x[inside], y[inside]
         # return np.array([x.min(), y.min(), x.max(), y.max()]) if any(x) else np.zeros((4))  # xyxy
-
 
     def seg_interp(self, x, seg_coords):
         seg_coords = seg_coords.to_tensor()
@@ -334,7 +323,6 @@ class CreateDataset:
         img11 = tf.image.resize(img11 / 255, size)
         return img11
 
-
     # @tf.function
     def decode_and_resize_image(self, filename, size, y_labels, y_segments):
 
@@ -344,20 +332,33 @@ class CreateDataset:
             img = self.decode_resize(filename, size)
             labels = y_labels
             padw, padh = 0, 0
+
             w, h = size
-            segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=y_segments,
-                                 fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
-                                                                         ragged_rank=1));
+
+            y_l = self.xywhn2xyxy(y_labels, w, h, padw, padh)
 
         downsample_ratio = 4
-        masks = tf.py_function(polygons2masks_overlap, [[self.imgsz, self.imgsz], segments, downsample_ratio], Tout=tf.float32)
+        # mask1 = tf.zeros(
+        #     (tf.math.floordiv(self.imgsz, downsample_ratio), tf.math.floordiv(self.imgsz, downsample_ratio)),
+        #     dtype=np.int32)
+        # [ms, ms_shape0] \
+        masks= tf.py_function(polygons2masks_overlap, [[self.imgsz, self.imgsz], segments, downsample_ratio],
+                            Tout=tf.float32)
 
+        # shape: [nmasks, 160, 160]
+        # masks = tf.concat([ms])
+        areas = tf.math.reduce_sum(masks, axis=[1, 2])  # shape: [nmasks]
+        index = tf.argsort(areas, axis=-1, direction='DESCENDING', stable=False, name=None)  # shape: [nmasks]
+        masks = tf.gather(masks, index, axis=0)  # shape: [nmasks]
+        index=tf.sort(index, axis=-1, direction='ASCENDING', name=None)
+        index=tf.cast(index, tf.float32)+1.
+        masks = tf.math.multiply(masks, tf.reshape(index, [-1,1,1]))
+        masks = tf.reduce_max(masks, axis=0)
 
         labels = xyxy2xywhn(labels, w=640, h=640, clip=True, eps=1e-3)  # return xywh normalized
         labels = tf.RaggedTensor.from_tensor(labels, padding=-1)
 
         return (img, labels, filename, masks,)
-
 
     def __call__(self, image_files, labels, segments):
         y_segments = tf.ragged.constant(list(segments))
@@ -372,8 +373,6 @@ class CreateDataset:
         dataset = ds.map(
             lambda x, lables, segments: self.decode_and_resize_image(x, [self.imgsz, self.imgsz], lables, segments))
 
-
         dataset = dataset.batch(2)
-
 
         return dataset
