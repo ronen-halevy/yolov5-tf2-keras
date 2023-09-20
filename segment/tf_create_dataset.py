@@ -83,90 +83,6 @@ def parse_func(img_segments_ragged):
 
 
 # @tf.function
-def affaine_preprocess(img, M):
-    # img = cv2.warpAffine(img.numpy(), M[:2].numpy(), dsize=(1280, 1280), borderValue=(114, 114, 114))
-    img = cv2.warpAffine(np.asarray(img), M[:2].numpy(), dsize=(1280, 1280), borderValue=(114, 114, 114))
-
-    # img = tf.keras.preprocessing.image.apply_affine_transform(
-    #     img,
-    #     theta=0,
-    #     tx=0,
-    #     ty=0,
-    #     shear=0,
-    #     zx=1,
-    #     zy=1,
-    #     row_axis=0,
-    #     col_axis=1,
-    #     channel_axis=2,
-    #     fill_mode='nearest',
-    #     cval=0.0,
-    #     order=1
-    # )
-    return img
-# @tf.function
-def aff(im):
-    im = tf.keras.preprocessing.image.apply_affine_transform(
-        im,
-        theta=0,
-        tx=10,
-        ty=10,
-        shear=0,
-        zx=1,
-        zy=1,
-        row_axis=0,
-        col_axis=1,
-        channel_axis=2,
-        fill_mode='nearest',
-        cval=0.0,
-        order=1
-    )
-    return im
-# @tf.function
-def affaine_transform(img):
-    M=tf.eye(3)
-    C = np.eye(3)
-    C[0, 2] = -320.  # x translation (pixels)
-    C[1, 2] = -320.  # y translation (pixels)
-    perspective=0
-    degrees=0
-    scale=0
-    translate=20
-    # Perspective
-    P = np.eye(3)
-    P[2, 0] = random.uniform(-perspective, perspective)  # x perspective (about y)
-    P[2, 1] = random.uniform(-perspective, perspective)  # y perspective (about x)
-    shear=0
-    # Rotation and Scale
-    R = np.eye(3)
-    a = random.uniform(-degrees, degrees)
-    # a += random.choice([-180, -90, 0, 90])  # add 90deg rotations to small rotations
-    s = random.uniform(1 - scale, 1 + scale)
-    # s = 2 ** random.uniform(-scale, scale)
-    R[:2] = cv2.getRotationMatrix2D(angle=a, center=(0, 0), scale=s)
-    # print('angle', a)
-    # print('scale', s)
-
-    # Shear
-    S = np.eye(3)
-    S[0, 1] = math.tan(random.uniform(-shear, shear) * math.pi / 180)  # x shear (deg)
-    S[1, 0] = math.tan(random.uniform(-shear, shear) * math.pi / 180)  # y shear (deg)
-
-    # Translation
-    T = np.eye(3)
-    width=640
-    height=640
-    T[0, 2] = (random.uniform(0.5 - translate, 0.5 + translate) * width)  # x translation (pixels)
-    T[1, 2] = (random.uniform(0.5 - translate, 0.5 + translate) * height)  # y translation (pixels)
-    # print('translate', translate)
-
-    # print('T', T)
-
-    # print('C', C)
-
-    # Combined rotation matrix
-    M = T @ S @ R @ P @ C  # order of operations (right to left) is IMPORTANT
-    img = tf.py_function(affaine_preprocess, [img, M], tf.float32)
-    return img
 
 
 class CreateDataset:
@@ -182,7 +98,14 @@ class CreateDataset:
         self.shear = shear
         self.perspective = perspective
 
-    # @tf.function
+    def affaine_transform(self, img, M):
+        # img = cv2.warpAffine(img.numpy(), M[:2].numpy(), dsize=(1280, 1280), borderValue=(114, 114, 114))
+        img = cv2.warpAffine(np.asarray(img), M[:2].numpy(), dsize=(640, 640), borderValue=(114, 114, 114))
+
+        # img = tf.keras.preprocessing.image.apply_affine_transform(img,theta=0,tx=0,ty=0,shear=0,zx=1,zy=1,row_axis=0,col_axis=1,channel_axis=2,fill_mode='nearest',cval=0.0,order=1 )
+        return img
+
+   # @tf.function
     def scatter_img_to_mosaic(self, dst_img, src_img, dst_xy):
         """
         :param dst_img: 2w*2h*3ch 4mosaic dst img
@@ -307,7 +230,7 @@ class CreateDataset:
             if perspective:
                 im = cv2.warpPerspective(im, M, dsize=(width, height), borderValue=(114, 114, 114))
             else:  # affine
-                pass
+                im = tf.py_function(self.affaine_transform, [im, M], Tout=tf.float32)
 
 
 
@@ -422,7 +345,7 @@ class CreateDataset:
 
         # cv2.imshow('hh', img4.numpy())
         # cv2.waitKey()
-        img4 = tf.image.resize(img4, size)  # rescale from 2w x 2h
+        # img4 = tf.image.resize(img4, size)  # rescale from 2w x 2h
         return img4, labels4, segments4
 
         # Convert 1 segment label to 1 box label, applying inside-image constraint, i.e. (xy1, xy2, ...) to (xyxy)
@@ -481,7 +404,7 @@ class CreateDataset:
             segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=y_segments,
                                  fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
                                                                          ragged_rank=1));
-        img = tf.image.resize(img, size)
+        # img = tf.image.resize(img, size)
         # labels=labels.to_tensor()
         # tf.print('img.shape[1], h=img.shape[0]',img.shape[1],img.shape[0])
         w,h=640,640 #img.shape[0]
@@ -489,13 +412,11 @@ class CreateDataset:
         labels = xyxy2xywhn(labels, w=640, h=640, clip=True, eps=1e-3)  # return xywh normalized
         labels = tf.RaggedTensor.from_tensor(labels, padding=-1)
 
-        return (img, labels, filename, img.shape, segments,)
+        return (img, labels, filename, segments,)
         # return (img, labels, filename, img
         #         .shape,  bmask)
 
-    def image_affine(self, bimages):
-        image = affaine_transform(bimages)
-        return image
+
 
     # def segment_affine(self, segment):
     #     segment=segment_affaine_transform(segment)
@@ -526,12 +447,12 @@ class CreateDataset:
         #     mask= parse_func(segments)
 
         dataset = dataset.map(
-            lambda bimages, btargets, bfilename, bshape, segments: (
-            bimages, btargets, parse_func(segments), bfilename, bshape))
+            lambda bimages, btargets, bfilename, segments: (
+            bimages, btargets, parse_func(segments), bfilename))
 
 
-        dataset = dataset.map(
-            lambda bimages,  btargets, bfilename, bshape, bmasks: (affaine_transform(bimages),  btargets, bfilename, bshape, bmasks))
+        # dataset = dataset.map(
+        #     lambda bimages,  btargets, bfilename, bshape, bmasks: (affaine_transform(bimages),  btargets, bfilename, bshape, bmasks))
 
         # for batch, (bimages, btargets, bmasks, bshape, bfilename) in enumerate(dataset):
         #     pass

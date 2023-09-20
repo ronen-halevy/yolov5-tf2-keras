@@ -126,21 +126,18 @@ def test_dataset_creation(data_path, imgsz=640, line_thickness = 3, nexamples=3,
     # ds = ds.shuffle(10)
     sel_ds = ds.take(nexamples)
     # for bidx, (bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bmask) in enumerate(sel_ds):
-    for bidx, (bimg, bimg_labels_ragged,  bmask, bimg_filenames, bimg_shape) in enumerate(sel_ds):
+    for bidx, (bimg, bimg_labels_ragged,  bmask, bimg_filenames) in enumerate(sel_ds):
 
     # for bidx, (img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged) in enumerate(sel_ds):
     #     for idx, (img, img_labels_ragged, img_filenames, img_shape, mask) in enumerate(zip(bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bmask)):
-        for idx, (img, img_labels_ragged,  mask, img_filenames, img_shape) in enumerate(zip(bimg, bimg_labels_ragged,  bmask, bimg_filenames, bimg_shape)):
+        for idx, (img, img_labels_ragged,  mask, img_filenames) in enumerate(zip(bimg, bimg_labels_ragged,  bmask, bimg_filenames)):
             img_labels=img_labels_ragged#.to_tensor() # convert from ragged
             d_s_factor=4
             mask=tf.squeeze(tf.image.resize(mask[...,None],[mask.shape[0]*d_s_factor,mask.shape[1]*d_s_factor]))
             segments = cv2.findContours(mask.numpy().astype('uint8'), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
             image=draw_dataset_entry(img, img_labels.to_tensor(), segments, line_thickness)
             image.save(save_dir/f'annotatedm_{bidx}_{idx}.jpeg')
-
-
-
-
+            im.fromarray((img.numpy() * 255).astype(np.uint8)).save(save_dir / f'annotationless_{bidx}_{idx}.jpeg')
 
 if __name__ == '__main__':
     imgsz = 640
