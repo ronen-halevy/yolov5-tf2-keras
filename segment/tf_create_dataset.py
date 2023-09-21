@@ -30,7 +30,7 @@ for orientation in ExifTags.TAGS.keys():
 
 import cv2
 
-from utils.segment.polygons2masks import polygons2masks_overlap, polygon2mask
+from utils.segment.polygons2masks import  polygon2mask
 from utils.tf_augmentations import box_candidates
 
 
@@ -338,12 +338,14 @@ class CreateDataset:
             y_l = self.xywhn2xyxy(y_labels, w, h, padw, padh)
 
         downsample_ratio = 4
-        # mask1 = tf.zeros(
-        #     (tf.math.floordiv(self.imgsz, downsample_ratio), tf.math.floordiv(self.imgsz, downsample_ratio)),
-        #     dtype=np.int32)
-        # [ms, ms_shape0] \
-        masks= tf.py_function(polygons2masks_overlap, [[self.imgsz, self.imgsz], segments, downsample_ratio],
-                            Tout=tf.float32)
+
+        color=1
+        masks = tf.map_fn(fn=lambda segment:
+        tf.py_function(polygon2mask, [(640, 640), [tf.reshape(segment, [-1])],color, downsample_ratio ],
+                       Tout=tf.float32), elems=segments,
+                              fn_output_signature=tf.TensorSpec(shape=[160, 160], dtype=tf.float32,
+                                                                      ));
+
 
         # shape: [nmasks, 160, 160]
         # masks = tf.concat([ms])
