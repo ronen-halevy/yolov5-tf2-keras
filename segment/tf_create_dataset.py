@@ -30,7 +30,7 @@ for orientation in ExifTags.TAGS.keys():
 
 import cv2
 
-from utils.segment.polygons2masks import  polygon2mask
+# from utils.segment.polygons2masks import  polygon2mask
 from utils.tf_augmentations import box_candidates
 
 
@@ -51,14 +51,26 @@ from utils.tf_augmentations import box_candidates
 
 # @tf.function
 
+def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
+    """
+    Args:
+        img_size (tuple): The image size.
+        polygons: [1, npoints, 2]
+    """
+    # convert to tensor if ragged:
+    polygon = tf.cond(is_ragged, true_fn=lambda:polygon.to_tensor(), false_fn=lambda: polygon)
+
+    mask = np.zeros(img_size, dtype=np.uint8)
+    cv2.fillPoly(mask, np.asarray(polygon), color=1)
+    return mask # shape: [img_size]
 
 class CreateDataset:
-    def __init__(self, imgsz, mosaic4, degrees, translate, scale, shear, perspective):
+    def __init__(self, imgsz, mosaic4, augment, degrees, translate, scale, shear, perspective):
         self.mosaic_border = [-imgsz // 2,
                               -imgsz // 2]  # mosaic center placed randimly at [-border, 2 * imgsz + border]
         self.imgsz = imgsz
         self.mosaic4 = mosaic4
-
+        self.augment=augment
         self.degrees = degrees
         self.translate = translate
         self.scale = scale
@@ -158,7 +170,6 @@ class CreateDataset:
         C[1, 2] = -im.shape[0] / 2  # y translation (pixels)
 
         # Perspective
-        P = tf.eye(3)
         presp = tf.random.uniform([2], -perspective, perspective, dtype=tf.float32)
         P = tf.tensor_scatter_nd_update(tf.eye(3), [[2, 0], [2, 1]], presp)  # x perspective (about y)
 
@@ -184,18 +195,9 @@ class CreateDataset:
                 im = tf.py_function(self.affaine_transform, [im, M], Tout=tf.float32)
 
         if True:  # if n:
-            # new = np.zeros((n, 4))
-            new = []
-            # segments = resample_segments(segments)  # upsample
-            # # set homogenius coords before transform:
-            # segments = tf.map_fn(fn=lambda segment: self.create_hcoords(segment, M,s), elems=[segments, targets],
-            #                       fn_output_signature=tf.TensorSpec(shape=[1, 4], dtype=tf.float32,
-            #                                                               ));
-            ########################################################
-
             x = tf.cast(tf.linspace(0., 5 - 1, 1000), dtype=tf.float32)  # n interpolation points. n points array
-            # before interpolation, segments is a ragged tensor, accordingly tf.map_fn required:
-            segments = tf.map_fn(fn=lambda segment: self.seg_interp(x, segment), elems=segments,
+            # before resample, segments are ragged (variable npoints per segment), accordingly tf.map_fn required:
+            segments = tf.map_fn(fn=lambda segment: self.resample_segments(x, segment), elems=segments,
                                  fn_output_signature=tf.TensorSpec(shape=[1000, 3], dtype=tf.float32,
                                                                    ));
             segments = tf.matmul(segments, tf.cast(tf.transpose(M), tf.float32))  # transform
@@ -251,6 +253,7 @@ class CreateDataset:
 
             # resize normalized and add pad values to bboxes and segments:
             y_l = self.xywhn2xyxy(y_labels[idx], w, h, padw, padh)
+            # map_fn since segments is a ragged tensor:
             y_s = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=y_segments[idx],
                             fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
                                                                     ragged_rank=1));
@@ -289,7 +292,7 @@ class CreateDataset:
         # x, y, = x[inside], y[inside]
         # return np.array([x.min(), y.min(), x.max(), y.max()]) if any(x) else np.zeros((4))  # xyxy
 
-    def seg_interp(self, x, seg_coords):
+    def resample_segments(self, x, seg_coords):
         seg_coords = seg_coords.to_tensor()
 
         seg_coords = tf.concat([seg_coords, seg_coords[0:1, :]], axis=0)  # last polygon's section for interpolation
@@ -316,6 +319,31 @@ class CreateDataset:
         return segment
         ###
 
+    def polygons2masks(self, segments, size, is_ragged):
+        downsample_ratio = 4  # yolo training requires downsampled by 4 mask
+        color = 1  # default value 1 is later modifed to a color per mask
+        segments = tf.cast(segments, tf.int32)
+        # polygons2mask done as loop for a seperatee mask per segment. Merge masks after size-sorting and coloring:
+        masks = tf.map_fn(fn=lambda segment:
+        tf.py_function(polygons2mask, [is_ragged, size, segment[None], color, downsample_ratio],
+                       Tout=tf.float32), elems=segments,
+                          fn_output_signature=tf.TensorSpec(shape=[640, 640], dtype=tf.float32, ));
+        # NOTE: fillPoly firstly then resize is trying the keep the same way
+        # of loss calculation when mask-ratio=1.
+
+        nh, nw = (size[0] // downsample_ratio, size[1] // downsample_ratio)
+        masks = tf.squeeze(tf.image.resize(masks[..., None], [nh, nw]), axis=3)
+
+        # shape: [nmasks, 160, 160]
+        # masks = tf.concat([ms])
+        areas = tf.math.reduce_sum(masks, axis=[1, 2])  # shape: [nmasks]
+        index = tf.argsort(areas, axis=-1, direction='DESCENDING', stable=False, name=None)  # shape: [nmasks]
+        masks = tf.gather(masks, index, axis=0)  # shape: [nmasks]
+        index = tf.sort(index, axis=-1, direction='ASCENDING', name=None)
+        index = tf.cast(index, tf.float32) + 1.
+        masks = tf.math.multiply(masks, tf.reshape(index, [-1, 1, 1]))
+        masks = tf.reduce_max(masks, axis=0)
+
     def decode_resize(self, filename, size):
         img_st = tf.io.read_file(filename)
         img_dec = tf.image.decode_image(img_st, channels=3, expand_animations=False)
@@ -326,46 +354,46 @@ class CreateDataset:
     # @tf.function
     def decode_and_resize_image(self, filename, size, y_labels, y_segments):
 
-        if self.mosaic4:
+        if self.mosaic4: # ronen todo
             img, labels, segments = self.load_mosaic(filename, size, y_labels, y_segments)
+            is_ragged = False  # segments not ragged, but upsampled to constant num of points
         else:
             img = self.decode_resize(filename, size)
-            labels = y_labels
-            padw, padh = 0, 0
+            segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, size[0], size[1], padw=0, padh=0), elems=y_segments,
+                            fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
+                                                                    ragged_rank=1));
+            labels = self.xywhn2xyxy(y_labels, size[0], size[1], padw=0, padh=0)
+            if self.augment:
+                img, labels, segments = self.random_perspective(img,
+                                                                   labels,
+                                                                   segments,
+                                                                   degrees=self.degrees,
+                                                                   translate=self.translate,
+                                                                   scale=self.scale,
+                                                                   shear=self.shear,
+                                                                   perspective=self.perspective,
+                                                                   border=self.mosaic_border)  # border to remove
+                is_ragged = False # segments not ragged, but upsampled to constant num of points
 
-            w, h = size
+            else:
+                # ragged to tensor for convinence:
+                labels = labels.to_tensor() # shape: [nlabels, 5]
+                is_ragged = True
 
-            y_l = self.xywhn2xyxy(y_labels, w, h, padw, padh)
+            #     # ultralytics does not upsample if not augmented, but doing it
+            #     segments = tf.map_fn(fn=lambda segment: self.resample_segments(x, segment), elems=segments,
+            #                          fn_output_signature=tf.TensorSpec(shape=[1000, 3], dtype=tf.float32, ));
 
-        downsample_ratio = 4
-
-        color=1
-        masks = tf.map_fn(fn=lambda segment:
-        tf.py_function(polygon2mask, [(640, 640), [tf.reshape(segment, [-1])],color, downsample_ratio ],
-                       Tout=tf.float32), elems=segments,
-                              fn_output_signature=tf.TensorSpec(shape=[160, 160], dtype=tf.float32,
-                                                                      ));
-
-
-        # shape: [nmasks, 160, 160]
-        # masks = tf.concat([ms])
-        areas = tf.math.reduce_sum(masks, axis=[1, 2])  # shape: [nmasks]
-        index = tf.argsort(areas, axis=-1, direction='DESCENDING', stable=False, name=None)  # shape: [nmasks]
-        masks = tf.gather(masks, index, axis=0)  # shape: [nmasks]
-        index=tf.sort(index, axis=-1, direction='ASCENDING', name=None)
-        index=tf.cast(index, tf.float32)+1.
-        masks = tf.math.multiply(masks, tf.reshape(index, [-1,1,1]))
-        masks = tf.reduce_max(masks, axis=0)
+        masks = self.polygons2masks(segments, size, is_ragged)
 
         labels = xyxy2xywhn(labels, w=640, h=640, clip=True, eps=1e-3)  # return xywh normalized
         labels = tf.RaggedTensor.from_tensor(labels, padding=-1)
-
         return (img, labels, filename, masks,)
 
     def __call__(self, image_files, labels, segments):
-        y_segments = tf.ragged.constant(list(segments))
-        y_labels = tf.ragged.constant(list(labels))
-        x_train = tf.convert_to_tensor(image_files)
+        y_segments = tf.ragged.constant(list(segments)) # [nimg, nsegments, npoints, 2] ,nsegments, npoints vary # TODO update for mosaic
+        y_labels = tf.ragged.constant(list(labels))  #  [nimg, nlabels, 5], nlabels vary
+        x_train = tf.convert_to_tensor(image_files) # [nimg]
 
         ds = tf.data.Dataset.from_tensor_slices((x_train, y_labels, y_segments))
 

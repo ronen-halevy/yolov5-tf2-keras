@@ -25,7 +25,7 @@ ROOT = FILE.parents[1]  # YOLOv5 root directory
 from segment.load_train_data import LoadTrainData
 from segment.tf_create_dataset import CreateDataset
 from utils.tf_general import increment_path
-from utils.segment.polygons2masks import polygons2masks_overlap, polygon2mask
+from utils.segment.polygons2masks import  polygon2mask
 from utils.segment.tf_general import masks2segments, process_mask, process_mask_native
 
 import tensorflow as tf
@@ -121,7 +121,8 @@ def test_dataset_creation(data_path, imgsz=640, line_thickness = 3, nexamples=3,
     mosaic=True# False
     image_files, labels, segments = ltd.load_data(data_path, mosaic)
     degrees, translate, scale, shear, perspective = hyp['degrees'],hyp['translate'],hyp['scale'],hyp['shear'],hyp['perspective']
-    create_dataset = CreateDataset(imgsz, mosaic, degrees, translate, scale, shear, perspective)
+    augment=False# True
+    create_dataset = CreateDataset(imgsz, mosaic, augment, degrees, translate, scale, shear, perspective)
     ds = create_dataset(image_files, labels, segments)
     # ds = ds.shuffle(10)
     sel_ds = ds.take(nexamples)
