@@ -332,17 +332,19 @@ class CreateDataset:
         # of loss calculation when mask-ratio=1.
 
         nh, nw = (size[0] // downsample_ratio, size[1] // downsample_ratio)
-        masks = tf.squeeze(tf.image.resize(masks[..., None], [nh, nw]), axis=3)
+        #expand - mult - squeeze:
+        masks = tf.squeeze(tf.image.resize(masks[..., None], [nh, nw]), axis=3) # shape: [nmasks, 160, 160]
 
-        # shape: [nmasks, 160, 160]
-        # masks = tf.concat([ms])
+        # sort masks, set pixels value per mask, max reduce to merge:
         areas = tf.math.reduce_sum(masks, axis=[1, 2])  # shape: [nmasks]
         index = tf.argsort(areas, axis=-1, direction='DESCENDING', stable=False, name=None)  # shape: [nmasks]
         masks = tf.gather(masks, index, axis=0)  # shape: [nmasks]
+        # set value to masks pixels - increasing cpint from 1 to index, (=num of masks):
         index = tf.sort(index, axis=-1, direction='ASCENDING', name=None)
         index = tf.cast(index, tf.float32) + 1.
-        masks = tf.math.multiply(masks, tf.reshape(index, [-1, 1, 1]))
-        masks = tf.reduce_max(masks, axis=0)
+        masks = tf.math.multiply(masks, tf.reshape(index, [-1, 1, 1])) # mult by index to set value
+        masks = tf.reduce_max(masks, axis=0) # reduce to merge and keep smallest mask pixes if overlap
+        return masks
 
     def decode_resize(self, filename, size):
         img_st = tf.io.read_file(filename)
