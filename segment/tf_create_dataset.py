@@ -90,7 +90,7 @@ class CreateDataset:
 
     def affaine_transform(self, img, M):
         # img = cv2.warpAffine(img.numpy(), M[:2].numpy(), dsize=(1280, 1280), borderValue=(114, 114, 114))
-        img = cv2.warpAffine(np.asarray(img), M[:2].numpy(), dsize=(640, 640), borderValue=(114, 114, 114))
+        img = cv2.warpAffine(np.asarray(img), M[:2].numpy(), dsize=(640, 640), borderValue=(114./255, 114./255, 114./255))
 
         # img = tf.keras.preprocessing.image.apply_affine_transform(img,theta=0,tx=0,ty=0,shear=0,zx=1,zy=1,row_axis=0,col_axis=1,channel_axis=2,fill_mode='nearest',cval=0.0,order=1 )
         return img
@@ -406,6 +406,7 @@ class CreateDataset:
         labels = xyxy2xywhn(labels, w=640, h=640, clip=True, eps=1e-3)  # return xywh normalized
         if self.augment:
             img, labels, masks = self.augmentation(img, labels, masks)
+            img = tf.cast(img, tf.float32)/255
         labels = tf.RaggedTensor.from_tensor(labels, padding=-1)
         return (img, labels, filename, masks,)
 

@@ -15,13 +15,13 @@ class Albumentations:
         try:
             T= [# there are some augmentation that won't change size, boxes and masks, so just be it for now.
                 # A.RandomResizedCrop(height=size, width=size, scale=(0.8, 1.0), ratio=(0.9, 1.11), p=0),
-                # A.Blur(p=0.01),
-                # A.MedianBlur(p=0.01),
-                # A.ToGray(p=0.01),
-                # A.CLAHE(p=0.01),
-                # A.RandomBrightnessContrast(p=0.0),
-                # A.RandomGamma(p=0.0),
-                # A.ImageCompression(quality_lower=75, p=0)
+                A.Blur(p=0.01),
+                A.MedianBlur(p=0.01),
+                A.ToGray(p=0.01),
+                A.CLAHE(p=0.01),
+                A.RandomBrightnessContrast(p=0.0),
+                A.RandomGamma(p=0.0),
+                A.ImageCompression(quality_lower=75, p=0)
             ]  # transforms
             self.transform =A.Compose(T)
 
@@ -34,13 +34,8 @@ class Albumentations:
 
     def run(self, im, p=1.0):
         if self.transform and tf.random.uniform((),0,1) < p:
-            # image=im.numpy().astype(np.uint8)
-            new = self.transform(image=im)
+            new = self.transform(image=im.numpy())
             im = new['image']
-            from matplotlib import pyplot as plt
-            plt.imshow(im)
-            plt.show()
-
         return im
 
 
@@ -68,13 +63,8 @@ class Augmentation:
         return im
 
     def __call__(self, img, labels, masks, p=1.0):
-        file_path = '/home/ronen/devel/PycharmProjects/shapes-dataset/dataset/train/images/img_000000.jpg'
+        img = tf.py_function(self.albumentations.run, [tf.cast(img*255, tf.uint8)], Tout=np.uint8)
 
-        img = tf.io.read_file(file_path)
-        img = tf.io.decode_jpeg(img, channels=3)
-        img = tf.py_function(self.albumentations.run, [img*255], Tout=np.uint8)
-
-        # img = tf.py_function(self.augment_hsv, [img, self.hsv_h, self.hsv_s, self.hsv_v], Tout=tf.uint8)
         if tf.random.uniform((),0,1) < self.flipud:
             img = tf.image.flip_left_right(img)
             # if nl:
