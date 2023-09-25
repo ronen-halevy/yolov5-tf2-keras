@@ -4,7 +4,7 @@
 #   Copyright (C) 2022 . All rights reserved.
 #
 #   File name   : create_dataset.py
-#   Author      : ronen halevy 
+#   Author      : ronen halevy
 #   Created date:  10/19/22
 #   Description :
 #
@@ -23,6 +23,8 @@ import math
 import random
 import numpy as np
 from PIL import ExifTags, Image, ImageOps
+
+from utils.segment.tf_augmentations import Augmentation
 
 for orientation in ExifTags.TAGS.keys():
     if ExifTags.TAGS[orientation] == 'Orientation':
@@ -65,7 +67,7 @@ def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
     return mask # shape: [img_size]
 
 class CreateDataset:
-    def __init__(self, imgsz, mosaic4, augment, degrees, translate, scale, shear, perspective):
+    def __init__(self, imgsz, mosaic4, augment, degrees, translate, scale, shear, perspective,hgain, sgain, vgain, flipud, fliplr):
         self.mosaic_border = [-imgsz // 2,
                               -imgsz // 2]  # mosaic center placed randimly at [-border, 2 * imgsz + border]
         self.imgsz = imgsz
@@ -73,9 +75,18 @@ class CreateDataset:
         self.augment=augment
         self.degrees = degrees
         self.translate = translate
+        # affaine params:
         self.scale = scale
         self.shear = shear
         self.perspective = perspective
+        # # augmentation params:
+        # self.hsv_h=hgain
+        # self.hsv_s=sgain
+        # self.hsv_v=vgain
+        # self.flipud = flipud
+        # self.fliplr = fliplr
+        self.augmentation = Augmentation(hgain, sgain, vgain, flipud, fliplr)
+
 
     def affaine_transform(self, img, M):
         # img = cv2.warpAffine(img.numpy(), M[:2].numpy(), dsize=(1280, 1280), borderValue=(114, 114, 114))
@@ -94,7 +105,7 @@ class CreateDataset:
         :param dst_xy:
         :type dst_xy:
         :return:
-        :rtype: 
+        :rtype:
         """
         y_range = tf.range(dst_xy[2], dst_xy[3])[..., None]
         y_ind = tf.tile(y_range, [1, dst_xy[1] - dst_xy[0]])
@@ -332,10 +343,11 @@ class CreateDataset:
         # of loss calculation when mask-ratio=1.
 
         nh, nw = (size[0] // downsample_ratio, size[1] // downsample_ratio)
-        #expand - mult - squeeze:
-        masks = tf.squeeze(tf.image.resize(masks[..., None], [nh, nw]), axis=3) # shape: [nmasks, 160, 160]
+        masks = tf.squeeze(tf.image.resize(masks[..., None], [nh, nw]), axis=3) # expand-mult-sqeuuze
 
-        # sort masks, set pixels value per mask, max reduce to merge:
+        # shape: [nmasks, 160, 160]
+        # masks = tf.concat([ms])
+        # sort masks in arreas descending order - larger first
         areas = tf.math.reduce_sum(masks, axis=[1, 2])  # shape: [nmasks]
         index = tf.argsort(areas, axis=-1, direction='DESCENDING', stable=False, name=None)  # shape: [nmasks]
         masks = tf.gather(masks, index, axis=0)  # shape: [nmasks]
@@ -387,8 +399,13 @@ class CreateDataset:
             #                          fn_output_signature=tf.TensorSpec(shape=[1000, 3], dtype=tf.float32, ));
 
         masks = self.polygons2masks(segments, size, is_ragged)
+        # img = tf.cast(img, tf.uint8)
+
+
 
         labels = xyxy2xywhn(labels, w=640, h=640, clip=True, eps=1e-3)  # return xywh normalized
+        if self.augment:
+            img, labels, masks = self.augmentation(img, labels, masks)
         labels = tf.RaggedTensor.from_tensor(labels, padding=-1)
         return (img, labels, filename, masks,)
 
