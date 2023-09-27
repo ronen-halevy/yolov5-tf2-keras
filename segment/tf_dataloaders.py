@@ -43,7 +43,7 @@ from PIL import ExifTags, Image, ImageOps
 import cv2
 from torch.utils.data import DataLoader, Dataset, dataloader, distributed
 from tqdm import tqdm
-from utils.general import LOGGER, colorstr
+# from utils.general import LOGGER, colorstr
 
 # from tensorflow.python.ops.numpy_ops import np_config
 #
@@ -198,6 +198,9 @@ class LoadImagesAndLabelsAndMasks:
             img4, labels4, segments4  =self.load_mosaic(index)
             return img4, labels4, segments4
 
+    def iter(self):
+        for i in self.indices :
+            yield self[i]
 
     def decode_resize(self, filename, size):
         img_st = tf.io.read_file(filename)
@@ -364,10 +367,8 @@ class LoadImagesAndLabelsAndMasks:
         bboxes = tf.concat([targets[:, 0:1], bboxes], axis=-1)
         segments = segments[indices]
         return im, bboxes, segments
-    # @tf.function
-    def load_mosaic(self, index, ): # filenames, size, y_labels, y_segments):
-        a= tf.constant([3])
 
+    def load_mosaic(self, index, ): # filenames, size, y_labels, y_segments):
         # labels4, segments4 = [], []
         segments4 = 0
         labels4=[]
@@ -449,76 +450,11 @@ class LoadImagesAndLabelsAndMasks:
                                                            shear=self.shear,
                                                            perspective=self.perspective,
                                                            border=self.mosaic_border)  # border to remove
+        segments4= tf.RaggedTensor.from_tensor(segments4)
+        labels4= tf.RaggedTensor.from_tensor(labels4)
+
         return img4, labels4, segments4
 
-        # Convert 1 segment label to 1 box label, applying inside-image constraint, i.e. (xy1, xy2, ...) to (xyxy)
-        # x, y = segment.T  # segment xy
-        # inside = (x >= 0) & (y >= 0) & (x <= width) & (y <= height)
-        # x, y, = x[inside], y[inside]
-        # return np.array([x.min(), y.min(), x.max(), y.max()]) if any(x) else np.zeros((4))  # xyxy
-
-
-    # def create_entries(self, path):
-    #     self.im_files = self._make_file(path, IMG_FORMATS)
-    #
-    #     self.label_files = self._img2label_paths(self.im_files)  # labels
-    #     # image_files, lables, segments = zip(*[self._create_entries(idx, self.im_file, self.label_file) for idx, (self.im_file, self.label_file) in enumerate(zip(self.im_files, self.label_files))])
-    #     image_files = []
-    #     labels = []
-    #     segments = []
-    #     for idx, (self.im_file, self.label_file) in enumerate(zip(self.im_files, self.label_files)):
-    #         image_file, label, segment = self._create_entry(idx, self.im_file, self.label_file)
-    #         image_files.append(image_file)
-    #         labels.append(label)
-    #         segments.append(segment)
-    #     return image_files, labels, segments
-
-    # def prepare_mosaic4_entries(self, image_files, labels, segments):
-    #     image_files_mosaic = []
-    #     labels_mosaic = []
-    #     segments_mosaic = []
-    #     for entry_idx, (im_file, label, segment) in enumerate(zip(image_files, labels, segments)):
-    #         mos_sel_indices = [1,2,3]#random.choices(range(len(image_files)), k=3)  # select 3 reandom images todo!!!
-    #         files4 = [image_files[0]] # todo remove - always 0!!
-    #         labels4 = [labels[0]]
-    #         segments4 = [segments[0]]
-    #
-    #         for mos_ind in mos_sel_indices:
-    #             files4.append(image_files[mos_ind])
-    #             labels4.append(labels[mos_ind])
-    #             segments4.append(segments[mos_ind])
-    #         image_files_mosaic.append(files4)
-    #         # img_index =
-    #
-    #         labels_mosaic.append(labels4)
-    #         segments_mosaic.append(segments4)
-    #     return image_files_mosaic, labels_mosaic, segments_mosaic
-
-
-    # def load_data(self,
-    #          path, mosaic):
-    #     # self.img_size = img_size
-    #     # self.augment = augment
-    #     # self.hyp = hyp
-    #     # self.image_weights = image_weights
-    #     # self.rect = False if image_weights else rect
-    #     # self.mosaic = self.augment and not self.rect  # load 4 images at a time into a mosaic (only during training)
-    #     # self.mosaic_border = [-img_size // 2, -img_size // 2]
-    #     # self.stride = stride
-    #     # self.path = path
-    #     # self.albumentations = Albumentations(size=img_size) if augment else None
-    #     image_files,labels,segments= self.create_entries(path)
-    #
-    #     if mosaic:
-    #         image_files_mosaic, labels_mosaic, segments_mosaic=self.prepare_mosaic4_entries(image_files, labels, segments)
-    #         image_files = image_files_mosaic
-    #         labels = labels_mosaic
-    #         segments = segments_mosaic
-    #
-    #
-    #     # image_files: list, str, size ds_size, labels: list of arrays(nt, 6), size: ds_size segments: list of arrays(nt, 6), size: ds_size
-    #
-    #     return image_files, labels, segments
 
 
     # for training/testing
@@ -538,9 +474,28 @@ if __name__ == '__main__':
     loader =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective,hgain, sgain, vgain, flipud, fliplr)
 
 
+    dataset = tf.data.Dataset.from_generator(loader.iter,
+                                             output_signature=(
+                                                 tf.TensorSpec(shape=[imgsz[0], imgsz[1], 3], dtype=tf.float32, ),
+                                                 tf.RaggedTensorSpec(shape=[None, 5], dtype=tf.float32,
+                                                                     ragged_rank=1),
+                                                 tf.RaggedTensorSpec(shape=[None, 1000, 2], dtype=tf.float32,
+                                                                     ragged_rank=1)
+                                             )
+                                             )
 
 
-    img4, labels4, segments4 = loader[0]
+
+    for dd in dataset:
+        pass
+        # print(dd)
+
+
+
+    # dataset = tf.data.Dataset.from_generator(loader.iter,
+    #                                          output_types=tf.int32,
+    #                                          output_shapes=())
+    # img4, labels4, segments4 = loader[0]
     # res = loader[1]
     # res = loader[2]
     # res = loader[3]
