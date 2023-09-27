@@ -51,6 +51,8 @@ from tqdm import tqdm
 from utils.tf_general import segment2box, xyxy2xywhn, segments2boxes_exclude_outbound_points
 from utils.tf_augmentations import box_candidates
 
+from utils.segment.tf_augmentations import Augmentation
+
 
 IMG_FORMATS = 'bmp', 'dng', 'jpeg', 'jpg', 'mpo', 'png', 'tif', 'tiff', 'webp', 'pfm'  # include image suffixes
 
@@ -61,7 +63,7 @@ for orientation in ExifTags.TAGS.keys():
 
 # class LoadTrainData:
 class LoadImagesAndLabelsAndMasks:
-    def __init__(self, path, imgsz, mosaic,augment, degrees, translate, scale, shear, perspective,hgain, sgain, vgain, flipud, fliplr):
+    def __init__(self, path, imgsz, mosaic,augment, degrees, translate, scale, shear, perspective):
         self.im_files = self._make_file(path, IMG_FORMATS)
 
         self.label_files = self._img2label_paths(self.im_files)  # labels
@@ -86,7 +88,7 @@ class LoadImagesAndLabelsAndMasks:
         self.mosaic_border = [-imgsz[0] // 2,
                               -imgsz[1] // 2]  # mosaic center placed randimly at [-border, 2 * imgsz + border]
         self.imgsz = imgsz
-        self.augment, self.degrees, self.translate, self.scale, self.shear, self.perspective, self.hgain, self.sgain, self.vgain, self.flipud, self.fliplr=augment, degrees, translate, scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr
+        self.augment, self.degrees, self.translate, self.scale, self.shear, self.perspective=augment, degrees, translate, scale, shear, perspective
         # self.augment = augment
         # self.degrees = degrees
         # self.translate = translate
@@ -456,6 +458,67 @@ class LoadImagesAndLabelsAndMasks:
         return img4, labels4, segments4
 
 
+def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
+    """
+    Args:
+        img_size (tuple): The image size.
+        polygons: [1, npoints, 2]
+    """
+    polygon = tf.cond(is_ragged, true_fn=lambda:polygon, false_fn=lambda: polygon)
+
+    mask = np.zeros(img_size, dtype=np.uint8)
+    cv2.fillPoly(mask, np.asarray(polygon), color=1)
+    return mask # shape: [img_size]
+class CreateData:
+    def __init__(self, imgsz, augment, hgain, sgain, vgain, flipud, fliplr):
+        self.imgsz = imgsz
+        self.augment=augment
+        self.augmentation = Augmentation(hgain, sgain, vgain, flipud, fliplr)
+
+
+    def polygons2masks(self, segments, size, is_ragged):
+        downsample_ratio = 4  # yolo training requires downsampled by 4 mask
+        color = 1  # default value 1 is later modifed to a color per mask
+        segments = tf.cast(segments, tf.int32)
+        # polygons2mask done as loop for a seperatee mask per segment. Merge masks after size-sorting and coloring:
+        masks = tf.map_fn(fn=lambda segment:
+        tf.py_function(polygons2mask, [is_ragged, size, segment[None], color, downsample_ratio],
+                       Tout=tf.float32), elems=segments,
+                          fn_output_signature=tf.TensorSpec(shape=[640, 640], dtype=tf.float32, ));
+        # NOTE: fillPoly firstly then resize is trying the keep the same way
+        # of loss calculation when mask-ratio=1.
+
+        nh, nw = (size[0] // downsample_ratio, size[1] // downsample_ratio)
+        masks = tf.squeeze(tf.image.resize(masks[..., None], [nh, nw]), axis=3) # expand-mult-sqeuuze
+
+        # shape: [nmasks, 160, 160]
+        # masks = tf.concat([ms])
+        # sort masks in arreas descending order - larger first
+        areas = tf.math.reduce_sum(masks, axis=[1, 2])  # shape: [nmasks]
+        index = tf.argsort(areas, axis=-1, direction='DESCENDING', stable=False, name=None)  # shape: [nmasks]
+        masks = tf.gather(masks, index, axis=0)  # shape: [nmasks]
+        # set value to masks pixels - increasing cpint from 1 to index, (=num of masks):
+        index = tf.sort(index, axis=-1, direction='ASCENDING', name=None)
+        index = tf.cast(index, tf.float32) + 1.
+        masks = tf.math.multiply(masks, tf.reshape(index, [-1, 1, 1])) # mult by index to set value
+        masks = tf.reduce_max(masks, axis=0) # reduce to merge and keep smallest mask pixes if overlap
+        return masks
+
+    def __call__(self, img, labels, segments):
+        is_ragged=True
+        masks = self.polygons2masks(segments, self.imgsz, is_ragged)
+        # img = tf.cast(img, tf.uint8)
+
+
+
+        labels = xyxy2xywhn(labels, w=640, h=640, clip=True, eps=1e-3)  # return xywh normalized
+        if self.augment:
+            img, labels, masks = self.augmentation(img, labels, masks)
+            img = tf.cast(img, tf.float32)/255
+        # labels = tf.RaggedTensor.from_tensor(labels, padding=-1)
+        return (img, labels,  masks,)
+
+
 
     # for training/testing
 if __name__ == '__main__':
@@ -471,9 +534,7 @@ if __name__ == '__main__':
     hgain, sgain, vgain, flipud, fliplr =hyp['hsv_h'],hyp['hsv_s'],hyp['hsv_v'],hyp['flipud'],hyp['fliplr']
     augment=True
 
-    loader =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective,hgain, sgain, vgain, flipud, fliplr)
-
-
+    loader =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective)
     dataset = tf.data.Dataset.from_generator(loader.iter,
                                              output_signature=(
                                                  tf.TensorSpec(shape=[imgsz[0], imgsz[1], 3], dtype=tf.float32, ),
@@ -484,9 +545,12 @@ if __name__ == '__main__':
                                              )
                                              )
 
+    augment=True
+    dp = CreateData(imgsz,augment,hgain, sgain, vgain, flipud, fliplr)
+    dataset=dataset.map(lambda img, lables, segments: dp(img, lables, segments))
 
 
-    for dd in dataset:
+    for img, labels, mask in dataset:
         pass
         # print(dd)
 
