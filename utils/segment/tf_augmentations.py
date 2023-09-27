@@ -64,6 +64,7 @@ class Augmentation:
 
     def __call__(self, img, labels, masks, p=1.0):
         img = tf.py_function(self.albumentations.run, [tf.cast(img*255, tf.uint8)], Tout=np.uint8)
+        img = tf.py_function(self.augment_hsv, [img, self.hsv_h, self.hsv_s, self.hsv_v], Tout=tf.uint8)
 
         if tf.random.uniform((),0,1) < self.flipud:
             img = tf.image.flip_left_right(img)
