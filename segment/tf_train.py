@@ -47,7 +47,7 @@ from utils.general import (LOGGER, TQDM_BAR_FORMAT, check_dataset, check_file, c
                            print_args, print_mutation, yaml_save)
 from utils.loggers import GenericLogger
 from utils.plots import plot_evolve, plot_labels
-from utils.segment.dataloaders import create_dataloader
+from tf_dataloaders import create_dataloader
 from tf_loss import ComputeLoss
 from utils.segment.metrics import KEYS, fitness
 from utils.segment.plots import plot_images_and_masks, plot_results_with_masks
@@ -99,11 +99,11 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     LOGGER.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
     opt.hyp = hyp.copy()  # for saving hyps to checkpoints
 
-    degrees = opt.hyp['degrees']
-    translate = opt.hyp['translate']
-    scale = opt.hyp['scale']
-    shear = opt.hyp['shear']
-    perspective = opt.hyp['perspective']
+    # affine params:
+    degrees,translate,scale,shear,perspective = hyp['degrees'],hyp['translate'], hyp['scale'],hyp['shear'],hyp['perspective']
+    # augmentation params:
+    hgain, sgain, vgain, flipud, fliplr =hyp['hsv_h'],hyp['hsv_s'],hyp['hsv_v'],hyp['flipud'],hyp['fliplr']
+
 
     # Save run settings
     if not evolve:
@@ -125,14 +125,19 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     data_dict = data_dict or check_dataset(data)  # check if None
     train_path, val_path = data_dict['train'], data_dict['val']
 
-    ltd = LoadTrainData()
+    # ltd = LoadTrainData()
     mosaic=True
-    train_image_files, train_labels, train_segments = ltd.load_data(train_path, mosaic)
-    create_dataset=CreateDataset(imgsz[0], degrees, translate, scale, shear, perspective)
-    ds_train=create_dataset(train_image_files, train_labels, train_segments)
-    val_image_files, val_labels, val_segments = ltd.load_data(val_path, mosaic)
+    augment = True
+    # train_image_files, train_labels, train_segments = ltd.load_data(train_path, mosaic)
+    # create_dataset=CreateDataset(imgsz[0], degrees, translate, scale, shear, perspective)
+    # ds_train=create_dataset(train_image_files, train_labels, train_segments)
+    # val_image_files, val_labels, val_segments = ltd.load_data(val_path, mosaic)
 
-    ds_val=create_dataset(val_image_files, val_labels, val_segments)
+    # ds_val=create_dataset(val_image_files, val_labels, val_segments)
+    ds_train = create_dataloader(train_path, batch_size,imgsz, mosaic, augment, degrees, translate,
+                                 scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr)
+
+
 
     nc = 1 if single_cls else int(data_dict['nc'])  # number of classes
     names = {0: 'item'} if single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
@@ -202,7 +207,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
     for epoch in range(epochs):
         # train:
-        for batch, (bimages,  btargets, bfilename, bshape, bmasks) in enumerate(ds_train):
+        for batch, (bimages,  btargets, bmasks) in enumerate(ds_train):
 
 
             # concat image index word to targets. result targets shape: [nt, 6] where nt total of target objectd
