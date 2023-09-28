@@ -278,16 +278,17 @@ class LoadImagesAndLabelsAndMasks:
         # img = tf.keras.preprocessing.image.apply_affine_transform(img,theta=0,tx=0,ty=0,shear=0,zx=1,zy=1,row_axis=0,col_axis=1,channel_axis=2,fill_mode='nearest',cval=0.0,order=1 )
         return img
 
-    def resample_segments(self, x, seg_coords):
+    def resample_segments(self, ninterp, seg_coords):
         seg_coords = seg_coords.to_tensor()
+        seg_coords = tf.concat([seg_coords, seg_coords[0:1, :]], axis=0)  # close polygon's loop before interpolation
+        x_ref_max = seg_coords.shape[0] - 1 # x max
+        x = tf.cast(tf.linspace(0., x_ref_max, ninterp), dtype=tf.float32)  # n interpolation points. n points array
 
-        seg_coords = tf.concat([seg_coords, seg_coords[0:1, :]], axis=0)  # last polygon's section for interpolation
-
-        # y_ref=tf.reshape(y_ref.to_tensor(), [-1])
+        # interpolate polygon's to N points - loop on x & y
         segment = [tfp.math.interp_regular_1d_grid(
-            x=x,
-            x_ref_min=0,  # tf.constant(0.),
-            x_ref_max=4,  # shape0,  # tf.constant(len(s)),
+            x=x, # N points range
+            x_ref_min=0,
+            x_ref_max=x_ref_max,  # shape0,  # tf.constant(len(s)),
             y_ref=seg_coords[..., idx],
             axis=-1,
             fill_value='constant_extension',
@@ -296,12 +297,11 @@ class LoadImagesAndLabelsAndMasks:
             grid_regularizing_transform=None,
             name='interp_segment'
         ) for idx in range(2)]
-        ####
         segment = tf.concat([segment], axis=0)
         segment = tf.reshape(segment, [2, -1])
         segment = tf.transpose(segment)
 
-        segment = tf.concat([segment, tf.ones([1000, 1], dtype=tf.float32)], axis=-1)
+        segment = tf.concat([segment, tf.ones([ninterp, 1], dtype=tf.float32)], axis=-1)
         return segment
     def random_perspective(self, im,
                            targets=(),
@@ -351,10 +351,10 @@ class LoadImagesAndLabelsAndMasks:
             else:  # affine
                 im = tf.py_function(self.affaine_transform, [im, M], Tout=tf.float32)
 
-        if True:  # if n:
-            x = tf.cast(tf.linspace(0., 5 - 1, 1000), dtype=tf.float32)  # n interpolation points. n points array
+        if True:  # if n: # Todo clean this
+            ninterp=1000
             # before resample, segments are ragged (variable npoints per segment), accordingly tf.map_fn required:
-            segments = tf.map_fn(fn=lambda segment: self.resample_segments(x, segment), elems=segments,
+            segments = tf.map_fn(fn=lambda segment: self.resample_segments(ninterp, segment), elems=segments,
                                  fn_output_signature=tf.TensorSpec(shape=[1000, 3], dtype=tf.float32,
                                                                    ));
             segments = tf.matmul(segments, tf.cast(tf.transpose(M), tf.float32))  # transform
@@ -378,16 +378,9 @@ class LoadImagesAndLabelsAndMasks:
 
         xc = tf.random.uniform((), -self.mosaic_border[0], 2 * self.imgsz[0] + self.mosaic_border[0], dtype=tf.int32)
         yc = tf.random.uniform((), -self.mosaic_border[1], 2 * self.imgsz[1] + self.mosaic_border[1], dtype=tf.int32)
-        #
-        #          for x in
-        #           self.mosaic_border)  # mosaic center x, y
-        # tf.split(xc_yc, 2, axis=0)
 
-        # indices =tf.random.uniform([3], 0, len(self.indices)-1, dtype=tf.int32)  # 3 additional image indices #debug:  [0] + [1,2,3] #r
-        # indices = tf.squeeze(tf.concat([index[None][None], indices[None]], axis=1),axis=0)
         indices = random.choices(self.indices, k=3)  # 3 additional image indices
         indices.insert(0,index)
-        # yc, xc = 496, 642  # ronen debug todo
 
         img4 = tf.fill(
             (self.imgsz[0] * 2, self.imgsz[1] * 2, 3), 114 / 255
@@ -419,7 +412,7 @@ class LoadImagesAndLabelsAndMasks:
             padw = x1a - x1b  # shift of src scattered image from mosaic left end. Used for bbox and segment alignment.
             padh = y1a - y1b  # shift of src scattered image from mosaic top end. Used for bbox and segment alignment.
 
-            # resize normalized and add pad values to bboxes and segments:
+            # arrange boxes & segments: scale normalized coords and shift location to mosaic zone by padw, padh:
             y_l = self.xywhn2xyxy(self.y_labels[index], w, h, padw, padh)
             # map_fn since segments is a ragged tensor:
             y_s = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=self.y_segments[index],
@@ -515,6 +508,24 @@ class CreateData:
         return (img, labels,  masks,)
 
 
+def create_dataloader(data_path, batch_size, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr):
+    loader =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective)
+    # loader[0]
+    dataset = tf.data.Dataset.from_generator(loader.iter,
+                                             output_signature=(
+                                                 tf.TensorSpec(shape=[imgsz[0], imgsz[1], 3], dtype=tf.float32, ),
+                                                 tf.RaggedTensorSpec(shape=[None, 5], dtype=tf.float32,
+                                                                     ragged_rank=1),
+                                                 tf.RaggedTensorSpec(shape=[None, 1000, 2], dtype=tf.float32,
+                                                                     ragged_rank=1)
+                                             )
+                                             )
+
+    dp = CreateData(imgsz,augment,hgain, sgain, vgain, flipud, fliplr)
+    dataset=dataset.map(lambda img, lables, segments: dp(img, lables, segments))
+    dataset=dataset.batch(batch_size)
+
+    return dataset
 
     # for training/testing
 if __name__ == '__main__':
@@ -529,23 +540,10 @@ if __name__ == '__main__':
     degrees, translate, scale, shear, perspective = hyp['degrees'],hyp['translate'],hyp['scale'],hyp['shear'],hyp['perspective']
     hgain, sgain, vgain, flipud, fliplr =hyp['hsv_h'],hyp['hsv_s'],hyp['hsv_v'],hyp['flipud'],hyp['fliplr']
     augment=True
+    batch_size=2
+    dataset = create_dataloader(data_path, batch_size, mgsz, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr)
 
-    loader =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective)
-    loader[0]
-    dataset = tf.data.Dataset.from_generator(loader.iter,
-                                             output_signature=(
-                                                 tf.TensorSpec(shape=[imgsz[0], imgsz[1], 3], dtype=tf.float32, ),
-                                                 tf.RaggedTensorSpec(shape=[None, 5], dtype=tf.float32,
-                                                                     ragged_rank=1),
-                                                 tf.RaggedTensorSpec(shape=[None, 1000, 2], dtype=tf.float32,
-                                                                     ragged_rank=1)
-                                             )
-                                             )
-
-    augment=True
-    dp = CreateData(imgsz,augment,hgain, sgain, vgain, flipud, fliplr)
-    dataset=dataset.map(lambda img, lables, segments: dp(img, lables, segments))
-
+    # dataset=dataset.batch(2)
 
     for img, labels, mask in dataset:
         pass
