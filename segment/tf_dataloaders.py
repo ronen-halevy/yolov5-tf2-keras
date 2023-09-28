@@ -69,22 +69,17 @@ class LoadImagesAndLabelsAndMasks:
         self.label_files = self._img2label_paths(self.im_files)  # labels
 
         self.image_files = []
-        labels = []
-        segments = []
+        self.labels = []
+        self.segments = []
         for idx, (self.im_file, self.label_file) in enumerate(zip(self.im_files, self.label_files)):
             image_file, label, segment = self._create_entry(idx, self.im_file, self.label_file)
             self.image_files.append(image_file)
-            labels.append(label)
-            segments.append(segment)
+            self.labels.append(label)
+            self.segments.append(segment)
 
         self.indices =  range(len(self.image_files))
         self.mosaic=mosaic
         self.debug = debug
-
-
-
-        self.y_segments = tf.ragged.constant(list(segments)) # [nimg, nsegments, npoints, 2] ,nsegments, npoints vary # TODO update for mosaic
-        self.y_labels = tf.ragged.constant(list(labels))  #  [nimg, nlabels, 5], nlabels vary
 
         self.mosaic_border = [-imgsz[0] // 2,
                               -imgsz[1] // 2]  # mosaic center placed randimly at [-border, 2 * imgsz + border]
@@ -103,7 +98,6 @@ class LoadImagesAndLabelsAndMasks:
 
     def _create_entry(self, idx, im_file, lb_file, prefix=''):
         nm, nf, ne, nc, msg, segments = 0, 0, 0, 0, '', []  # number (missing, found, empty, corrupt), message, segments
-        # try:
         # verify images
         im = Image.open(im_file)
         im.verify()  # PIL verify
@@ -182,9 +176,38 @@ class LoadImagesAndLabelsAndMasks:
     def __getitem__(self, index):
         index = self.indices[index]
 
-        if self.mosaic:
-            img4, labels4, segments4  =self.load_mosaic(index)
-            return img4, labels4, segments4
+        mosaic = random.random() < self.mosaic
+        if self.augment and mosaic:
+            img, labels, segments  =self.load_mosaic(index)
+        else:
+            img = self.decode_resize(self.im_files[index], self.imgsz)
+            segments= tf.ragged.constant( self.segments[index])
+            segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, self.imgsz[0], self.imgsz[1], padw=0, padh=0), elems=segments,
+                            fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
+                                                                    ragged_rank=1));
+            labels = self.xywhn2xyxy(self.labels[index], self.imgsz[0], self.imgsz[1], padw=0, padh=0)
+            if self.augment:
+                img, labels, segments = self.random_perspective(img,
+                                                                   labels,
+                                                                   segments,
+                                                                   degrees=self.degrees,
+                                                                   translate=self.translate,
+                                                                   scale=self.scale,
+                                                                   shear=self.shear,
+                                                                   perspective=self.perspective,
+                                                                   border=self.mosaic_border)  # border to remove
+                is_ragged = False # segments not ragged, but upsampled to constant num of points
+
+            else:
+                # ragged to tensor for convinence:
+                labels = labels.to_tensor() # shape: [nlabels, 5]
+                is_ragged = True
+
+        segments= tf.RaggedTensor.from_tensor(segments)
+        labels= tf.RaggedTensor.from_tensor(labels)
+        return img, labels, segments
+
+
 
     def iter(self):
         for i in self.indices :
@@ -346,11 +369,11 @@ class LoadImagesAndLabelsAndMasks:
             segments = tf.gather(segments, [0, 1], axis=-1)
 
             bboxes = segments2boxes_exclude_outbound_points(segments)
-        indices = box_candidates(box1=tf.transpose(targets.to_tensor()[..., 1:]) * s, box2=tf.transpose(bboxes),
+        indices = box_candidates(box1=tf.transpose(targets[..., 1:]) * s, box2=tf.transpose(bboxes),
                                  area_thr=0.01)
         bboxes = bboxes[indices]
 
-        targets = targets.to_tensor()[indices]
+        targets = targets[indices]
         bboxes = tf.concat([targets[:, 0:1], bboxes], axis=-1)
         segments = segments[indices]
         return im, bboxes, segments
@@ -401,9 +424,10 @@ class LoadImagesAndLabelsAndMasks:
             padh = y1a - y1b  # shift of src scattered image from mosaic top end. Used for bbox and segment alignment.
 
             # arrange boxes & segments: scale normalized coords and shift location to mosaic zone by padw, padh:
-            y_l = self.xywhn2xyxy(self.y_labels[index], w, h, padw, padh)
+            y_l = self.xywhn2xyxy(self.labels[index], w, h, padw, padh)
             # map_fn since segments is a ragged tensor:
-            y_s = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=self.y_segments[index],
+            segments= tf.ragged.constant( self.segments[index])
+            y_s = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=segments,
                             fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
                                                                     ragged_rank=1));
             # concat 4 mosaic elements together. idx=0 is the first concat element:
@@ -429,8 +453,6 @@ class LoadImagesAndLabelsAndMasks:
                                                            shear=self.shear,
                                                            perspective=self.perspective,
                                                            border=self.mosaic_border)  # border to remove
-        segments4= tf.RaggedTensor.from_tensor(segments4)
-        labels4= tf.RaggedTensor.from_tensor(labels4)
 
         return img4, labels4, segments4
 
@@ -484,34 +506,35 @@ class CreateData:
     def __call__(self, img, labels, segments):
         is_ragged=True
         masks = self.polygons2masks(segments, self.imgsz, is_ragged)
-
         labels = xyxy2xywhn(labels, w=640, h=640, clip=True, eps=1e-3)  # return xywh normalized
         if self.augment:
             img, labels, masks = self.augmentation(img, labels, masks)
             img = tf.cast(img, tf.float32)/255
+        # labels=tf.RaggedTensor.from_tensor(labels, padding=-1) # variable num of boxes. can't batch otherwise.
         return (img, labels,  masks,)
 
 
 def create_dataloader(data_path, batch_size, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr, debug=False):
     loader =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective)
-    # loader[0]
+
     dataset = tf.data.Dataset.from_generator(loader.iter,
                                              output_signature=(
                                                  tf.TensorSpec(shape=[imgsz[0], imgsz[1], 3], dtype=tf.float32, ),
                                                  tf.RaggedTensorSpec(shape=[None, 5], dtype=tf.float32,
                                                                      ragged_rank=1),
                                                  tf.RaggedTensorSpec(shape=[None, 1000, 2], dtype=tf.float32,
-                                                                     ragged_rank=1)
+                                                                     ragged_rank=1))
                                              )
-                                             )
-    if debug:
+
+    if True:#debug:
         for idx in range(len(loader)):
-            loader[idx]
+            img, label, seg = loader[idx]
+            pass
 
 
     dp = CreateData(imgsz,augment,hgain, sgain, vgain, flipud, fliplr)
     if debug:
-        for img, lables, segments in dataset:
+        for img , lables, segments in dataset:
             img, lables, segments=dp(img, lables, segments)
 
     dataset=dataset.map(lambda img, lables, segments: dp(img, lables, segments))
@@ -533,7 +556,7 @@ if __name__ == '__main__':
     augment=True
     batch_size=2
     debug=True
-    dataset = create_dataloader(data_path, batch_size, mgsz, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr, debug)
+    dataset = create_dataloader(data_path, batch_size, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr, debug)
 
 
     for img, labels, mask in dataset:
