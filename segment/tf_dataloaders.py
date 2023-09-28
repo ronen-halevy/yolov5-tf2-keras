@@ -63,11 +63,11 @@ for orientation in ExifTags.TAGS.keys():
 
 # class LoadTrainData:
 class LoadImagesAndLabelsAndMasks:
-    def __init__(self, path, imgsz, mosaic,augment, degrees, translate, scale, shear, perspective):
+    def __init__(self, path, imgsz, mosaic,augment, degrees, translate, scale, shear, perspective, debug=False):
         self.im_files = self._make_file(path, IMG_FORMATS)
 
         self.label_files = self._img2label_paths(self.im_files)  # labels
-        # image_files, lables, segments = zip(*[self._create_entries(idx, self.im_file, self.label_file) for idx, (self.im_file, self.label_file) in enumerate(zip(self.im_files, self.label_files))])
+
         self.image_files = []
         labels = []
         segments = []
@@ -76,33 +76,21 @@ class LoadImagesAndLabelsAndMasks:
             self.image_files.append(image_file)
             labels.append(label)
             segments.append(segment)
-        # return image_files, labels, segments
+
         self.indices =  range(len(self.image_files))
         self.mosaic=mosaic
+        self.debug = debug
+
 
 
         self.y_segments = tf.ragged.constant(list(segments)) # [nimg, nsegments, npoints, 2] ,nsegments, npoints vary # TODO update for mosaic
         self.y_labels = tf.ragged.constant(list(labels))  #  [nimg, nlabels, 5], nlabels vary
 
-        #######
         self.mosaic_border = [-imgsz[0] // 2,
                               -imgsz[1] // 2]  # mosaic center placed randimly at [-border, 2 * imgsz + border]
         self.imgsz = imgsz
         self.augment, self.degrees, self.translate, self.scale, self.shear, self.perspective=augment, degrees, translate, scale, shear, perspective
-        # self.augment = augment
-        # self.degrees = degrees
-        # self.translate = translate
-        # # affaine params:
-        # self.scale = scale
-        # self.shear = shear
-        # self.perspective = perspective
-        # # # augmentation params:
-        # # self.hsv_h=hgain
-        # # self.hsv_s=sgain
-        # # self.hsv_v=vgain
-        # # self.flipud = flipud
-        # # self.fliplr = fliplr
-        # self.augmentation = Augmentation(hgain, sgain, vgain, flipud, fliplr)
+
 
     def exif_size(self, img):
         # Returns exif-corrected PIL size
@@ -189,14 +177,12 @@ class LoadImagesAndLabelsAndMasks:
         except Exception as e:
             raise Exception(f'Error loading data from {path}: {e}') from e
 
+    def __len__(self):
+        return len(self.im_files)
     def __getitem__(self, index):
-        index = self.indices[index]  # linear, shuffled, or image_weights
+        index = self.indices[index]
 
-
-        masks = []
         if self.mosaic:
-            # Load mosaic
-            # img, labels, segments =
             img4, labels4, segments4  =self.load_mosaic(index)
             return img4, labels4, segments4
 
@@ -273,7 +259,7 @@ class LoadImagesAndLabelsAndMasks:
     def affaine_transform(self, img, M):
         # img = cv2.warpAffine(img.numpy(), M[:2].numpy(), dsize=(1280, 1280), borderValue=(114, 114, 114))
         img = cv2.warpAffine(np.asarray(img), M[:2].numpy(), dsize=(640, 640),
-                             borderValue=(114. / 255, 114. / 255, 114. / 255))
+                             borderValue=(114. / 255, 114. / 255, 114. / 255)) # grey
 
         # img = tf.keras.preprocessing.image.apply_affine_transform(img,theta=0,tx=0,ty=0,shear=0,zx=1,zy=1,row_axis=0,col_axis=1,channel_axis=2,fill_mode='nearest',cval=0.0,order=1 )
         return img
@@ -312,12 +298,11 @@ class LoadImagesAndLabelsAndMasks:
                            shear=10,
                            perspective=0.0,
                            border=(0, 0)):
-        # torchvision.transforms.RandomAffine(degrees=(-10, 10), translate=(.1, .1), scale=(.9, 1.1), shear=(-10, 10))
         # targets = [cls, xyxy]
         # random.seed(0)
-        tf.random.set_seed(
-            0
-        )  # ronen todo!!
+        # tf.random.set_seed(
+        #     0
+        # )  # ronen todo!!
         height = im.shape[0] + border[0] * 2  # shape(h,w,c)
         width = im.shape[1] + border[1] * 2
 
@@ -381,6 +366,9 @@ class LoadImagesAndLabelsAndMasks:
 
         indices = random.choices(self.indices, k=3)  # 3 additional image indices
         indices.insert(0,index)
+        if self.debug: # determine mosaic
+            yc, xc = 496, 642
+            indices=[0,1,2,3]
 
         img4 = tf.fill(
             (self.imgsz[0] * 2, self.imgsz[1] * 2, 3), 114 / 255
@@ -496,19 +484,15 @@ class CreateData:
     def __call__(self, img, labels, segments):
         is_ragged=True
         masks = self.polygons2masks(segments, self.imgsz, is_ragged)
-        # img = tf.cast(img, tf.uint8)
-
-
 
         labels = xyxy2xywhn(labels, w=640, h=640, clip=True, eps=1e-3)  # return xywh normalized
         if self.augment:
             img, labels, masks = self.augmentation(img, labels, masks)
             img = tf.cast(img, tf.float32)/255
-        # labels = tf.RaggedTensor.from_tensor(labels, padding=-1)
         return (img, labels,  masks,)
 
 
-def create_dataloader(data_path, batch_size, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr):
+def create_dataloader(data_path, batch_size, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr, debug=False):
     loader =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective)
     # loader[0]
     dataset = tf.data.Dataset.from_generator(loader.iter,
@@ -520,14 +504,21 @@ def create_dataloader(data_path, batch_size, imgsz, mosaic, augment, degrees, tr
                                                                      ragged_rank=1)
                                              )
                                              )
+    if debug:
+        for idx in range(len(loader)):
+            loader[idx]
+
 
     dp = CreateData(imgsz,augment,hgain, sgain, vgain, flipud, fliplr)
+    if debug:
+        for img, lables, segments in dataset:
+            img, lables, segments=dp(img, lables, segments)
+
     dataset=dataset.map(lambda img, lables, segments: dp(img, lables, segments))
     dataset=dataset.batch(batch_size)
 
     return dataset
 
-    # for training/testing
 if __name__ == '__main__':
 
     data_path = '/home/ronen/devel/PycharmProjects/shapes-dataset/dataset/train'
@@ -541,22 +532,12 @@ if __name__ == '__main__':
     hgain, sgain, vgain, flipud, fliplr =hyp['hsv_h'],hyp['hsv_s'],hyp['hsv_v'],hyp['flipud'],hyp['fliplr']
     augment=True
     batch_size=2
-    dataset = create_dataloader(data_path, batch_size, mgsz, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr)
+    debug=True
+    dataset = create_dataloader(data_path, batch_size, mgsz, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr, debug)
 
-    # dataset=dataset.batch(2)
 
     for img, labels, mask in dataset:
         pass
-        # print(dd)
 
-
-
-    # dataset = tf.data.Dataset.from_generator(loader.iter,
-    #                                          output_types=tf.int32,
-    #                                          output_shapes=())
-    # img4, labels4, segments4 = loader[0]
-    # res = loader[1]
-    # res = loader[2]
-    # res = loader[3]
 
     pass
