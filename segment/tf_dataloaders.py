@@ -425,10 +425,9 @@ class LoadImagesAndLabelsAndMasks:
             y_s = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=self.y_segments[index],
                             fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
                                                                     ragged_rank=1));
-            # concat 4 mosaic elements 3 times. first take as is (if None):
-            labels4=tf.cond( labels4==None, true_fn= lambda:  y_l, false_fn=lambda : tf.concat([labels4, y_l], axis=0))
+            # concat 4 mosaic elements together. idx=0 is the first concat element:
+            labels4=tf.cond(tf.equal(idx, 0), true_fn= lambda:  y_l, false_fn=lambda : tf.concat([labels4, y_l], axis=0))
             segments4=tf.cond( segments4==None, true_fn= lambda:  y_s, false_fn=lambda : tf.concat([segments4, y_s], axis=0))
-
 
 
         clipped_bboxes = tf.clip_by_value(
@@ -532,6 +531,7 @@ if __name__ == '__main__':
     augment=True
 
     loader =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective)
+    loader[0]
     dataset = tf.data.Dataset.from_generator(loader.iter,
                                              output_signature=(
                                                  tf.TensorSpec(shape=[imgsz[0], imgsz[1], 3], dtype=tf.float32, ),
