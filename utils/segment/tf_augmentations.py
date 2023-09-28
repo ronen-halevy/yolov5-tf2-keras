@@ -53,7 +53,7 @@ class Augmentation:
             hue, sat, val = cv2.split(cv2.cvtColor(im.numpy().astype(np.uint8), cv2.COLOR_BGR2HSV))
             dtype = im.numpy().dtype  # uint8
 
-            x = np.arange(0, 256, dtype=r.dtype)
+            x = np.arange(0, 256, dtype=r.dtype) # 255 entry target colors table
             lut_hue = ((x * r[0]) % 180).astype(dtype)
             lut_sat = np.clip(x * r[1], 0, 255).astype(dtype)
             lut_val = np.clip(x * r[2], 0, 255).astype(dtype)
