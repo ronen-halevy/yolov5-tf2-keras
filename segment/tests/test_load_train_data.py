@@ -23,7 +23,7 @@ FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
 
 from segment.load_train_data import LoadTrainData
-from segment.tf_create_dataset import CreateDataset
+from segment.tf_dataloaders import create_dataloader
 from utils.tf_general import increment_path
 from utils.segment.tf_general import masks2segments, process_mask, process_mask_native
 
@@ -122,16 +122,21 @@ def test_dataset_creation(data_path, imgsz=640, line_thickness = 3, nexamples=3,
     degrees, translate, scale, shear, perspective = hyp['degrees'],hyp['translate'],hyp['scale'],hyp['shear'],hyp['perspective']
     augment=True
     hgain, sgain, vgain, flipud, fliplr =hyp['hsv_h'],hyp['hsv_s'],hyp['hsv_v'],hyp['flipud'],hyp['fliplr']
-    create_dataset = CreateDataset(imgsz, mosaic, augment, degrees, translate, scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr)
-    ds = create_dataset(image_files, labels, segments)
+    # create_dataset = CreateDataset(imgsz, mosaic, augment, degrees, translate, scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr)
+    # ds = create_dataset(image_files, labels, segments)
+    batch_size=2
+    debug=True
+    ds = create_dataloader(data_path, batch_size,[imgsz, imgsz], mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr, debug)
+
+
     # ds = ds.shuffle(10)
     sel_ds = ds.take(nexamples)
     # for bidx, (bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bmask) in enumerate(sel_ds):
-    for bidx, (bimg, bimg_labels_ragged, bimg_filenames,  bmask) in enumerate(sel_ds):
+    for bidx, (bimg, bimg_labels_ragged,  bmask) in enumerate(sel_ds):
 
     # for bidx, (img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged) in enumerate(sel_ds):
     #     for idx, (img, img_labels_ragged, img_filenames, img_shape, mask) in enumerate(zip(bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bmask)):
-        for idx, (img, img_labels_ragged, img_filenames,  mask) in enumerate(zip(bimg, bimg_labels_ragged, bimg_filenames,  bmask)):
+        for idx, (img, img_labels_ragged,  mask) in enumerate(zip(bimg, bimg_labels_ragged,   bmask)):
             img_labels=img_labels_ragged#.to_tensor() # convert from ragged
             d_s_factor=4
             mask=tf.squeeze(tf.image.resize(mask[...,None],[mask.shape[0]*d_s_factor,mask.shape[1]*d_s_factor]))
