@@ -116,9 +116,7 @@ def test_dataset_creation(data_path, imgsz=640, line_thickness = 3, nexamples=3,
     with open(hyp, errors='ignore') as f:
         hyp = yaml.safe_load(f)  # load hyps dict
 
-    ltd = LoadTrainData()
     mosaic=True# False
-    image_files, labels, segments = ltd.load_data(data_path, mosaic)
     degrees, translate, scale, shear, perspective = hyp['degrees'],hyp['translate'],hyp['scale'],hyp['shear'],hyp['perspective']
     augment=True
     hgain, sgain, vgain, flipud, fliplr =hyp['hsv_h'],hyp['hsv_s'],hyp['hsv_v'],hyp['flipud'],hyp['fliplr']
