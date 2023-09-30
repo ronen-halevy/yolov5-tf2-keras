@@ -52,6 +52,8 @@ from utils.tf_general import (LOGGER, Profile, check_file, check_img_size, check
 from utils.tf_plots import Annotator, colors, save_one_box
 from utils.segment.tf_general import masks2segments, process_mask, process_mask_native
 from models.tf_model import TFModel
+from nms import non_max_suppression
+
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
@@ -76,28 +78,6 @@ def dir_filelist(images_dir, ext_list='.*'):
 
     if save_model:
         keras_model.save(model_save_path)
-
-def non_max_suppression(pred, conf_thres,iou_thres, max_det):
-    nm = 32  # number of masks
-    xywh_nbytes = 4
-    obj_nbytes = 1
-    nc = pred.shape[2] - (nm + xywh_nbytes + obj_nbytes)  # number of classes
-    mi = 5 + nc  # mask start index
-    pred = tf.squeeze(pred, axis=0)
-    class_sel_prob = tf.reduce_max(pred[:, 5:mi], axis=-1, keepdims=False)
-    scores = pred[:, 4] * class_sel_prob
-    class_sel_idx = tf.math.argmax(pred[:, 5:mi], axis=-1, output_type=tf.int32)[..., tf.newaxis]
-    class_sel_idx = tf.cast(class_sel_idx, dtype=tf.float32)
-    boxes = xywh2xyxy(pred[:, :4])
-    # ind = [idx  for idx, score in enumerate(scores) if score>0.5]
-
-    ind = tf.image.non_max_suppression(boxes, scores, max_output_size=max_det, iou_threshold=iou_thres,
-                                       score_threshold=conf_thres)
-
-    # Concat before gather:
-    pred = tf.concat((boxes, scores[..., tf.newaxis], class_sel_idx, pred[:, mi:]), axis=1)
-    nms_pred = tf.gather(pred, indices=ind)
-    return nms_pred
 
 
 def run(
