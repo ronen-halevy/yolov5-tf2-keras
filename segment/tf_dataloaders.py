@@ -61,7 +61,7 @@ for orientation in ExifTags.TAGS.keys():
 
 # class LoadTrainData:
 class LoadImagesAndLabelsAndMasks:
-    def __init__(self, path, imgsz, mosaic,augment, degrees, translate, scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr, debug=False):
+    def __init__(self, path, imgsz, mask_ratio, mosaic,augment, degrees, translate, scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr, debug=False):
         self.im_files = self._make_file(path, IMG_FORMATS)
 
         self.label_files = self._img2label_paths(self.im_files)  # labels
@@ -83,6 +83,7 @@ class LoadImagesAndLabelsAndMasks:
                               -imgsz[1] // 2]  # mosaic center placed randimly at [-border, 2 * imgsz + border]
         self.imgsz = imgsz
         self.augment, self.degrees, self.translate, self.scale, self.shear, self.perspective=augment, degrees, translate, scale, shear, perspective
+        self.downsample_ratio = mask_ratio  # yolo training requires downsampled by 4 mask
 
         self.augmentation = Augmentation(hgain, sgain, vgain, flipud, fliplr)
 
@@ -204,13 +205,17 @@ class LoadImagesAndLabelsAndMasks:
                 is_ragged = True
 
         # segments= tf.RaggedTensor.from_tensor(segments)
-        labels= tf.RaggedTensor.from_tensor(labels)
         is_ragged=True
-        masks = self.polygons2masks(segments, self.imgsz, is_ragged)
+        if segments.shape[0]:
+            masks = self.polygons2masks(segments, self.imgsz, self.downsample_ratio, is_ragged)
+        else:
+            masks = tf.cast(tf.fill([img.shape[0]//self.downsample_ratio, img.shape[1]//self.downsample_ratio], 0), tf.float32)# np.zeros(img_size, dtype=np.uint8)
+
         labels = xyxy2xywhn(labels, w=640, h=640, clip=True, eps=1e-3)  # return xywh normalized
         if self.augment:
             img, labels, masks = self.augmentation(img, labels, masks)
             img = tf.cast(img, tf.float32)/255
+        labels= tf.RaggedTensor.from_tensor(labels)
         return (img, labels,  masks,)
 
 
@@ -464,15 +469,14 @@ class LoadImagesAndLabelsAndMasks:
 
         return img4, labels4, segments4
 
-    def polygons2masks(self, segments, size, is_ragged):
-        downsample_ratio = 4  # yolo training requires downsampled by 4 mask
+    def polygons2masks(self, segments, size, downsample_ratio, is_ragged):
         color = 1  # default value 1 is later modifed to a color per mask
         segments = tf.cast(segments, tf.int32)
         # polygons2mask done as loop for a seperatee mask per segment. Merge masks after size-sorting and coloring:
         masks = tf.map_fn(fn=lambda segment:
         tf.py_function(polygons2mask, [is_ragged, size, segment[None], color, downsample_ratio],
                        Tout=tf.float32), elems=segments,
-                          fn_output_signature=tf.TensorSpec(shape=[640, 640], dtype=tf.float32, ));
+                          fn_output_signature=tf.TensorSpec(shape=[640, 640], dtype=tf.float32 ));
         # NOTE: fillPoly firstly then resize is trying the keep the same way
         # of loss calculation when mask-ratio=1.
 
@@ -484,7 +488,7 @@ class LoadImagesAndLabelsAndMasks:
         # sort masks in arreas descending order - larger first
         areas = tf.math.reduce_sum(masks, axis=[1, 2])  # shape: [nmasks]
         index = tf.argsort(areas, axis=-1, direction='DESCENDING', stable=False, name=None)  # shape: [nmasks]
-        masks = tf.gather(masks, index, axis=0)  # shape: [nmasks]
+        masks = tf.gather(masks, index, axis=0)  # sort masks by areas shape: [nmasks]
         # set value to masks pixels - increasing cpint from 1 to index, (=num of masks):
         index = tf.sort(index, axis=-1, direction='ASCENDING', name=None)
         index = tf.cast(index, tf.float32) + 1.
@@ -506,8 +510,8 @@ def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
     cv2.fillPoly(mask, np.asarray(polygon), color=1)
     return mask # shape: [img_size]
 
-def create_dataloader(data_path, batch_size, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr, debug=False):
-    loader =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr)
+def create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr, debug=False):
+    loader =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mask_ratio, mosaic, augment, degrees, translate, scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr)
 
     dataset = tf.data.Dataset.from_generator(loader.iter,
                                              output_signature=(
@@ -542,7 +546,8 @@ if __name__ == '__main__':
     augment=False
     batch_size=2
     debug=True
-    dataset = create_dataloader(data_path, batch_size, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr, debug)
+    mask_ratio = 4
+    dataset = create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr, debug)
 
 
     for img, labels, mask in dataset:
