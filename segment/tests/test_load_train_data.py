@@ -71,15 +71,15 @@ def draw_text_on_bounding_box(image, ymin, xmin, color, display_str_list=(), fon
                   font=font)
     return image
 
-def draw_dataset_entry(img, img_labels, img_segments, line_thickness):
+def draw_dataset_entry(img, bboxes, cls, img_segments, line_thickness):
     img = np.array(img * 255)
 
-    bboxes = np.array(img_labels)[:, 1:]
+    # bboxes = np.array(img_labels)[:, 1:]
     # use category id for category name:
-    category_names = [str(int(name)) for name in (np.array(img_labels)[:, 0])]
+    category_names = [str(int(name)) for name in (np.array(cls))]
 
     for segment in img_segments:
-        segment = np.array(segment)  # from ragged to tensor
+        segment = np.array(segment)  # from ragged to tensor - todo check if needed - ndarray already?
         polygon = segment.reshape(1, segment.shape[0], -1, 2).astype(np.int32)
 
         color = np.random.randint(low=0, high=255, size=3).tolist()
@@ -139,7 +139,9 @@ def test_dataset_creation(data_path, imgsz=640, line_thickness = 3, nexamples=3,
             d_s_factor=4
             mask=tf.squeeze(tf.image.resize(mask[...,None],[mask.shape[0]*d_s_factor,mask.shape[1]*d_s_factor]))
             segments = cv2.findContours(mask.numpy().astype('uint8'), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
-            image=draw_dataset_entry(img, img_labels.to_tensor(), segments, line_thickness)
+            bboxes = tf.gather(img_labels, [ 1,2,3,4], axis=-1)
+            cls = tf.gather(img_labels, [0], axis=-1)
+            image = draw_dataset_entry(img, bboxes, cls, segments, line_thickness)
             image.save(save_dir/f'annotatedm_{bidx}_{idx}.jpeg')
             im.fromarray((img.numpy() * 255).astype(np.uint8)).save(save_dir / f'annotationless_{bidx}_{idx}.jpeg')
 

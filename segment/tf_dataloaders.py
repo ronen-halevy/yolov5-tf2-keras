@@ -61,7 +61,7 @@ for orientation in ExifTags.TAGS.keys():
 
 # class LoadTrainData:
 class LoadImagesAndLabelsAndMasks:
-    def __init__(self, path, imgsz, mosaic,augment, degrees, translate, scale, shear, perspective, debug=False):
+    def __init__(self, path, imgsz, mosaic,augment, degrees, translate, scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr, debug=False):
         self.im_files = self._make_file(path, IMG_FORMATS)
 
         self.label_files = self._img2label_paths(self.im_files)  # labels
@@ -84,6 +84,7 @@ class LoadImagesAndLabelsAndMasks:
         self.imgsz = imgsz
         self.augment, self.degrees, self.translate, self.scale, self.shear, self.perspective=augment, degrees, translate, scale, shear, perspective
 
+        self.augmentation = Augmentation(hgain, sgain, vgain, flipud, fliplr)
 
     def exif_size(self, img):
         # Returns exif-corrected PIL size
@@ -199,12 +200,19 @@ class LoadImagesAndLabelsAndMasks:
 
             else:
                 # ragged to tensor for convinence:
-                labels = labels.to_tensor() # shape: [nlabels, 5]
+                # labels = labels.to_tensor() # shape: [nlabels, 5]
                 is_ragged = True
 
-        segments= tf.RaggedTensor.from_tensor(segments)
+        # segments= tf.RaggedTensor.from_tensor(segments)
         labels= tf.RaggedTensor.from_tensor(labels)
-        return img, labels, segments
+        is_ragged=True
+        masks = self.polygons2masks(segments, self.imgsz, is_ragged)
+        labels = xyxy2xywhn(labels, w=640, h=640, clip=True, eps=1e-3)  # return xywh normalized
+        if self.augment:
+            img, labels, masks = self.augmentation(img, labels, masks)
+            img = tf.cast(img, tf.float32)/255
+        return (img, labels,  masks,)
+
 
 
 
@@ -456,25 +464,6 @@ class LoadImagesAndLabelsAndMasks:
 
         return img4, labels4, segments4
 
-
-def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
-    """
-    Args:
-        img_size (tuple): The image size.
-        polygons: [1, npoints, 2]
-    """
-    polygon = tf.cond(is_ragged, true_fn=lambda:polygon, false_fn=lambda: polygon)
-
-    mask = np.zeros(img_size, dtype=np.uint8)
-    cv2.fillPoly(mask, np.asarray(polygon), color=1)
-    return mask # shape: [img_size]
-class CreateData:
-    def __init__(self, imgsz, augment, hgain, sgain, vgain, flipud, fliplr):
-        self.imgsz = imgsz
-        self.augment=augment
-        self.augmentation = Augmentation(hgain, sgain, vgain, flipud, fliplr)
-
-
     def polygons2masks(self, segments, size, is_ragged):
         downsample_ratio = 4  # yolo training requires downsampled by 4 mask
         color = 1  # default value 1 is later modifed to a color per mask
@@ -503,27 +492,30 @@ class CreateData:
         masks = tf.reduce_max(masks, axis=0) # reduce to merge and keep smallest mask pixes if overlap
         return masks
 
-    def __call__(self, img, labels, segments):
-        is_ragged=True
-        masks = self.polygons2masks(segments, self.imgsz, is_ragged)
-        labels = xyxy2xywhn(labels, w=640, h=640, clip=True, eps=1e-3)  # return xywh normalized
-        if self.augment:
-            img, labels, masks = self.augmentation(img, labels, masks)
-            img = tf.cast(img, tf.float32)/255
-        # labels=tf.RaggedTensor.from_tensor(labels, padding=-1) # variable num of boxes. can't batch otherwise.
-        return (img, labels,  masks,)
 
+def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
+    """
+    Args:
+        img_size (tuple): The image size.
+        polygons: [1, npoints, 2]
+    """
+
+    polygon = tf.cond(is_ragged, true_fn=lambda:polygon, false_fn=lambda: polygon)
+
+    mask = np.zeros(img_size, dtype=np.uint8)
+    cv2.fillPoly(mask, np.asarray(polygon), color=1)
+    return mask # shape: [img_size]
 
 def create_dataloader(data_path, batch_size, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr, debug=False):
-    loader =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective)
+    loader =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr)
 
     dataset = tf.data.Dataset.from_generator(loader.iter,
                                              output_signature=(
                                                  tf.TensorSpec(shape=[imgsz[0], imgsz[1], 3], dtype=tf.float32, ),
                                                  tf.RaggedTensorSpec(shape=[None, 5], dtype=tf.float32,
                                                                      ragged_rank=1),
-                                                 tf.RaggedTensorSpec(shape=[None, 1000, 2], dtype=tf.float32,
-                                                                     ragged_rank=1))
+                                                 tf.TensorSpec(shape=[160, 160], dtype=tf.float32,
+                                                                     ))
                                              )
 
     if debug:
@@ -532,12 +524,6 @@ def create_dataloader(data_path, batch_size, imgsz, mosaic, augment, degrees, tr
             pass
 
 
-    dp = CreateData(imgsz,augment,hgain, sgain, vgain, flipud, fliplr)
-    if debug:
-        for img , lables, segments in dataset:
-            img, lables, segments=dp(img, lables, segments)
-
-    dataset=dataset.map(lambda img, lables, segments: dp(img, lables, segments))
     dataset=dataset.batch(batch_size)
 
     return dataset
