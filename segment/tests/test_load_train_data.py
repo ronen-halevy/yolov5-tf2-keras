@@ -123,7 +123,7 @@ def test_dataset_creation(data_path, imgsz=640, line_thickness = 3, nexamples=3,
     # create_dataset = CreateDataset(imgsz, mosaic, augment, degrees, translate, scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr)
     # ds = create_dataset(image_files, labels, segments)
     batch_size=2
-    debug=True
+    debug=True# False
     ds = create_dataloader(data_path, batch_size,[imgsz, imgsz], mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr, debug)
 
 

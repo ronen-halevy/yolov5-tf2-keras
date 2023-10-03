@@ -35,13 +35,11 @@ from urllib.parse import urlparse
 
 import numpy as np
 import psutil
-import torch
-import torch.nn.functional as F
-import torchvision
+
 import yaml
 from PIL import ExifTags, Image, ImageOps
 import cv2
-from torch.utils.data import DataLoader, Dataset, dataloader, distributed
+
 from tqdm import tqdm
 # from utils.general import LOGGER, colorstr
 
@@ -195,7 +193,8 @@ class LoadImagesAndLabelsAndMasks:
                                                                    scale=self.scale,
                                                                    shear=self.shear,
                                                                    perspective=self.perspective,
-                                                                   border=self.mosaic_border)  # border to remove
+                                                                   border=[0,0]
+                                                                )  # border to remove
                 is_ragged = False # segments not ragged, but upsampled to constant num of points
 
             else:
@@ -353,7 +352,7 @@ class LoadImagesAndLabelsAndMasks:
         # Combined rotation matrix
         M = T @ S @ R @ P @ C  # order of operations (right to left) is IMPORTANT
 
-        if (border[0] != 0) or (border[1] != 0) or (M != np.eye(3)).any():  # image changed
+        if (border[0] != 0) or (border[1] != 0) or tf.math.reduce_any(M != tf.eye(3)):  # if image changed...
             if perspective:
                 im = cv2.warpPerspective(im, M, dsize=(width, height), borderValue=(114, 114, 114))
             else:  # affine
@@ -361,11 +360,12 @@ class LoadImagesAndLabelsAndMasks:
 
         if True:  # if n: # Todo clean this
             ninterp=1000
-            # before resample, segments are ragged (variable npoints per segment), accordingly tf.map_fn required:
+            # reample & add homogeneous coords & ragged->tensor (map_fn needed since segments ragged):
+            # Note: before resample, segments are ragged (variable npoints per segment), accordingly tf.map_fn required:
             segments = tf.map_fn(fn=lambda segment: self.resample_segments(ninterp, segment), elems=segments,
                                  fn_output_signature=tf.TensorSpec(shape=[1000, 3], dtype=tf.float32,
                                                                    ));
-            segments = tf.matmul(segments, tf.cast(tf.transpose(M), tf.float32))  # transform
+            segments = tf.matmul(segments, tf.cast(tf.transpose(M), tf.float32))  # affine transform
             segments = tf.gather(segments, [0, 1], axis=-1)
 
             bboxes = segments2boxes_exclude_outbound_points(segments)
@@ -374,7 +374,7 @@ class LoadImagesAndLabelsAndMasks:
         bboxes = bboxes[indices]
 
         targets = targets[indices]
-        bboxes = tf.concat([targets[:, 0:1], bboxes], axis=-1)
+        bboxes = tf.concat([targets[:, 0:1], bboxes], axis=-1) #  [cls, bboxes]
         segments = segments[indices]
         return im, bboxes, segments
 
@@ -526,9 +526,9 @@ def create_dataloader(data_path, batch_size, imgsz, mosaic, augment, degrees, tr
                                                                      ragged_rank=1))
                                              )
 
-    if True:#debug:
+    if debug:
         for idx in range(len(loader)):
-            img, label, seg = loader[idx]
+            img, label, seg = loader[idx] # calling __getitem__
             pass
 
 
@@ -553,7 +553,7 @@ if __name__ == '__main__':
 
     degrees, translate, scale, shear, perspective = hyp['degrees'],hyp['translate'],hyp['scale'],hyp['shear'],hyp['perspective']
     hgain, sgain, vgain, flipud, fliplr =hyp['hsv_h'],hyp['hsv_s'],hyp['hsv_v'],hyp['flipud'],hyp['fliplr']
-    augment=True
+    augment=False
     batch_size=2
     debug=True
     dataset = create_dataloader(data_path, batch_size, imgsz, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr, debug)
