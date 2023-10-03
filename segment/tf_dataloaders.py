@@ -174,6 +174,7 @@ class LoadImagesAndLabelsAndMasks:
     def __len__(self):
         return len(self.im_files)
     def __getitem__(self, index):
+        is_ragged=False
         index = self.indices[index]
 
         mosaic = random.random() < self.mosaic
@@ -205,7 +206,6 @@ class LoadImagesAndLabelsAndMasks:
                 is_ragged = True
 
         # segments= tf.RaggedTensor.from_tensor(segments)
-        is_ragged=True
         if segments.shape[0]:
             masks = self.polygons2masks(segments, self.imgsz, self.downsample_ratio, is_ragged)
         else:
@@ -507,6 +507,10 @@ def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
     polygon = tf.cond(is_ragged, true_fn=lambda:polygon, false_fn=lambda: polygon)
 
     mask = np.zeros(img_size, dtype=np.uint8)
+
+    if is_ragged:
+        polygon=polygon.to_tensor()
+
     cv2.fillPoly(mask, np.asarray(polygon), color=1)
     return mask # shape: [img_size]
 
