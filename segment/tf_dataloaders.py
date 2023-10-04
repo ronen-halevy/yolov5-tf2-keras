@@ -175,7 +175,7 @@ class LoadImagesAndLabelsAndMasks:
         return len(self.im_files)
     def __getitem__(self, index):
         is_ragged=False
-        index = self.indices[index]
+        # index = self.indices[index]
 
         mosaic = random.random() < self.mosaic
         if self.augment and mosaic:
@@ -369,8 +369,7 @@ class LoadImagesAndLabelsAndMasks:
             if perspective:
                 im = cv2.warpPerspective(im, M, dsize=(width, height), borderValue=(114, 114, 114))
             else:  # affine
-                im = tf.py_function(self.affaine_transform, [im, M], Tout=tf.float32)
-
+                im = tf.py_function(self.affaine_transform, [im, M], Tout=tf.float32)# img shape[1280,1280,3] M:3x3
         if True:  # if n: # Todo clean this
             ninterp=1000
             # reample & add homogeneous coords & ragged->tensor (map_fn needed since segments ragged):
