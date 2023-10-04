@@ -1,7 +1,5 @@
 import cv2
 import numpy as np
-import torch
-import torch.nn.functional as F
 import tensorflow as tf
 
 
@@ -52,8 +50,8 @@ def process_mask(protos, masks_in, bboxes, shape, upsample=False):
     """
 
     ch, mh, mw = protos.shape  # CHW
-    ih, iw = shape
-    # masks = (masks_in @ tf.Variable(protos.reshape(ch, -1))).sigmoid().reshape(-1, mh, mw)  # CHW
+    ih, iw = shape # image shape
+
     masks =  tf.sigmoid(masks_in @ tf.reshape(protos, [ch, -1])  )# CHW
     masks = tf.reshape(masks, (-1, mh, mw))
     downsampled_bboxes = bboxes.copy()
@@ -67,9 +65,11 @@ def process_mask(protos, masks_in, bboxes, shape, upsample=False):
     if upsample:
         # masks = F.interpolate(masks[None], shape, mode='bilinear', align_corners=False)[0]  # CHW
         masks = tf.image.resize(masks[...,tf.newaxis], size=shape )
-    return tf.math.greater(
-        tf.squeeze(masks, axis=-1), 0.5, name=None
+    ret_val = tf.math.greater( # 0.5 min limit.
+        masks, 0.5, name=None
     )
+    return tf.cast(ret_val, tf.float32)
+
     # return masks.gt_(0.5)
 
 
@@ -130,8 +130,10 @@ def mask_iou(mask1, mask2, eps=1e-7):
 
     return: masks iou, [N, M]
     """
-    intersection = torch.matmul(mask1, mask2.t()).clamp(0)
-    union = (mask1.sum(1)[:, None] + mask2.sum(1)[None]) - intersection  # (area1 + area2) - intersection
+    # intersection = tf.matmul(mask1, tf.transpose(mask2.t()).clamp(0)
+    intersection = tf.maximum(tf.matmul(mask1, tf.transpose(mask2)), 0) # clamp(0)
+
+    union = (tf.math.reduce_sum(mask1, axis=1)[:, None] + tf.math.reduce_sum(mask2, axis=1)[None]) - intersection  # (area1 + area2) - intersection
     return intersection / (union + eps)
 
 
