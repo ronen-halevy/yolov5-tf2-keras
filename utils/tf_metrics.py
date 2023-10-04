@@ -277,13 +277,16 @@ def box_iou(box1, box2, eps=1e-7):
         iou (Tensor[N, M]): the NxM matrix containing the pairwise
             IoU values for every element in boxes1 and boxes2
     """
+    (a1, a2) = tf.split(tf.expand_dims(box1, 1), 2,axis=2) # xy_min, xy_max boxa
+    (b1, b2) = tf.split(tf.expand_dims(box2, 0), 2,axis=2)# xy_min, xy_max boxb
 
-    # inter(N,M) = (rb(N,M,2) - lt(N,M,2)).clamp(0).prod(2)
-    (a1, a2), (b1, b2) = box1.unsqueeze(1).chunk(2, 2), box2.unsqueeze(0).chunk(2, 2)
-    inter = (torch.min(a2, b2) - torch.max(a1, b1)).clamp(0).prod(2)
+    # inter = (torch.min(a2, b2) - torch.max(a1, b1)).clamp(0).prod(2)
+    y=tf.math.minimum(a2, b2) - tf.math.maximum(a1, b1)
+    y=tf.math.maximum(y,0) # clamp 0
+    inter = tf.math.reduce_prod(y, 2) # Intersection area
 
-    # IoU = inter / (area1 + area2 - inter)
-    return inter / ((a2 - a1).prod(2) + (b2 - b1).prod(2) - inter + eps)
+    # IoU = inter / (area1 + area2 - inter):
+    return inter / (tf.math.reduce_prod(a2 - a1, axis=2) + tf.math.reduce_prod(b2 - b1, axis=2) - inter + eps)
 
 
 def bbox_ioa(box1, box2, eps=1e-7):
