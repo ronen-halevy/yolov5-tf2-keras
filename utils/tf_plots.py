@@ -16,14 +16,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sn
-import torch
+# import torch
 import tensorflow as tf
 from PIL import Image, ImageDraw, ImageFont
 
 from utils import TryExcept, threaded
-from utils.general import (CONFIG_DIR, FONT, LOGGER, check_font, check_requirements, clip_boxes, increment_path,
+from utils.tf_general import (FONT, LOGGER, check_font, check_requirements, clip_boxes, increment_path,
                            is_ascii, xywh2xyxy, xyxy2xywh)
-from utils.metrics import fitness
+from utils.tf_metrics import fitness
 from utils.segment.tf_general import scale_image
 
 # Settings
@@ -56,7 +56,7 @@ colors = Colors()  # create instance for 'from utils.plots import colors'
 def check_pil_font(font=FONT, size=10):
     # Return a PIL TrueType Font, downloading to CONFIG_DIR if necessary
     font = Path(font)
-    font = font if font.exists() else (CONFIG_DIR / font.name)
+    font = font # if font.exists() else (CONFIG_DIR / font.name)
     try:
         return ImageFont.truetype(str(font) if font.exists() else font.name, size)
     except Exception:  # download if missing
@@ -132,7 +132,7 @@ class Annotator:
 
         colors = tf.constant(colors, dtype=tf.float32)/ 255.0
         colors = colors[:, tf.newaxis, tf.newaxis, :]  # shape(n,1,1,3)
-        masks = tf.expand_dims(masks, axis=-1) # (n,h,w,1)
+        # masks = tf.expand_dims(masks, axis=-1) # (n,h,w,1)
         # a color per a mask:
         masks_color = tf.cast(masks, tf.float32) * (colors * alpha)  # shape(n,h,w,3)
         # inv_alph_masks prevents saturation.
@@ -225,17 +225,17 @@ def output_to_target(output, max_det=300):
     targets = []
     for i, o in enumerate(output):
         box, conf, cls = o[:max_det, :6].cpu().split((4, 1, 1), 1)
-        j = torch.full((conf.shape[0], 1), i)
-        targets.append(torch.cat((j, cls, xyxy2xywh(box), conf), 1))
-    return torch.cat(targets, 0).numpy()
+        j = tf.fill((conf.shape[0], 1), i)
+        targets.append(tf.concat((j, cls, xyxy2xywh(box), conf), 1))
+    return tf.concat(targets, 0).numpy()
 
 
 # @threaded
 def plot_images(images, targets, paths=None, fname='images.jpg', names=None):
     # Plot image grid with labels
-    if isinstance(images, torch.Tensor):
+    if isinstance(images, tf.Tensor):
         images = images.cpu().float().numpy()
-    if isinstance(targets, torch.Tensor):
+    if isinstance(targets, tf.Tensor):
         targets = targets.cpu().numpy()
 
     max_size = 1920  # max image size
@@ -438,7 +438,7 @@ def imshow_cls(im, labels=None, pred=None, names=None, nmax=25, verbose=False, f
     from utils.augmentations import denormalize
 
     names = names or [f'class{i}' for i in range(1000)]
-    blocks = torch.chunk(denormalize(im.clone()).cpu().float(), len(im),
+    blocks = tf.split(denormalize(im.clone()).cpu().float(), len(im),
                          dim=0)  # select batch index 0, block by channels
     n = min(len(blocks), nmax)  # number of plots
     m = min(8, round(n ** 0.5))  # 8 x 8 default
@@ -548,7 +548,7 @@ def profile_idetection(start=0, stop=0, labels=(), save_dir=''):
 
 def save_one_box(xyxy, im, file=Path('im.jpg'), gain=1.02, pad=10, square=False, BGR=False, save=True):
     # Save image crop as {file} with crop size multiple {gain} and {pad} pixels. Save and/or return crop
-    xyxy = torch.tensor(xyxy).view(-1, 4)
+    xyxy = tf.reshape(tf.tensor(xyxy), (-1, 4))
     b = xyxy2xywh(xyxy)  # boxes
     if square:
         b[:, 2:] = b[:, 2:].max(1)[0].unsqueeze(1)  # attempt rectangle to square
