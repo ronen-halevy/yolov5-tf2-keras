@@ -224,10 +224,10 @@ class ComputeLoss:
                 ti.append(tf.tile(tf.range(num, dtype=tf.float32 )[None], [na,1]) + 1)  #entries shape:(na, num)
             ti = tf.concat(ti, axis=1)  # e.g. batch=2 ,3&1 targets:[[1,2,3,1], [1,2,3,1], [1,2,3,1]],shape:(na, nt)
         else:# no overlap: flat ti indices, e.g. batch=2, 4&1 targets: [[1,2,3,4], [1,2,3,4], [1,2,3,4]], shape:(na, nt)
-            ti = tf.tile(tf.range(nt, dtype=tf.float32)[None], [na, 1])
+            ti = tf.tile(tf.range(nt, dtype=tf.float32)[None], [na, 1]) # shape: [na, nt]
 
         ttpa = tf.tile(targets[None], (na, 1,1)) # tile targets per anchors. shape: [na, nt, 6]
-        targets = tf.concat((ttpa, ai[..., None], ti[..., None]), 2)  #concat targets, ai and ti idx. shape:[na, nt,8]
+        targets = tf.concat((ttpa, ai[..., None], ti[..., None]), 2)  # concat targets, ai and ti idx. shape:[na, nt,8]
 
         g = 0.5  # bias
         off = tf.constant(
@@ -242,7 +242,7 @@ class ComputeLoss:
         # loop on layers i.e. 3 output grids (80*80,40*40,20*20), calc target samples per each:
         for i in range(self.nl):
             anchors, shape = self.anchors[i], p[i].shape # take layer's anchors and grid. p[i] shape: [na,gy,gx]
-            # gain: [1, 1, gs, gs, gs, gs, 1, 1] where gs is in 80,40,20 according to prediction layer
+            # gain from tf.ones([8]) to  [1, 1, gs, gs, gs, gs, 1, 1]  where gs is [80,40,20] for i=0:2
             gain = tf.tensor_scatter_nd_update(gain, [[2],[3],[4],[5]], tf.cast(tf.constant(shape)[[3, 2, 3, 2]], tf.float32))
             # gain[2:6] =
 
