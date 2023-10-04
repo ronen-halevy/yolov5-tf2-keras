@@ -196,8 +196,8 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     ema = tf.train.ExponentialMovingAverage(decay=0.9999) # todo
 
     # nc = tf_model.nc  # number of classes
-    anchors = tf.reshape(tf_model.anchors, [len(tf_model.anchors), -1, 2])
-    anchors = tf.cast(anchors, tf.float32) / tf.reshape(stride, (-1, 1, 1))
+    anchors = tf.reshape(tf_model.anchors, [len(tf_model.anchors), -1, 2]) # shape: [nl, na, 2]
+    anchors = tf.cast(anchors, tf.float32) / tf.reshape(stride, (-1, 1, 1)) # scale by stride to nl grid layers
 
     nl = anchors.shape[0] # number of layers (output grids)
     na = anchors.shape[1]  # number of anchors
