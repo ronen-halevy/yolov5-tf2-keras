@@ -204,20 +204,27 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
     compute_loss = ComputeLoss( na,nl,nc,nm, anchors, hyp['fl_gamma'], hyp['box'], hyp['obj'], hyp['cls'], hyp['anchor_t'], autobalance=False)  # init loss class
     # ds_train = ds_train.batch(batch_size)
+    nb = len(list(ds_train))  # number of batches
 
     for epoch in range(epochs):
+        pbar = enumerate(ds_train)
+        pbar = tqdm(pbar, total=nb, bar_format=TQDM_BAR_FORMAT)  # progress bar
+
         mloss = tf.zeros([4], dtype=tf.float32)  # mean losses
         # train:
-        for batch_idx, (bimages,  btargets, bmasks) in enumerate(ds_train):
-
+        for batch_idx, (bimages,  btargets, bmasks) in pbar:
 
             # concat image index word to targets. result targets shape: [nt, 6] where nt total of target objectd
             new_btargets = []
             for idx, targets in enumerate(btargets):
-                bindex=tf.cast([idx], tf.float32)[None]
-                bindex = tf.tile(bindex, [targets.shape[0],  1])
-                new_btargets.extend(tf.concat([bindex, targets.to_tensor()], axis=-1)) # [bindex,cls, xywh]
-
+                # print('targets.to_tensor().shape) batch_idx', idx, batch_idx, targets.to_tensor().shape)
+                if targets.shape[0]:
+                    bindex=tf.cast([idx], tf.float32)[None]
+                    bindex = tf.tile(bindex, [targets.shape[0],  1])
+                    new_btargets.extend(tf.concat([bindex, targets.to_tensor()[...,0:]], axis=-1)) # [bindex,cls, xywh]
+                else:
+                    targets=tf.zeros([0,6], tf.float32)
+                    new_btargets.extend( targets)
             new_btargets=tf.stack(new_btargets, axis=0)
 
             with (tf.GradientTape() as tape):
@@ -230,8 +237,8 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
             optimizer.apply_gradients(
                     zip(grads, keras_model.trainable_variables))
 
-            print(
-                f'{epoch}_train_{batch_idx}_lr:{optimizer.lr.numpy():.4f}, '
+            pbar.set_description(
+                f'{epoch}/{epochs - 1}_train_{batch_idx}_lr:{optimizer.lr.numpy():.4f}, '
                 f'totLoss:{loss.numpy()[0]:.4f}, '
                 f'lbox: {lbox.numpy()[0]:.4f}, '
                 f'lobj: {lobj.numpy()[0]:.4f}, '
