@@ -30,7 +30,7 @@ import numpy as np
 
 
 import yaml
-# from tqdm import tqdm
+from tqdm import tqdm
 
 
 FILE = Path(__file__).resolve()
@@ -134,7 +134,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # val_image_files, val_labels, val_segments = ltd.load_data(val_path, mosaic)
 
     # ds_val=create_dataset(val_image_files, val_labels, val_segments)
-    ds_train = create_dataloader(train_path, batch_size,imgsz, mosaic, augment, degrees, translate,
+    ds_train = create_dataloader(train_path, batch_size,imgsz, mask_ratio, mosaic, augment, degrees, translate,
                                  scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr)
 
 
@@ -206,8 +206,9 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # ds_train = ds_train.batch(batch_size)
 
     for epoch in range(epochs):
+        mloss = tf.zeros([4], dtype=tf.float32)  # mean losses
         # train:
-        for batch, (bimages,  btargets, bmasks) in enumerate(ds_train):
+        for batch_idx, (bimages,  btargets, bmasks) in enumerate(ds_train):
 
 
             # concat image index word to targets. result targets shape: [nt, 6] where nt total of target objectd
@@ -230,13 +231,17 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                     zip(grads, keras_model.trainable_variables))
 
             print(
-                f'{epoch}_train_{batch}_lr:{optimizer.lr.numpy():.4f}, '
+                f'{epoch}_train_{batch_idx}_lr:{optimizer.lr.numpy():.4f}, '
                 f'totLoss:{loss.numpy()[0]:.4f}, '
                 f'lbox: {lbox.numpy()[0]:.4f}, '
                 f'lobj: {lobj.numpy()[0]:.4f}, '
                 f'lcls: {lcls.numpy()[0]:.4f}, '
                 f'lseg: {lseg.numpy()[0]:.4f}, ')
 
+            mloss = (mloss * batch_idx + loss_items) / (batch_idx + 1)  # update mean losses
+
+            # pbar.set_description(('%11s' * 2 + '%11.4g' * 6) %
+            #                          (f'{epoch}/{epochs - 1}', mem, *mloss, targets.shape[0], imgs.shape[-1]))
         keras_model.save_weights(
                     last)
 
