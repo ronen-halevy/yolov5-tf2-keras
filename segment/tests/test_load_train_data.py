@@ -122,19 +122,19 @@ def test_dataset_creation(data_path, imgsz=640, line_thickness=3, nexamples=3, s
     augment = True
     hgain, sgain, vgain, flipud, fliplr = hyp['hsv_h'], hyp['hsv_s'], hyp['hsv_v'], hyp['flipud'], hyp['fliplr']
     batch_size = 2
-    debug = True  # False
+    data_loader_debug = True  # False
     mask_ratio = 4
 
     ds = create_dataloader(data_path, batch_size, [imgsz, imgsz], mask_ratio, mosaic, augment, degrees, translate,
-                           scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr, debug)
+                           scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr, data_loader_debug)
 
     # ds = ds.shuffle(10)
     sel_ds = ds.take(nexamples)
     # for bidx, (bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bmask) in enumerate(sel_ds):
-    for bidx, (bimg, bimg_labels_ragged, bmask) in enumerate(sel_ds):
+    for bidx, (bimg, bimg_labels_ragged, bmask, bpaths, bshapes) in enumerate(sel_ds):
         # for bidx, (img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged) in enumerate(sel_ds):
         #     for idx, (img, img_labels_ragged, img_filenames, img_shape, mask) in enumerate(zip(bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bmask)):
-        for idx, (img, img_labels_ragged, mask) in enumerate(zip(bimg, bimg_labels_ragged, bmask)):
+        for idx, (img, img_labels_ragged, mask, paths, shapes) in enumerate(zip(bimg, bimg_labels_ragged, bmask, bpaths, bshapes)):
             img_labels = img_labels_ragged  # .to_tensor() # convert from ragged
             d_s_factor = 4
             mask = tf.squeeze(

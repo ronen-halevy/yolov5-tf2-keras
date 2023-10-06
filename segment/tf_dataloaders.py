@@ -180,8 +180,11 @@ class LoadImagesAndLabelsAndMasks:
         mosaic = random.random() < self.mosaic
         if self.augment and mosaic:
             img, labels, segments  =self.load_mosaic(index)
+            shapes = tf.zeros([3,2], float) # for mAP rescaling. Dummy same shape (keep generator's spec) for mosaic
         else:
-            img = self.decode_resize(self.im_files[index], self.imgsz)
+            (img,(h0, w0),(h, w), pad)  = self.decode_resize(self.im_files[index], self.imgsz)
+            shapes = tf.constant(((float(h0), float(w0)), (h / h0, w / w0), pad) ) # for mAP rescaling.
+
             segments= tf.ragged.constant( self.segments[index])
             segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, self.imgsz[0], self.imgsz[1], padw=0, padh=0), elems=segments,
                             fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
@@ -216,7 +219,7 @@ class LoadImagesAndLabelsAndMasks:
             img, labels, masks = self.augmentation(img, labels, masks)
             img = tf.cast(img, tf.float32)/255
         labels= tf.RaggedTensor.from_tensor(labels)
-        return (img, labels,  masks,)
+        return (img, labels,  masks, tf.constant(self.im_files[index]), shapes)
 
 
 
@@ -226,11 +229,12 @@ class LoadImagesAndLabelsAndMasks:
             yield self[i]
 
     def decode_resize(self, filename, size):
-        img_st = tf.io.read_file(filename)
-        img_dec = tf.image.decode_image(img_st, channels=3, expand_animations=False)
-        img11 = tf.cast(img_dec, tf.float32)
-        img11 = tf.image.resize(img11 / 255, size)
-        return img11
+        img_orig = tf.io.read_file(filename)
+
+        img = tf.image.decode_image(img_orig, channels=3, expand_animations=False)
+        img = tf.cast(img, tf.float32)
+        img_resized = tf.image.resize(img / 255, size)
+        return (img, img.shape[:2],  img_resized.shape[:2], (0.,0. )) # pad is 0 by def while aspect ratio not preserved
 
     def scatter_img_to_mosaic(self, dst_img, src_img, dst_xy):
         """
@@ -429,7 +433,7 @@ class LoadImagesAndLabelsAndMasks:
                 x1a, y1a, x2a, y2a = xc, yc, tf.math.minimum(xc + w, w * 2), tf.math.minimum(w * 2, yc + h)  #
                 x1b, y1b, x2b, y2b = 0, 0, tf.math.minimum(w, x2a - x1a), tf.math.minimum(y2a - y1a,
                                                                                           h)  # src image fraction
-            img = self.decode_resize(self.image_files[index], self.imgsz)
+            img, _,_,_ = self.decode_resize(self.image_files[index], self.imgsz)
 
             img4 = self.scatter_img_to_mosaic(dst_img=img4, src_img=img[y1b:y2b, x1b:x2b], dst_xy=(x1a, x2a, y1a, y2a))
             padw = x1a - x1b  # shift of src scattered image from mosaic left end. Used for bbox and segment alignment.
@@ -521,13 +525,15 @@ def create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment,
                                                  tf.TensorSpec(shape=[imgsz[0], imgsz[1], 3], dtype=tf.float32, ),
                                                  tf.RaggedTensorSpec(shape=[None, 5], dtype=tf.float32,
                                                                      ragged_rank=1),
-                                                 tf.TensorSpec(shape=[160, 160], dtype=tf.float32,
-                                                                     ))
+                                                 tf.TensorSpec(shape=[160, 160], dtype=tf.float32),
+                                                 tf.TensorSpec(shape=(), dtype=tf.string),
+                                                               tf.TensorSpec(shape=[3,2], dtype=tf.float32)
+                                             )
                                              )
 
     if debug:
         for idx in range(len(loader)):
-            img, label, seg = loader[idx] # calling __getitem__
+            img, label, seg , paths, shapes = loader[idx] # calling __getitem__
             pass
 
 
