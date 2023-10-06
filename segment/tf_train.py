@@ -207,12 +207,13 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     nb = len(list(ds_train))  # number of batches
 
     for epoch in range(epochs):
-        pbar = enumerate(ds_train)
-        pbar = tqdm(pbar, total=nb, bar_format=TQDM_BAR_FORMAT)  # progress bar
+        # pbar = enumerate(ds_train)
+        pbar = tqdm(ds_train, total=nb, bar_format=TQDM_BAR_FORMAT)  # progress bar
 
         mloss = tf.zeros([4], dtype=tf.float32)  # mean losses
         # train:
-        for batch_idx, (bimages,  btargets, bmasks) in pbar:
+        for batch_idx, (bimages,  btargets, bmasks) in enumerate(pbar):
+            # ni = batch_idx + nb * epoch  # number integrated batches (since train start)
 
             # concat image index word to targets. result targets shape: [nt, 6] where nt total of target objectd
             new_btargets = []
@@ -231,24 +232,26 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                 # im = tf.expand_dims(image,axis=0)
                 pred = keras_model(bimages)  # forward
                 loss, loss_items = compute_loss(pred, new_btargets, bmasks)
-                lbox, lobj, lcls, lseg= tf.split(loss_items, num_or_size_splits=4, axis=-1)
+                # lbox, lobj, lcls, lseg= tf.split(loss_items, num_or_size_splits=4, axis=-1)
 
             grads = tape.gradient(loss, keras_model.trainable_variables)
             optimizer.apply_gradients(
                     zip(grads, keras_model.trainable_variables))
 
-            pbar.set_description(
-                f'{epoch}/{epochs - 1}_train_{batch_idx}_lr:{optimizer.lr.numpy():.4f}, '
-                f'totLoss:{loss.numpy()[0]:.4f}, '
-                f'lbox: {lbox.numpy()[0]:.4f}, '
-                f'lobj: {lobj.numpy()[0]:.4f}, '
-                f'lcls: {lcls.numpy()[0]:.4f}, '
-                f'lseg: {lseg.numpy()[0]:.4f}, ')
-
             mloss = (mloss * batch_idx + loss_items) / (batch_idx + 1)  # update mean losses
 
-            # pbar.set_description(('%11s' * 2 + '%11.4g' * 6) %
-            #                          (f'{epoch}/{epochs - 1}', mem, *mloss, targets.shape[0], imgs.shape[-1]))
+            LOGGER.info(('\n' + '%11s' * 7) % ('Epoch', 'box_loss', 'obj_loss', 'cls_loss', 'mask_loss','Instances', 'Size'))
+
+            pbar.set_description(('%11s' * 2 + '%11.4g' * 5) %
+                                 (f'{epoch}/{epochs - 1}',  *mloss.numpy(), btargets.shape[0], bimages.shape[1]))
+            #
+            # # Mosaic plots
+            # if plots:
+            #     if ni < 3:
+            #         plot_images_and_masks(bimages,  btargets, bmasks, paths, save_dir / f'train_batch{ni}.jpg')
+            #     if ni == 10:
+            #         files = sorted(save_dir.glob('train*.jpg'))
+            #         logger.log_images(files, 'Mosaics', epoch)
         keras_model.save_weights(
                     last)
 
