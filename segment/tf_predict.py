@@ -193,11 +193,13 @@ def run(
             visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if (
                         visualize and not load_model) else False
             if visualize:
-                pred, proto = tf_model.predict(im, visualize=visualize)
+                pred, proto, _ = tf_model.predict(im, visualize=visualize)
                 pred = pred.numpy()  # make it ndarray, same as keras predict output
             else:
-                pred, proto = keras_model(im) # .predict(im) # To enable bp inside model code, replace .predict(im) by (im)
+                # For step-by-step debug use keras_model(im)
+                pred, proto, _ = keras_model.predict(im) # model returns pred, proto, train_out:
         #     # NMS
+        pred=tf.squeeze(pred, axis=0)
         nms_pred=non_max_suppression(pred, conf_thres, iou_thres, max_det)
         b, h, w, ch = tf.cast(im.shape, tf.float32)  # batch, channel, height, width
         nms_pred = nms_pred.numpy()
@@ -315,7 +317,7 @@ def parse_opt():
                         help='load weights path')
     parser.add_argument('--weights_save_path', type=str, default=ROOT / 'segment/saved_weights/rr.tf',
                         help='save weights path')
-    parser.add_argument('--source', type=str, default=ROOT / 'data/images', help='file/dir/URL/glob/screen/0(webcam)')
+    parser.add_argument('--source', type=str, default='/home/ronen/devel/PycharmProjects/shapes-dataset/dataset/train/images')# default=ROOT / 'data/images', help='file/dir/URL/glob/screen/0(webcam)')
     parser.add_argument('--data', type=str, default=ROOT / 'data/coco128.yaml', help='(optional) dataset.yaml path')
     parser.add_argument('--class_names_file', type=str, default=ROOT / '../shapes-dataset/dataset/class.names',
                          help='class names')
@@ -353,6 +355,7 @@ def parse_opt():
 
 def main(opt):
     check_requirements(exclude=('tensorboard', 'thop'))
+
     run(**vars(opt))
 
 
