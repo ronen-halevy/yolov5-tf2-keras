@@ -25,15 +25,25 @@ import numpy as np
 import tensorflow as tf
 
 from tensorflow import keras
+from keras import mixed_precision
 
-from models.common import (C3, SPP, SPPF, Bottleneck, BottleneckCSP, C3x, Concat, Conv, CrossConv, DWConv,
-                           DWConvTranspose2d, Focus, autopad)
-from models.experimental import MixConv2d, attempt_load
-from models.yolo import Detect, Segment
-from utils.activations import SiLU
-from utils.general import LOGGER, make_divisible, print_args
+
+# from models.common import (C3, SPP, SPPF, Bottleneck, BottleneckCSP, C3x, Concat, Conv, CrossConv, DWConv,
+#                            DWConvTranspose2d, Focus, autopad)
+# from models.experimental import  attempt_load
+# from models.yolo import Detect, Segment
+# from utils.activations import SiLU
+from utils.tf_general import LOGGER, make_divisible, print_args
 
 from utils.tf_plots import feature_visualization
+
+def autopad(k, p=None, d=1):  # kernel, padding, dilation
+    # Pad to 'same' shape outputs
+    if d > 1:
+        k = d * (k - 1) + 1 if isinstance(k, int) else [d * (x - 1) + 1 for x in k]  # actual kernel-size
+    if p is None:
+        p = k // 2 if isinstance(k, int) else [x // 2 for x in k]  # auto-pad
+    return p
 
 
 class TFBN(keras.layers.Layer):
@@ -381,7 +391,7 @@ class TFDetect(keras.layers.Layer):
             x.append(self.m[i](inputs[i]))
             ny, nx = self.imgsz[0] // self.stride[i], self.imgsz[1] // self.stride[i]
             x[i] = tf.reshape(x[i], [-1,ny, nx, self.na,  self.no]) # from [bs,ny,nx,na*no] to [bs,ny,nx,na,no]
-            if not self.training:  # inference
+            if not self.training:  # inference: post process xywh values and pack all 3 out layers to a single array
                 y = x[i] # shape: [bs, ny,nx,na,xywh+conf+nc+nm]
                 # calulate bbox formulas:
                 xy = (tf.sigmoid(y[..., 0:2]) * 2 - 0.5 + self.grid[i]) / [nx, ny] # xy bbox formula, normalized  to 0-1
@@ -390,10 +400,10 @@ class TFDetect(keras.layers.Layer):
                 y = tf.concat([xy, wh, tf.sigmoid(y[..., 4:5 + self.nc]), y[..., 5 + self.nc:]], -1)
                 # from shape: [bs, ny,nx,na,xywh+conf+nc+nm] to  [bs,nx*ny*na,xy+wh+conf+nc,+nm]:
                 z.append(tf.reshape(y, [-1, self.na * ny * nx, self.no]))
-            else: # train
+            else: # train output a list of x[i] arrays , i=0:nl-1,  array shape:  [bs,na,ny,nx,no]
                 x[i] = tf.transpose(x[i], [0,3,1,2,4]) # from shape [bs,ny,nx,na, no] to [bs,na,ny,nx,no]
 
-        return  x if self.training else (tf.concat(z, 1), x)
+        return  x if self.training else (tf.concat(z, axis=1), x) # if not training output both outputs
 
     # @staticmethod
     # def _make_grid(nx=20, ny=20):
@@ -435,7 +445,7 @@ class TFSegment(TFDetect):
         # p = TFUpsample(None, scale_factor=4, mode='nearest')(self.proto(x[0]))  # (optional) full-size protos
         p = tf.transpose(p, [0, 3, 1, 2])  # from shape(1,160,160,32) to shape(1,32,160,160)
         x = self.detect(self, x)
-        return (x, p) if self.training else (x[0], p)
+        return (x, p) if self.training else (x[0], p, x[1])
 
     # # Solution for model saving error:
     # def get_config(self):
@@ -532,7 +542,7 @@ def parse_model(anchors, nc, gd, gw, mlist, ch, ref_model_seq, imgsz, training):
 
         n = max(round(n * gd), 1) if n > 1 else n  # depth gain
         if m_str in [
-                'nn.Conv2d', 'Conv', 'DWConv', 'DWConvTranspose2d', 'Bottleneck', 'SPP', 'SPPF', 'MixConv2d', 'Focus', 'CrossConv',
+                'nn.Conv2d', 'Conv', 'DWConv', 'DWConvTranspose2d', 'Bottleneck', 'SPP', 'SPPF',  'Focus', 'CrossConv',
                 'BottleneckCSP', 'C3', 'C3x']:
             c1, c2 = ch[f], args[0]
             c2 = make_divisible(c2 * gw, 8) if c2 != no else c2
@@ -541,8 +551,8 @@ def parse_model(anchors, nc, gd, gw, mlist, ch, ref_model_seq, imgsz, training):
             if m_str in ['BottleneckCSP', 'C3', 'C3x']:
                 args.insert(2, n)
                 n = 1
-        elif m_str is 'nn.BatchNorm2d':
-            args = [ch[f]]
+        # elif m_str is 'nn.BatchNorm2d':
+        #     args = [ch[f]]
         elif m_str == 'Concat':
             c2 = sum(ch[-1 if x == -1 else x + 1] for x in f)
         elif m_str in ['Detect', 'Segment']:
@@ -580,6 +590,8 @@ def parse_model(anchors, nc, gd, gw, mlist, ch, ref_model_seq, imgsz, training):
 class TFModel:
     # TF YOLOv5 model
     def __init__(self, cfg='', ch=3, nc=None, ref_model_seq=None, imgsz=(640, 640), training=True):  # model, channels, classes
+        # todo - check mixed precision. looks slow on amd cpu
+        # mixed_precision.set_global_policy('mixed_float16')
         super().__init__()
         if isinstance(cfg, dict):
             self.yaml = cfg  # model dict
@@ -691,19 +703,19 @@ class AgnosticNMS(keras.layers.Layer):
         return padded_boxes, padded_scores, padded_classes, valid_detections
 
 
-def activations(act=SiLU):
-    # Returns TF activation from input PyTorch activation
-    if 'LeakyReLU' in str(act): #  in ['nn.LeakyReLU']:
-    # if isinstance(act, nn.LeakyReLU):
-        return lambda x: keras.activations.relu(x, alpha=0.1)
-    elif 'Hardswish' in str(act): #  in ['Hardswish']:
-    # elif isinstance(act, nn.Hardswish):
-        return lambda x: x * tf.nn.relu6(x + 3) * 0.166666667
-    elif 'SiLU' in  str(act): #  in ['nn.SiLU', 'SiLU']:
-    # elif isinstance(act, (SiLU)):
-        return lambda x: keras.activations.swish(x)
-    else:
-        raise Exception(f'no matching TensorFlow activation found for PyTorch activation {act}')
+# def activations(act=SiLU):
+#     # Returns TF activation from input PyTorch activation
+#     if 'LeakyReLU' in str(act): #  in ['nn.LeakyReLU']:
+#     # if isinstance(act, nn.LeakyReLU):
+#         return lambda x: keras.activations.relu(x, alpha=0.1)
+#     elif 'Hardswish' in str(act): #  in ['Hardswish']:
+#     # elif isinstance(act, nn.Hardswish):
+#         return lambda x: x * tf.nn.relu6(x + 3) * 0.166666667
+#     elif 'SiLU' in  str(act): #  in ['nn.SiLU', 'SiLU']:
+#     # elif isinstance(act, (SiLU)):
+#         return lambda x: keras.activations.swish(x)
+#     else:
+#         raise Exception(f'no matching TensorFlow activation found for PyTorch activation {act}')
 
 
 def representative_dataset_gen(dataset, ncalib=100):

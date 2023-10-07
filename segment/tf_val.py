@@ -205,7 +205,7 @@ def run(
     jdict, stats = [], []
     # callbacks.run('on_val_start')
     # pbar = tqdm(dataloader, desc=s, bar_format=TQDM_BAR_FORMAT)  # progress bar
-    for batch_i, (batch_im, batch_targets,  batch_masks) in enumerate(ds):
+    for batch_i, (batch_im, batch_targets,  batch_masks, paths, shapes) in enumerate(ds):
 
         # concat idx in batch to targets. shape: [nt,5]->[nt,6], with [bindex,cls,xywh]
         new_targets = []
@@ -218,8 +218,8 @@ def run(
         batch_targets = tf.stack(new_targets, axis=0) # stack list's tensors
 
         # debug - todo add paths and shape to ds? todo
-        paths=tf.fill(batch_im.shape[0], 'path').numpy() # todo debug patch
-        shapes=tf.fill([batch_im.shape[0], 2], 640)# todo debug patch
+        # paths=tf.fill(batch_im.shape[0], 'path').numpy() # todo debug patch
+        # shapes=tf.fill([batch_im.shape[0], 2], 640)# todo debug patch
 
         # callbacks.run('on_val_batch_start')
         # batch_masks = tf.cast(batch_masks, tf.float32)

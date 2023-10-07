@@ -50,7 +50,7 @@ from utils.plots import plot_evolve, plot_labels
 from tf_dataloaders import create_dataloader
 from tf_loss import ComputeLoss
 from utils.segment.metrics import KEYS, fitness
-from utils.segment.plots import plot_images_and_masks, plot_results_with_masks
+from utils.segment.tf_plots import plot_images_and_masks, plot_results_with_masks
 from utils.torch_utils import (EarlyStopping, ModelEMA, de_parallel, select_device, smart_DDP, smart_optimizer,
                                smart_resume, torch_distributed_zero_first)
 
@@ -212,8 +212,8 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
         mloss = tf.zeros([4], dtype=tf.float32)  # mean losses
         # train:
-        for batch_idx, (bimages,  btargets, bmasks) in enumerate(pbar):
-            # ni = batch_idx + nb * epoch  # number integrated batches (since train start)
+        for batch_idx, (bimages,  btargets, bmasks, paths, shapes) in enumerate(pbar):
+            ni = batch_idx + nb * epoch  # number integrated batches (since train start)
 
             # concat image index word to targets. result targets shape: [nt, 6] where nt total of target objectd
             new_btargets = []
@@ -243,15 +243,15 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
             LOGGER.info(('\n' + '%11s' * 7) % ('Epoch', 'box_loss', 'obj_loss', 'cls_loss', 'mask_loss','Instances', 'Size'))
 
             pbar.set_description(('%11s' * 2 + '%11.4g' * 5) %
-                                 (f'{epoch}/{epochs - 1}',  *mloss.numpy(), btargets.shape[0], bimages.shape[1]))
-            #
-            # # Mosaic plots
-            # if plots:
-            #     if ni < 3:
-            #         plot_images_and_masks(bimages,  btargets, bmasks, paths, save_dir / f'train_batch{ni}.jpg')
-            #     if ni == 10:
-            #         files = sorted(save_dir.glob('train*.jpg'))
-            #         logger.log_images(files, 'Mosaics', epoch)
+                                 (f'{epoch}/{epochs - 1}',  *mloss.numpy(), new_btargets.shape[0], bimages.shape[1]))
+            # 
+            # Mosaic plots
+            if plots:
+                if ni < 3:
+                    plot_images_and_masks(bimages,  new_btargets, bmasks, paths, save_dir / f'train_batch{ni}.jpg')
+                if ni == 10:
+                    files = sorted(save_dir.glob('train*.jpg'))
+                    logger.log_images(files, 'Mosaics', epoch)
         keras_model.save_weights(
                     last)
 
@@ -264,7 +264,7 @@ def parse_opt(known=False):
     parser.add_argument('--cfg', type=str, default='../models/segment/yolov5s-seg.yaml', help='model.yaml path')
     parser.add_argument('--data', type=str, default=ROOT / 'data/shapes-seg.yaml', help='dataset.yaml path')
     parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.scratch-low.yaml', help='hyperparameters path')
-    parser.add_argument('--epochs', type=int, default=100, help='total training epochs')
+    parser.add_argument('--epochs', type=int, default=2, help='total training epochs')
     parser.add_argument('--batch-size', type=int, default=4, help='total batch size for all GPUs, -1 for autobatch')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='train, val image size (pixels)')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
