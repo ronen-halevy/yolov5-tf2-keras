@@ -59,6 +59,7 @@ import tensorflow as tf
 from tensorflow import keras
 import numpy as np
 from models.tf_model import TFModel
+import segment.tf_val as validate  # for end-of-epoch mAP
 
 from load_train_data import LoadTrainData
 from tf_create_dataset import CreateDataset
@@ -100,9 +101,9 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     opt.hyp = hyp.copy()  # for saving hyps to checkpoints
 
     # affine params:
-    degrees,translate,scale,shear,perspective = hyp['degrees'],hyp['translate'], hyp['scale'],hyp['shear'],hyp['perspective']
+    # degrees,translate,scale,shear,perspective = hyp['degrees'],hyp['translate'], hyp['scale'],hyp['shear'],hyp['perspective']
     # augmentation params:
-    hgain, sgain, vgain, flipud, fliplr =hyp['hsv_h'],hyp['hsv_s'],hyp['hsv_v'],hyp['flipud'],hyp['fliplr']
+    # hgain, sgain, vgain, flipud, fliplr =hyp['hsv_h'],hyp['hsv_s'],hyp['hsv_v'],hyp['flipud'],hyp['fliplr']
 
 
     # Save run settings
@@ -112,8 +113,8 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
     # Loggers
     data_dict = None
-    if RANK in {-1, 0}:
-        logger = GenericLogger(opt=opt, console_logger=LOGGER)
+    # if RANK in {-1, 0}:
+    logger = GenericLogger(opt=opt, console_logger=LOGGER)
 
 
     # Config
@@ -122,6 +123,8 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # cuda = device.type != 'cpu'
     # init_seeds(opt.seed + 1 + RANK, deterministic=True)
     # with torch_distributed_zero_first(LOCAL_RANK):
+    # with open(data, errors='ignore') as f:
+    #     data_dict= yaml.safe_load(f)
     data_dict = data_dict or check_dataset(data)  # check if None
     train_path, val_path = data_dict['train'], data_dict['val']
 
@@ -134,14 +137,10 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # val_image_files, val_labels, val_segments = ltd.load_data(val_path, mosaic)
 
     # ds_val=create_dataset(val_image_files, val_labels, val_segments)
-    ds_train = create_dataloader(train_path, batch_size,imgsz, mask_ratio, mosaic, augment, degrees, translate,
-                                 scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr)
-
-
 
     nc = 1 if single_cls else int(data_dict['nc'])  # number of classes
-    names = {0: 'item'} if single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
-    is_coco = isinstance(val_path, str) and val_path.endswith('coco/val2017.txt')  # COCO dataset
+    # names = {0: 'item'} if single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
+    # is_coco = isinstance(val_path, str) and val_path.endswith('coco/val2017.txt')  # COCO dataset
 
     # Model
     dynamic = False
@@ -152,7 +151,13 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # s=640
     ch=3
 
-    keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im))
+    keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im), name='train')
+
+    val_tf_model = TFModel(cfg=cfg,
+                       ref_model_seq=None, nc=80, imgsz=imgsz, training=False)
+
+    val_keras_model = tf.keras.Model(inputs=im, outputs=val_tf_model.predict(im), name='validation')
+
     # extract stride to adjust anchors:
     stride =[imgsz[0] / x.shape[2] for x in keras_model.predict(tf.zeros([1,*imgsz, ch]))[0]]
     # keras_model.compile()
@@ -185,7 +190,8 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     optimizer = tf.keras.optimizers.Adam(learning_rate= hyp['lr0'],  weight_decay=hyp['weight_decay'])
 
 
-    # Scheduler
+
+    # Scheduler   # todo check scheduler issue:
     # if opt.cos_lr:
     #     lf = one_cycle(1, hyp['lrf'], epochs)  # cosine 1->hyp['lrf']
     # else:
@@ -193,9 +199,16 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)  # plot_lr_scheduler(optimizer, scheduler, epochs)
 
     # EMA
-    ema = tf.train.ExponentialMovingAverage(decay=0.9999) # todo
-
+    # ema = tf.train.ExponentialMovingAverage(decay=0.9999) # todo check ema
+    # Resume - TBD todo
     # nc = tf_model.nc  # number of classes
+
+    train_dataset = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp)
+
+    val_path=train_path # todo fix debug
+    val_dataset = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp)
+
+
     anchors = tf.reshape(tf_model.anchors, [len(tf_model.anchors), -1, 2]) # shape: [nl, na, 2]
     anchors = tf.cast(anchors, tf.float32) / tf.reshape(stride, (-1, 1, 1)) # scale by stride to nl grid layers
 
@@ -203,12 +216,12 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     na = anchors.shape[1]  # number of anchors
 
     compute_loss = ComputeLoss( na,nl,nc,nm, anchors, hyp['fl_gamma'], hyp['box'], hyp['obj'], hyp['cls'], hyp['anchor_t'], autobalance=False)  # init loss class
-    # ds_train = ds_train.batch(batch_size)
-    nb = len(list(ds_train))  # number of batches
+    # train_dataset = train_dataset.batch(batch_size)
+    nb = len(list(train_dataset))  # number of batches
 
     for epoch in range(epochs):
-        # pbar = enumerate(ds_train)
-        pbar = tqdm(ds_train, total=nb, bar_format=TQDM_BAR_FORMAT)  # progress bar
+        # pbar = enumerate(train_dataset)
+        pbar = tqdm(train_dataset, total=nb, bar_format=TQDM_BAR_FORMAT)  # progress bar
 
         mloss = tf.zeros([4], dtype=tf.float32)  # mean losses
         # train:
@@ -252,6 +265,31 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                 if ni == 10:
                     files = sorted(save_dir.glob('train*.jpg'))
                     logger.log_images(files, 'Mosaics', epoch)
+        # end batch ------------------------------------------------------------------------------------------------
+        # Scheduler
+        # lr = [x['lr'] for x in optimizer.param_groups]  # for loggers - todo check
+        # scheduler.step()
+        # classes_name_file = '/home/ronen/devel/PycharmProjects/tf_yolov5/data/class-names/coco.names'
+        # class_names = [c.strip() for c in open(classes_name_file).readlines()]
+
+        # data_dict = {'nc': 80, 'names': class_names}
+        val_keras_model.set_weights(keras_model.get_weights())
+
+        results, maps, _ = validate.run(val_dataset,
+                                        data_dict,
+                                        batch_size=batch_size,
+                                        imgsz=imgsz,
+                                        half=False, # half precision model
+                                        model=val_keras_model, # todo use ema
+                                        single_cls=single_cls,
+                                        save_dir=save_dir,
+                                        plots=False,
+                                        callbacks=callbacks,
+                                        compute_loss=compute_loss,
+                                        mask_downsample_ratio=mask_ratio,
+                                        overlap=overlap)
+
+
         keras_model.save_weights(
                     last)
 
@@ -304,8 +342,8 @@ def parse_opt(known=False):
 
 def main(opt, callbacks=Callbacks()):
     # Checks
-    if RANK in {-1, 0}:
-        print_args(vars(opt))
+    # if RANK in {-1, 0}:
+    print_args(vars(opt))
         # check_git_status()
         # check_requirements(ROOT / 'requirements.txt')
 

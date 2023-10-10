@@ -134,7 +134,7 @@ def process_batch(detections, labels, iouv, pred_masks=None, gt_masks=None, over
 
 # @smart_inference_mode()
 def run(
-        ds,
+        dataloader,
         data,
         weights=None,  # model.pt path(s)
         batch_size=32,  # batch size
@@ -158,7 +158,6 @@ def run(
         half=True,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
         model=None,
-        dataloader=None,
         save_dir=Path(''),
         plots=True,
         overlap=False,
@@ -201,75 +200,41 @@ def run(
                                   "mAP50", "mAP50-95)")
     dt = Profile(), Profile(), Profile()
     metrics = Metrics()
-    loss = tf.zeros([4] )
+    loss = tf.zeros([4] ) # 4 loss sources: box, obj, cls, mask
     jdict, stats = [], []
     # callbacks.run('on_val_start')
     # pbar = tqdm(dataloader, desc=s, bar_format=TQDM_BAR_FORMAT)  # progress bar
-    for batch_i, (batch_im, batch_targets,  batch_masks, paths, shapes) in enumerate(ds):
+    for batch_i, (batch_im, batch_targets,  batch_masks, paths, shapes) in enumerate(dataloader):
 
-        # concat idx in batch to targets. shape: [nt,5]->[nt,6], with [bindex,cls,xywh]
+        # concat bidx to targets b4 flattening batch targets array [b,nt,5] -> [Nt,6]
         new_targets = []
-        for idx, targets in enumerate(batch_targets):
+        for idx, targets in enumerate(batch_targets): # loop on targets' batch
             if targets.shape[0]: # escape empty targets
                 bindex = tf.cast([idx], tf.float32)[None]
-                bindex = tf.tile(bindex, [targets.shape[0], 1])
-                new_targets.extend(tf.concat([bindex, targets.to_tensor()], axis=-1))  # [bindex,cls, xywh]
+                bindex = tf.tile(bindex, [targets.shape[0], 1]) # shape: [nt,1] , nt num of example's targets
+                new_targets.extend(tf.concat([bindex, targets.to_tensor()], axis=-1))  #[bindex,cls, xywh] shape: [nt,6]
 
-        batch_targets = tf.stack(new_targets, axis=0) # stack list's tensors
+        batch_targets = tf.stack(new_targets, axis=0) # stack all targets. shape:[Nt,6], Nt sum of all batches targets
 
-        # debug - todo add paths and shape to ds? todo
-        # paths=tf.fill(batch_im.shape[0], 'path').numpy() # todo debug patch
-        # shapes=tf.fill([batch_im.shape[0], 2], 640)# todo debug patch
-
-        # callbacks.run('on_val_batch_start')
-        # batch_masks = tf.cast(batch_masks, tf.float32)
-
-        # batch_im = tf.cast(batch_im, tf.float32) # Todo - consider 16 for mixed ## im.half() if half else im.float()  # uint8 to fp16/32
-        # batch_im = 255  # 0 - 255 to 0.0 - 1.0
         nb, _, height, width = batch_im.shape  # batch size, channels, height, width
 
 
-        # for img, _, _ in ds:
-        #     imm = img.numpy()[0] * 255
-        #     imm = imm.astype(np.uint8)
-        plt.imshow(batch_im.numpy()[0])
-        plt.show()
-        import cv2
-        mmmm0 = np.max(batch_im[0].numpy())
-        print('!!!!!mmmm0', mmmm0)
-
-        immm= batch_im[0].numpy()*255
-        immm=immm.astype(np.uint8)
-        mmmm = np.max(immm)
-        print('!!!!!mmmm', mmmm)
-
-        # cv2.imshow('fff', immm)
-        # if cv2.waitKey(0) == ord('q'):  # 1 millisecond
-        #     exit()
-        # plt.imshow(immm)
-        # plt.show()
-        # Inference
-        # with dt[1]:
-        preds, protos, train_out = model.predict(batch_im)
-        # imm=(batch_im[0].numpy() * 255).astype(np.uint8)
-
+        preds, protos, train_out = model(batch_im) # shapes: [b, N, 4+1+nc+nm], [b,nm.w/4,h/4], list, shapes:[b,na, gyi,gxi,4+1+nc+nm]
 
         # Loss
         if compute_loss:
-            loss += compute_loss((train_out, protos), batch_targets, batch_masks)[1]  # box, obj, cls
+            loss += compute_loss((train_out, protos), batch_targets, batch_masks)[1]  # box, obj, cls, mask
 
         # NMS
-        tbboxes = batch_targets[:, 2:] * (width, height, width, height)
+        tbboxes = batch_targets[:, 2:] * (width, height, width, height) # scale tbbox
 
-        batch_targets = tf.concat([batch_targets[:, 0:2], tbboxes], axis=-1)
+        batch_targets = tf.concat([batch_targets[:, 0:2], tbboxes], axis=-1) # re-concat targets [bi, cl, bbox]
         lb =  []  # for autolabelling
         plot_masks = []  # masks for plotting
 
-        for si, (pred, proto) in enumerate(zip(preds, protos)):
-            pred=non_max_suppression(pred, conf_thres, iou_thres, max_det)
+        for si, (pred, proto) in enumerate(zip(preds, protos)): # predictions loop
+            pred=non_max_suppression(pred, conf_thres, iou_thres, max_det) # pred shape: nboxes,
             b, h, w, ch = tf.cast(batch_im.shape, tf.float32)  # batch, channel, height, width
-            pred = pred.numpy()
-            # nms_pred[..., :4] *= [w, h, w, h]  # xywh normalized to pixels
 
             pbboxes = pred[..., :4] * [w, h, w, h]  # xywh normalized to pixels
             pred = tf.concat([pbboxes, pred[..., 4:]], axis=-1) # re-concat preds to [bboxes, conf,cls, 32masks_preds]
@@ -306,7 +271,7 @@ def run(
             # Masks
             midx = [si] # mask idx
             gt_masks = batch_masks[midx] # ground truth masks for the si-th pred
-            pred=pred.numpy() # todo fix process_mask to avoid this - also in predict
+            # pred=pred.numpy() # todo fix process_mask to avoid this - also in predict
             pred_masks = process(proto, pred[:, 6:], pred[:, :4], shape=batch_im[si].shape[:2]) # pred mask=mask@proto
 
             # Predictions
@@ -415,7 +380,7 @@ def run(
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}{s}")
     final_metric = mp_bbox, mr_bbox, map50_bbox, map_bbox, mp_mask, mr_mask, map50_mask, map_mask
-    return (*final_metric, *(loss / len(dataloader)).tolist()), metrics.get_maps(nc), t
+    return (*final_metric, *(loss / len(list(dataloader))).tolist()), metrics.get_maps(nc), t
 
 
 def parse_opt():

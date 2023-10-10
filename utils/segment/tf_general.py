@@ -54,13 +54,8 @@ def process_mask(protos, masks_in, bboxes, shape, upsample=False):
 
     masks =  tf.sigmoid(masks_in @ tf.reshape(protos, [ch, -1])  )# CHW
     masks = tf.reshape(masks, (-1, mh, mw))
-    downsampled_bboxes = bboxes.copy()
 
-    downsampled_bboxes[:, 0] *= mw / iw
-    downsampled_bboxes[:, 2] *= mw / iw
-    downsampled_bboxes[:, 3] *= mh / ih
-    downsampled_bboxes[:, 1] *= mh / ih
-
+    downsampled_bboxes = tf.concat([bboxes[:, 0:1]* mw / iw, bboxes[:, 1:2]* mh / ih,bboxes[:, 2:3]* mw / iw,bboxes[:, 3:4]* mh / ih], axis=-1)
     masks = crop_mask(masks, downsampled_bboxes)  # CHW
     if upsample:
         # masks = F.interpolate(masks[None], shape, mode='bilinear', align_corners=False)[0]  # CHW
