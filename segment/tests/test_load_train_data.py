@@ -117,17 +117,24 @@ def test_dataset_creation(data_path, imgsz=640, line_thickness=3, nexamples=3, s
         hyp = yaml.safe_load(f)  # load hyps dict
 
     mosaic = False
-    degrees, translate, scale, shear, perspective = hyp['degrees'], hyp['translate'], hyp['scale'], hyp['shear'], hyp[
-        'perspective']
+    # degrees, translate, scale, shear, perspective = hyp['degrees'], hyp['translate'], hyp['scale'], hyp['shear'], hyp[
+    #     'perspective']
     augment = True
-    hgain, sgain, vgain, flipud, fliplr = hyp['hsv_h'], hyp['hsv_s'], hyp['hsv_v'], hyp['flipud'], hyp['fliplr']
+    # hgain, sgain, vgain, flipud, fliplr = hyp['hsv_h'], hyp['hsv_s'], hyp['hsv_v'], hyp['flipud'], hyp['fliplr']
     batch_size = 2
     data_loader_debug = True  # False
     mask_ratio = 4
+    degrees, translate, scale, shear, perspective = hyp['degrees'], hyp['translate'], hyp['scale'], hyp['shear'], hyp[  'perspective']
+    hgain, sgain, vgain, flipud, fliplr = hyp['hsv_h'], hyp['hsv_s'], hyp['hsv_v'], hyp['flipud'], hyp['fliplr']
 
-    ds = create_dataloader(data_path, batch_size, [imgsz, imgsz], mask_ratio, mosaic, augment, degrees, translate,
-                           scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr, data_loader_debug)
+    # ds = create_dataloader(data_path, batch_size, [imgsz, imgsz], mask_ratio, mosaic, augment,hyp, data_loader_debug)
+    # ds = create_dataloader(data_path, batch_size, [imgsz, imgsz], mask_ratio, mosaic, augment, degrees, translate,
+    #                        scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr, data_loader_debug)
 
+    ds = create_dataloader(data_path, batch_size,  [imgsz, imgsz], mask_ratio, mosaic, augment, hyp, data_loader_debug)
+
+    # ss  = len(ds)
+    # print(ss)
     # ds = ds.shuffle(10)
     sel_ds = ds.take(nexamples)
     # for bidx, (bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bmask) in enumerate(sel_ds):
