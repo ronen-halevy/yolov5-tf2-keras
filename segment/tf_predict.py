@@ -231,6 +231,7 @@ def run(
                                               im0.shape).round()  # rescale boxes to im0 size
                 masks = process_mask_native(proto, nms_pred[:, 6:], nms_pred[:, :4], im0.shape[:2])  # HWC
             else:
+                # Do:  a. mask=mask@proto b. crop to dounsampled by 4 predicted bbox bounderies:
                 masks = process_mask(proto, nms_pred[:, 6:], nms_pred[:, :4], im.shape[0:2], upsample=True)  # HWC
                 nms_pred[:, :4] = scale_boxes(im.shape[0:2], nms_pred[:, :4],
                                               im0.shape).round()  # rescale boxes to im0 size
