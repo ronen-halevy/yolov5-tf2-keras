@@ -59,7 +59,7 @@ if __name__ == '__main__':
     batch_size=2
     debug_dataloader=True
     mask_ratio=4
-    ds, ds_len = create_dataloader(data_path, batch_size,imgsz,mask_ratio, mosaic, augment,  hyp, debug_dataloader)
+    ds, ds_len = create_dataloader(data_path, batch_size,imgsz,mask_ratio, mosaic, augment,  hyp)
 
 
     print(f"Results saved to {save_dir}")

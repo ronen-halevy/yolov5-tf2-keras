@@ -23,6 +23,8 @@ FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
 
 from segment.load_train_data import LoadTrainData
+from segment.tf_dataloaders import LoadImagesAndLabelsAndMasks
+
 from segment.tf_dataloaders import create_dataloader
 from utils.tf_general import increment_path
 from utils.segment.tf_general import masks2segments, process_mask, process_mask_native
@@ -111,36 +113,43 @@ if __name__ == '__main__':
         sys.path.append(str(ROOT))  # add ROOT to PATH
 
 
-def test_dataset_creation(data_path, imgsz=640, line_thickness=3, nexamples=3, save_dir='./dataset'):
+def test_dataset_creation(data_path, imgsz=[640,640], line_thickness=3, nexamples=3, save_dir='./dataset'):
     hyp = '../../data/hyps/hyp.scratch-low.yaml'
     with open(hyp, errors='ignore') as f:
         hyp = yaml.safe_load(f)  # load hyps dict
 
     mosaic = False
-    # degrees, translate, scale, shear, perspective = hyp['degrees'], hyp['translate'], hyp['scale'], hyp['shear'], hyp[
-    #     'perspective']
     augment = True
-    # hgain, sgain, vgain, flipud, fliplr = hyp['hsv_h'], hyp['hsv_s'], hyp['hsv_v'], hyp['flipud'], hyp['fliplr']
     batch_size = 2
     data_loader_debug = True  # False
     mask_ratio = 4
-    degrees, translate, scale, shear, perspective = hyp['degrees'], hyp['translate'], hyp['scale'], hyp['shear'], hyp[  'perspective']
-    hgain, sgain, vgain, flipud, fliplr = hyp['hsv_h'], hyp['hsv_s'], hyp['hsv_v'], hyp['flipud'], hyp['fliplr']
 
-    # ds = create_dataloader(data_path, batch_size, [imgsz, imgsz], mask_ratio, mosaic, augment,hyp, data_loader_debug)
-    # ds = create_dataloader(data_path, batch_size, [imgsz, imgsz], mask_ratio, mosaic, augment, degrees, translate,
-    #                        scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr, data_loader_debug)
 
-    ds, ds_len = create_dataloader(data_path, batch_size,  [imgsz, imgsz], mask_ratio, mosaic, augment, hyp, data_loader_debug)
+    loader =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mask_ratio, mosaic, augment, hyp)
+    ds_len = len(loader)
 
-    # ss  = len(ds)
-    # print(ss)
-    # ds = ds.shuffle(10)
+    if data_loader_debug:
+        for idx in range(len(loader)):
+            img, label, mask , paths, shapes = loader[idx] # calling __getitem__
+            pass
+
+    dataset = tf.data.Dataset.from_generator(loader.iter,
+                                             output_signature=(
+                                                 tf.TensorSpec(shape=[imgsz[0], imgsz[1], 3], dtype=tf.float32, ),
+                                                 tf.RaggedTensorSpec(shape=[None, 5], dtype=tf.float32,
+                                                                     ragged_rank=1),
+                                                 tf.TensorSpec(shape=[160, 160], dtype=tf.float32),
+                                                 tf.TensorSpec(shape=(), dtype=tf.string),
+                                                               tf.TensorSpec(shape=[3,2], dtype=tf.float32)
+                                             )
+                                             )
+
+
+
+    ds=dataset.batch(batch_size)
+
     sel_ds = ds.take(nexamples)
-    # for bidx, (bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bmask) in enumerate(sel_ds):
     for bidx, (bimg, bimg_labels_ragged, bmask, bpaths, bshapes) in enumerate(sel_ds):
-        # for bidx, (img, img_labels_ragged, img_filenames, img_shape, img_segments_ragged) in enumerate(sel_ds):
-        #     for idx, (img, img_labels_ragged, img_filenames, img_shape, mask) in enumerate(zip(bimg, bimg_labels_ragged, bimg_filenames, bimg_shape, bmask)):
         for idx, (img, img_labels_ragged, mask, paths, shapes) in enumerate(zip(bimg, bimg_labels_ragged, bmask, bpaths, bshapes)):
             img_labels = img_labels_ragged  # .to_tensor() # convert from ragged
             d_s_factor = 4
@@ -164,5 +173,5 @@ if __name__ == '__main__':
     data_path = '/home/ronen/devel/PycharmProjects/shapes-dataset/dataset/train'
 
     save_dir.mkdir(parents=True, exist_ok=True)
-    test_dataset_creation(data_path, imgsz, line_thickness=3, nexamples=3, save_dir=save_dir)
+    test_dataset_creation(data_path, [imgsz,imgsz] , line_thickness=3, nexamples=3, save_dir=save_dir)
     print(f"Results saved to {save_dir}")

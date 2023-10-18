@@ -179,6 +179,18 @@ class LoadImagesAndLabelsAndMasks:
 
     def __len__(self):
         return len(self.im_files)
+
+    '''
+    return:
+    img: float, [0,1.], shape: [640,640,3] 
+    labels: RaggedTensor, float shapeL [Nti, 5] Where Nti varies between images 
+    masks:  float32 shape:[h/4,w/4], pixels values: 0: nomask. smalest mask with largest pixel values.
+    paths: Tensor, string. image path on disk
+    shapes: Tensor, float32, shape: [3,2] [[h,w], [ h / h0, w / w0], [padh padw]]
+     
+     tf.constant(self.im_files[index]), shapes)
+    '''
+
     def __getitem__(self, index):
         is_ragged=False
         # index = self.indices[index]
@@ -523,7 +535,7 @@ def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
     cv2.fillPoly(mask, np.asarray(polygon), color=1)
     return mask # shape: [img_size]
 
-def create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp, debug=False):
+def create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp):
     loader =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mask_ratio, mosaic, augment, hyp)
     data_length = len(loader)
 
@@ -537,11 +549,6 @@ def create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment,
                                                                tf.TensorSpec(shape=[3,2], dtype=tf.float32)
                                              )
                                              )
-
-    if debug:
-        for idx in range(len(loader)):
-            img, label, seg , paths, shapes = loader[idx] # calling __getitem__
-            pass
 
 
     dataset=dataset.batch(batch_size)
@@ -561,9 +568,8 @@ if __name__ == '__main__':
     hgain, sgain, vgain, flipud, fliplr =hyp['hsv_h'],hyp['hsv_s'],hyp['hsv_v'],hyp['flipud'],hyp['fliplr']
     augment=False
     batch_size=2
-    debug=True
     mask_ratio = 4
-    dataset = create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, degrees, translate, hyp, debug)
+    dataset = create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, degrees, translate, hyp)
 
 
     for img, labels, mask in dataset:
