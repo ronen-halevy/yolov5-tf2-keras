@@ -51,8 +51,7 @@ from tf_dataloaders import create_dataloader
 from tf_loss import ComputeLoss
 from utils.segment.metrics import KEYS, fitness
 from utils.segment.tf_plots import plot_images_and_masks, plot_results_with_masks
-from utils.torch_utils import (EarlyStopping, ModelEMA, de_parallel, select_device, smart_DDP, smart_optimizer,
-                               smart_resume, torch_distributed_zero_first)
+from utils.tf_utils import (EarlyStopping)
 
 
 import tensorflow as tf
@@ -60,6 +59,7 @@ from tensorflow import keras
 import numpy as np
 from models.tf_model import TFModel
 import segment.tf_val as validate  # for end-of-epoch mAP
+from optimizer import LRSchedule
 
 from load_train_data import LoadTrainData
 from tf_create_dataset import CreateDataset
@@ -167,7 +167,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     best_fitness, start_epoch = 0.0, 0
 
     # check_suffix(weights, '.pt')  # check weights
-    pretrained = weights.endswith('.h5')
+    pretrained = weights.endswith('.tf')
     if pretrained:
         keras_model.load_weights(weights)
 
@@ -181,14 +181,11 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     #         LOGGER.info(f'freezing {k}')
     #         v.requires_grad = False
 
-
     # Optimizer
     nbs = 64  # nominal batch size
     accumulate = max(round(nbs / batch_size), 1)  # accumulate loss before optimizing
     hyp['weight_decay'] *= batch_size * accumulate / nbs  # scale weight_decay # see notes: https://github.com/ultralytics/yolov5/issues/6757 https://github.com/ultralytics/yolov5/discussions/2452
     # optimizer = smart_optimizer(model, opt.optimizer, hyp['lr0'], hyp['momentum'], hyp['weight_decay'])
-    optimizer = tf.keras.optimizers.Adam(learning_rate= hyp['lr0'],  weight_decay=hyp['weight_decay'])
-
 
 
     # Scheduler   # todo check scheduler issue:
@@ -203,21 +200,29 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # Resume - TBD todo
     # nc = tf_model.nc  # number of classes
 
-    train_dataset = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp)
+    train_dataset, train_dataset_length = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp)
 
     val_path=train_path # todo fix debug
-    val_dataset = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp)
+    val_dataset, val_dataset_length = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp)
 
 
-    anchors = tf.reshape(tf_model.anchors, [len(tf_model.anchors), -1, 2]) # shape: [nl, na, 2]
+    anchors = tf.reshape(tf_model.anchors, [len(tf_model.anchors), -1, 2]) # shape: [nl, np, 2]
     anchors = tf.cast(anchors, tf.float32) / tf.reshape(stride, (-1, 1, 1)) # scale by stride to nl grid layers
 
     nl = anchors.shape[0] # number of layers (output grids)
     na = anchors.shape[1]  # number of anchors
 
     compute_loss = ComputeLoss( na,nl,nc,nm, anchors, hyp['fl_gamma'], hyp['box'], hyp['obj'], hyp['cls'], hyp['anchor_t'], autobalance=False)  # init loss class
+    stopper, stop = EarlyStopping(patience=opt.patience), False
+
     # train_dataset = train_dataset.batch(batch_size)
-    nb = len(list(train_dataset))  # number of batches
+    t0 = time.time()
+    nb = math.ceil(train_dataset_length/batch_size)
+    nw = max(round(hyp['warmup_epochs'] * nb), 100)  # number of lr warmup iterations, max(3 epochs, 100 iterations)
+    warmup_bias_lr=hyp['warmup_bias_lr']
+    optimizer = tf.keras.optimizers.Adam(learning_rate= LRSchedule( hyp['lr0'], hyp['lrf'], nb, nw, warmup_bias_lr, epochs,False),  weight_decay=hyp['weight_decay'])
+
+
 
     for epoch in range(epochs):
         # pbar = enumerate(train_dataset)
@@ -257,7 +262,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
             pbar.set_description(('%11s' * 2 + '%11.4g' * 5) %
                                  (f'{epoch}/{epochs - 1}',  *mloss.numpy(), new_btargets.shape[0], bimages.shape[1]))
-            # 
+            #
             # Mosaic plots
             if plots:
                 if ni < 3:
@@ -274,6 +279,9 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
         # data_dict = {'nc': 80, 'names': class_names}
         val_keras_model.set_weights(keras_model.get_weights())
+        # results, list[12] - mp_bbox, mr_bbox, map50_bbox, map_bbox, mp_mask, mr_mask, map50_mask, map_mask,  box_loss, obj_loss, cls_loss, mask_loss
+        # maps: array[nc]:  ap-bbox+ap-masks per class
+        final_epoch = (epoch + 1 == epochs) or stopper.possible_stop
 
         results, maps, _ = validate.run(val_dataset,
                                         data_dict,
@@ -293,7 +301,95 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         keras_model.save_weights(
                     last)
 
+        ########################################################
+        # Update best mAP
+        # fi=0.1*map50_bbox +0.9*map_bbox+0.1*map50_mask+0.9 map_maskzs
+        fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
+        stop = stopper(epoch=epoch, fitness=fi)  # early stop check
+        if fi > best_fitness:
+            best_fitness = fi
+        # log_vals = list(mloss) + list(results) + lr
+        # callbacks.run('on_fit_epoch_end', log_vals, epoch, best_fitness, fi)
+        # Log val metrics and media
+        # metrics_dict = dict(zip(KEYS, log_vals))
+        # logger.log_metrics(metrics_dict, epoch)
 
+        # Save model
+        if (not nosave) or (final_epoch and not evolve):  # if save
+            # ckpt = {
+            #     'epoch': epoch,
+            #     'best_fitness': best_fitness,
+            #     'model': deepcopy(de_parallel(model)).half(),
+            #     'ema': deepcopy(ema.ema).half(),
+            #     'updates': ema.updates,
+            #     'optimizer': optimizer.state_dict(),
+            #     'opt': vars(opt),
+            #     'git': GIT_INFO,  # {remote, branch, commit} if a git repo
+            #     'date': datetime.now().isoformat()}
+
+            # Save last, best and delete
+            # torch.save(ckpt, last)
+            keras_model.save_weights(
+                last)
+            if best_fitness == fi:
+                keras_model.save_weights(
+                    best)
+                # torch.save(ckpt, best)
+            if opt.save_period > 0 and epoch % opt.save_period == 0:
+                keras_model.save_weights(
+                    w / f'epoch{epoch}.tf')
+                logger.log_model(w / f'epoch{epoch}.pt')
+            # callbacks.run('on_model_save', last, epoch, final_epoch, best_fitness, fi)
+
+        # EarlyStopping
+
+        if stop:
+            break  # must break all DDP ranks
+
+    # end epoch ----------------------------------------------------------------------------------------------------
+    # end training -----------------------------------------------------------------------------------------------------
+    # if RANK in {-1, 0}:
+    LOGGER.info(f'\n{epoch - start_epoch + 1} epochs completed in {(time.time() - t0) / 3600:.3f} hours.')
+    # for f in last, best:
+    #     if f.exists():
+    #         # strip_optimizer(f)  # strip optimizers
+    #         if f is best:
+    #             LOGGER.info(f'\nValidating {f}...')
+    #             results, _, _ = validate.run(
+    #                 data_dict,
+    #                 batch_size=batch_size // WORLD_SIZE * 2,
+    #                 imgsz=imgsz,
+    #                 model=attempt_load(f, device).half(),
+    #                 iou_thres=0.65 if is_coco else 0.60,  # best pycocotools at iou 0.65
+    #                 single_cls=single_cls,
+    #                 dataloader=val_loader,
+    #                 save_dir=save_dir,
+    #                 save_json=is_coco,
+    #                 verbose=True,
+    #                 plots=plots,
+    #                 callbacks=callbacks,
+    #                 compute_loss=compute_loss,
+    #                 mask_downsample_ratio=mask_ratio,
+    #                 overlap=overlap)  # val best model with plots
+    #             if is_coco:
+    #                 # callbacks.run('on_fit_epoch_end', list(mloss) + list(results) + lr, epoch, best_fitness, fi)
+    #                 metrics_dict = dict(zip(KEYS, list(mloss) + list(results) + lr))
+    #                 logger.log_metrics(metrics_dict, epoch)
+    #
+    #     # callbacks.run('on_train_end', last, best, epoch, results)
+    #     # on train end callback using genericLogger
+    #     logger.log_metrics(dict(zip(KEYS[4:16], results)), epochs)
+    #     if not opt.evolve:
+    #         logger.log_model(best, epoch)
+    #     if plots:
+    #         plot_results_with_masks(file=save_dir / 'results.csv')  # save results.png
+    #         files = ['results.png', 'confusion_matrix.png', *(f'{x}_curve.png' for x in ('F1', 'PR', 'P', 'R'))]
+    #         files = [(save_dir / f) for f in files if (save_dir / f).exists()]  # filter
+    #         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}")
+    #         logger.log_images(files, 'Results', epoch + 1)
+    #         logger.log_images(sorted(save_dir.glob('val*.jpg')), 'Validation', epoch + 1)
+    # # torch.cuda.empty_cache()
+    return results
 
 
 def parse_opt(known=False):
@@ -302,8 +398,8 @@ def parse_opt(known=False):
     parser.add_argument('--cfg', type=str, default='../models/segment/yolov5s-seg.yaml', help='model.yaml path')
     parser.add_argument('--data', type=str, default=ROOT / 'data/shapes-seg.yaml', help='dataset.yaml path')
     parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.scratch-low.yaml', help='hyperparameters path')
-    parser.add_argument('--epochs', type=int, default=2, help='total training epochs')
-    parser.add_argument('--batch-size', type=int, default=4, help='total batch size for all GPUs, -1 for autobatch')
+    parser.add_argument('--epochs', type=int, default=200, help='total training epochs')
+    parser.add_argument('--batch-size', type=int, default=2, help='total batch size for all GPUs, -1 for autobatch')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='train, val image size (pixels)')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')

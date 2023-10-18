@@ -61,7 +61,7 @@ for orientation in ExifTags.TAGS.keys():
 
 # class LoadTrainData:
 class LoadImagesAndLabelsAndMasks:
-    def __init__(self, path, imgsz, mask_ratio, mosaic,augment, degrees, translate, scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr, debug=False):
+    def __init__(self, path, imgsz, mask_ratio, mosaic,augment, hyp, debug=False):
         self.im_files = self._make_file(path, IMG_FORMATS)
 
         self.label_files = self._img2label_paths(self.im_files)  # labels
@@ -78,14 +78,20 @@ class LoadImagesAndLabelsAndMasks:
         self.indices =  range(len(self.image_files))
         self.mosaic=mosaic
         self.debug = debug
+        self.hyp = hyp
 
         self.mosaic_border = [-imgsz[0] // 2,
                               -imgsz[1] // 2]  # mosaic center placed randimly at [-border, 2 * imgsz + border]
         self.imgsz = imgsz
-        self.augment, self.degrees, self.translate, self.scale, self.shear, self.perspective=augment, degrees, translate, scale, shear, perspective
+        # self.augment, self.degrees, self.translate, self.scale, self.shear, self.perspective=augment, degrees, translate, scale, shear, perspective
+        self.augment=augment
         self.downsample_ratio = mask_ratio  # yolo training requires downsampled by 4 mask
 
-        self.augmentation = Augmentation(hgain, sgain, vgain, flipud, fliplr)
+        self.augmentation = Augmentation( hsv_h=hyp["hsv_h"], hsv_s=hyp["hsv_s"], hsv_v=hyp["hsv_v"], flipud=hyp["flipud"], fliplr=hyp["fliplr"]        )
+        # self.augmentation = Augmentation(hgain, sgain, vgain, flipud, fliplr)
+
+    def __len__(self):
+        return len(self.image_file)
 
     def exif_size(self, img):
         # Returns exif-corrected PIL size
@@ -192,14 +198,14 @@ class LoadImagesAndLabelsAndMasks:
             labels = self.xywhn2xyxy(self.labels[index], self.imgsz[0], self.imgsz[1], padw=0, padh=0)
             if self.augment:
                 img, labels, segments = self.random_perspective(img,
-                                                                   labels,
-                                                                   segments,
-                                                                   degrees=self.degrees,
-                                                                   translate=self.translate,
-                                                                   scale=self.scale,
-                                                                   shear=self.shear,
-                                                                   perspective=self.perspective,
-                                                                   border=[0,0]
+                                                                labels,
+                                                                segments,
+                                                                degrees=self.hyp['degrees'],
+                                                                translate=self.hyp['translate'],
+                                                                scale=self.hyp['scale'],
+                                                                shear=self.hyp['shear'],
+                                                                perspective=self.hyp['perspective'],
+                                                                border=[0,0]
                                                                 )  # border to remove
                 is_ragged = False # segments not ragged, but upsampled to constant num of points
 
@@ -463,11 +469,11 @@ class LoadImagesAndLabelsAndMasks:
         img4, labels4, segments4 = self.random_perspective(img4,
                                                            labels4,
                                                            segments4,
-                                                           degrees=self.degrees,
-                                                           translate=self.translate,
-                                                           scale=self.scale,
-                                                           shear=self.shear,
-                                                           perspective=self.perspective,
+                                                           degrees=self.hyp['degrees'],
+                                                           translate=self.hyp['translate'],
+                                                           scale=self.hyp['scale'],
+                                                           shear=self.hyp['shear'],
+                                                           perspective=self.hyp['perspective'],
                                                            border=self.mosaic_border)  # border to remove
 
         return img4, labels4, segments4
@@ -517,8 +523,9 @@ def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
     cv2.fillPoly(mask, np.asarray(polygon), color=1)
     return mask # shape: [img_size]
 
-def create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr, debug=False):
-    loader =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mask_ratio, mosaic, augment, degrees, translate, scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr)
+def create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp, debug=False):
+    loader =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mask_ratio, mosaic, augment, hyp)
+    data_length = len(loader)
 
     dataset = tf.data.Dataset.from_generator(loader.iter,
                                              output_signature=(
@@ -539,7 +546,7 @@ def create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment,
 
     dataset=dataset.batch(batch_size)
 
-    return dataset
+    return dataset, data_length
 
 if __name__ == '__main__':
 
@@ -556,7 +563,7 @@ if __name__ == '__main__':
     batch_size=2
     debug=True
     mask_ratio = 4
-    dataset = create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr, debug)
+    dataset = create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, degrees, translate, hyp, debug)
 
 
     for img, labels, mask in dataset:
