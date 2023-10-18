@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 
 from segment.tf_loss import ComputeLoss
-
+from utils.segment.tf_metrics import fitness
 
 def create_model(cfg):
     dynamic = False
@@ -59,7 +59,7 @@ if __name__ == '__main__':
     batch_size=2
     debug_dataloader=True
     mask_ratio=4
-    ds = create_dataloader(data_path, batch_size,imgsz,mask_ratio, mosaic, augment, degrees, translate, scale, shear, perspective ,hgain, sgain, vgain, flipud, fliplr, debug_dataloader)
+    ds, ds_len = create_dataloader(data_path, batch_size,imgsz,mask_ratio, mosaic, augment,  hyp, debug_dataloader)
 
 
     print(f"Results saved to {save_dir}")
@@ -73,7 +73,7 @@ if __name__ == '__main__':
     model='TBD'
     single_cls=False
     val_loader='val_loader'
-    save_dir='runs/exp/train-seg/ex42'
+    save_dir='segment/runs/train-seg/exp' # /ex42'
     callbacks='tbd'
     compute_loss='compute_loss'
     mask_ratio=4
@@ -102,18 +102,64 @@ if __name__ == '__main__':
     nm=32
     compute_loss = ComputeLoss( na,nl,nc,nm, anchors, hyp['fl_gamma'], hyp['box'], hyp['obj'], hyp['cls'], hyp['anchor_t'], autobalance=False)  # init loss class
 
+    best_fitness, start_epoch = 0.0, 0
+    epochs=2
 
-    results, maps, _ = validate.run(ds,
-                                    data_dict,
-                                    batch_size=batch_size,
-                                    imgsz=imgsz,
-                                    half=amp,
-                                    model=keras_model,
-                                    single_cls=single_cls,
-                                    dataloader=val_loader,
-                                    save_dir=save_dir,
-                                    plots=False,
-                                    callbacks=callbacks,
-                                    compute_loss=compute_loss,
-                                    mask_downsample_ratio=mask_ratio,
-                                    overlap=overlap)
+    # save_dir = str(increment_path(Path(save_dir) , exist_ok=opt.exist_ok))
+    save_dir = increment_path(Path(f'{ROOT}/runs/tests/') / name, exist_ok=False)  # increment run
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+
+    for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
+        mloss = tf.zeros([4], dtype=tf.float32)  # mean losses
+
+        results, maps, _ = validate.run(ds,
+                                        data_dict,
+                                        batch_size=batch_size,
+                                        imgsz=imgsz,
+                                        half=amp,
+                                        model=keras_model,
+                                        single_cls=single_cls,
+                                        # dataloader=val_loader,
+                                        save_dir=save_dir,
+                                        plots=False,
+                                        callbacks=callbacks,
+                                        compute_loss=compute_loss,
+                                        mask_downsample_ratio=mask_ratio,
+                                        overlap=overlap)
+
+        import numpy as np
+        ####
+        # Update best mAP
+        fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
+        # stop = stopper(epoch=epoch, fitness=fi)  # early stop check
+        if fi > best_fitness:
+            best_fitness = fi
+        # log_vals = list(mloss) + list(results) + lr
+        # # callbacks.run('on_fit_epoch_end', log_vals, epoch, best_fitness, fi)
+        # # Log val metrics and media
+        # metrics_dict = dict(zip(KEYS, log_vals))
+        # logger.log_metrics(metrics_dict, epoch)
+        #
+        # # Save model
+        # if (not nosave) or (final_epoch and not evolve):  # if save
+        #     ckpt = {
+        #         'epoch': epoch,
+        #         'best_fitness': best_fitness,
+        #         'model': deepcopy(de_parallel(model)).half(),
+        #         'ema': deepcopy(ema.ema).half(),
+        #         'updates': ema.updates,
+        #         'optimizer': optimizer.state_dict(),
+        #         'opt': vars(opt),
+        #         'git': GIT_INFO,  # {remote, branch, commit} if a git repo
+        #         'date': datetime.now().isoformat()}
+        #
+        #     # Save last, best and delete
+        #     torch.save(ckpt, last)
+        #     if best_fitness == fi:
+        #         torch.save(ckpt, best)
+        #     if opt.save_period > 0 and epoch % opt.save_period == 0:
+        #         torch.save(ckpt, w / f'epoch{epoch}.pt')
+        #         logger.log_model(w / f'epoch{epoch}.pt')
+        #     del ckpt
+        #     # callbacks.run('on_model_save', last, epoch, final_epoch, best_fitness, fi)
