@@ -93,7 +93,15 @@ def save_one_json(predn, jdict, path, class_map, pred_masks):
 
 def process_batch(detections, labels, iouv, pred_masks=None, gt_masks=None, overlap=False, masks=False):
     """
-    Return correct prediction matrix
+    Return correct prediction matrix.
+    A prediction is a match for pred pidx and 0<=i<=nmAp if IoU(detections(pidx, :4], labels[tidx, 1:])>=iouv[i] and
+    labels[pidx, 0:1] == detections[tidx, 5]
+
+    if masks:
+         correct[idx0, i]= True is Iou(pbbox[idx0], tbbox[idx1])>= iouv[i] and pclass[idx0]==tclass[idx1]
+
+    else:
+        correct[idx0, i]= True is Iou(pbbox[idx0], tbbox[idx1])>= iouv[i] and pclass[idx0]==tclass[idx1]
     Arguments:
         detections (array[N, 6]), x1, y1, x2, y2, conf, class
         labels (array[M, 5]), class, x1, y1, x2, y2
@@ -103,32 +111,35 @@ def process_batch(detections, labels, iouv, pred_masks=None, gt_masks=None, over
     """
     if masks:
     #     if overlap:
-        nl = len(labels)
-        index = tf.reshape(tf.range(nl), [nl, 1, 1]) + 1 #
-        gt_masks = tf.tile(gt_masks, (nl, 1, 1))  # shape(1,640,640) -> (nl,640,640)
-        gt_masks = tf.where(gt_masks == index, 1.0, 0.0) # nl per label gt masks.change pixels value: nl+1->1
-        if gt_masks.shape[1:] != pred_masks.shape[1:]:
+        nl = len(labels) # num of target labels
+        index = tf.reshape(tf.range(nl), [nl, 1, 1]) + 1  # index shape: [nl,1,1]
+        gt_masks = tf.tile(gt_masks, (nl, 1, 1))   # duplicate tmask nl times. shape(1,640,640) -> (nl,640,640)
+        gt_masks = tf.where(gt_masks == index, 1.0, 0.0)  #each mask instance holds a single mask, pixels set to 1
+        if gt_masks.shape[1:] != pred_masks.shape[1:]: # if diff sizes - rescale
             gt_masks = tf.image.resize(gt_masks[...,None], pred_masks.shape[1:]) # F.interpolate(gt_masks[None], pred_masks.shape[1:], mode="bilinear", align_corners=False)[0]
             gt_masks = gt_masks.gt_(0.5) # after bilinear interpolation, take mask pixels above 0,5
-        # iou between Ng gt_masks and Np pred masks. iou resultant shape: [Ng,Np]
-        iou = mask_iou(tf.reshape(gt_masks, (gt_masks.shape[0], -1)), tf.reshape(pred_masks, (pred_masks.shape[0], -1))) # iou of gt & pred
+        # iou between Nti and Npi pred masks. iou resultant shape: [Nti,Npi]
+        iou = mask_iou(tf.reshape(gt_masks, (gt_masks.shape[0], -1)), tf.reshape(pred_masks, (pred_masks.shape[0], -1)))
     else:  # boxes
+        # iou between Nti and Npi pred boxes. iou resultant shape: [Nti,Npi]
         iou = box_iou(labels[:, 1:], detections[:, :4])
 
-    correct = np.zeros((detections.shape[0], iouv.shape[0])).astype(bool) # Npreds rows x 10 cols
-    correct_class = labels[:, 0:1] == detections[:, 5] #
+    correct = np.zeros((detections.shape[0], iouv.shape[0])).astype(bool) # shape: [Nd, nmAp], nmAp=10. Init vals: False
+    correct_class = labels[:, 0:1] == detections[:, 5] # shape: [Nti, Npi] True if tclass=pclass
     for i in range(len(iouv)): # loop on 10 mAPs vector
+        # x holds 2d indices to IoU elements, which cond is True. (tensor([x0,x1,..xn]), tensor([y0,y1,...yn]))
         x = tf.where(tf.math.logical_and((iou >= iouv[i]) , correct_class))
         # x = tf.cast(x, tf.float32) # where returns int64
         if x.shape[0]:
-            matches = (tf.concat((tf.cast(x, tf.float32),tf.gather_nd(iou, x)[..., None]), 1) # todo review
-                       .numpy())  # [label, detect, iou]
-            if x[0].shape[0] > 1:
-                matches = matches[matches[:, 2].argsort()[::-1]]
+            # matches: [[id00, idy10, iou[id00, id10]].....[id0n, id1n, iou[id0n, id1n]]   shape: (N, 3]
+            matches = (tf.concat((tf.stack(x, 1),tf.gather_nd(iou, x)[..., None]), 1).numpy())  #
+            if x[0].shape[0] > 1: # multi match detections
+                matches = matches[matches[:, 2].argsort()[::-1]] # sort matches triplets by iou val. shape: (N, 3]
+                # select unique tbox index to avoid multi matches for the same target index
                 matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
-                # matches = matches[matches[:, 2].argsort()[::-1]]
+                #  select unique pbox index to avoid multi matches for the same pred index
                 matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
-            correct[matches[:, 1].astype(int), i] = True
+            correct[matches[:, 1].astype(int), i] = True #  Mark correct=True for all matched pidx per current i.
     return tf.convert_to_tensor(correct, dtype=tf.bool)
 
 
@@ -203,8 +214,8 @@ def run(
     loss = tf.zeros([4] ) # 4 loss sources: box, obj, cls, mask
     jdict, stats = [], []
     # callbacks.run('on_val_start')
-    # pbar = tqdm(dataloader, desc=s, bar_format=TQDM_BAR_FORMAT)  # progress bar
-    for batch_i, (batch_im, batch_targets,  batch_masks, paths, shapes) in enumerate(dataloader):
+    pbar = tqdm(dataloader, desc=s, bar_format=TQDM_BAR_FORMAT)  # progress bar
+    for batch_i, (batch_im, batch_targets,  batch_masks, paths, shapes) in enumerate(pbar):# dataset batch by batch loop
 
         # concat bidx to targets b4 flattening batch targets array [b,nt,5] -> [Nt,6]
         new_targets = []
@@ -231,34 +242,22 @@ def run(
         batch_targets = tf.concat([batch_targets[:, 0:2], tbboxes], axis=-1) # re-concat targets [bi, cl, bbox]
         lb =  []  # for autolabelling
         plot_masks = []  # masks for plotting
-
-        for si, (pred, proto) in enumerate(zip(preds, protos)): # predictions loop
+        # Calc stats - a list of size contains tp-bbox and tp-masks.  ize list of bboxes and masks mAp
+        # svae text and json and plots per prediction according to config flags.
+        for si, (pred, proto) in enumerate(zip(preds, protos)): # loop on preds batch
             pred=non_max_suppression(pred, conf_thres, iou_thres, max_det) # pred shape: nboxes,
+            # scale nms selected pred boxes:
             b, h, w, ch = tf.cast(batch_im.shape, tf.float32)  # batch, channel, height, width
-
             pbboxes = pred[..., :4] * [w, h, w, h]  # xywh normalized to pixels
-            pred = tf.concat([pbboxes, pred[..., 4:]], axis=-1) # re-concat preds to [bboxes, conf,cls, 32masks_preds]
+            pred = tf.concat([pbboxes, pred[..., 4:]], axis=-1) # [Nt, bboxes+conf+cls+32masks], shape: [Nt, 4+1+1+23]
 
-            # with dt[2]:
-            # preds = non_max_suppression(preds,
-            #                                 conf_thres,
-            #                                 iou_thres,
-            #                                 labels=lb,
-            #                                 multi_label=True,
-            #                                 agnostic=single_cls,
-            #                                 max_det=max_det,
-            #                                 nm=nm)
-
-
-            #
             # Metrics
-            # plot_masks = []  # masks for plotting
-            # for si, (pred, proto) in enumerate(zip(preds, protos)):
-            labels = batch_targets[batch_targets[:, 0] == si, 1:] # pick pred's labels by example idx (bn) stored in targets[:,0]
-            nl, npr = labels.shape[0], pred.shape[0]  # number of labels, predictions
-            path, shape = Path(str(paths[si])), shapes[si][0]
-            correct_masks = tf.zeros([npr, niou], dtype=tf.bool)  # init masks mAp array with npr zerod rows
-            correct_bboxes = tf.zeros([npr, niou], dtype=tf.bool)  # init boxes mAp array with npr zerod rows
+
+            labels = batch_targets[batch_targets[:, 0] == si, 1:] # pick gt labels by bidx is si, i.e matching  preds
+            nl, npr = labels.shape[0], pred.shape[0]  # Nti, Npi: num of tlabels and predictions of batche's ith element
+            path, shape = Path(str(paths[si])), shapes[si][0] # target paths for info output, orig shapes for rescale
+            correct_masks = tf.zeros([npr, niou], dtype=tf.bool)  # init masks tp array
+            correct_bboxes = tf.zeros([npr, niou], dtype=tf.bool)  # init boxes tp array
             seen += 1
 
             if npr == 0:# if no post nms preds
@@ -271,8 +270,9 @@ def run(
             # Masks
             midx = [si] # mask idx
             gt_masks = batch_masks[midx] # ground truth masks for the si-th pred
-            # pred=pred.numpy() # todo fix process_mask to avoid this - also in predict
-            pred_masks = process(proto, pred[:, 6:], pred[:, :4], shape=batch_im[si].shape[:2]) # pred mask=mask@proto
+
+            # calc mask=mask@proto and crop to dounsampled by 4 predicted bbox bounderies:
+            pred_masks = process(proto, pred[:, 6:], pred[:, :4], shape=batch_im[si].shape[:2]) # shape: [Npi, h/4,w/4]
 
             # Predictions
             if single_cls:
@@ -283,17 +283,19 @@ def run(
 
             # Evaluate
             if nl:
-                tbox = xywh2xyxy(labels[:, 1:5])  # target boxes
-                # todo cancel temp only!!!!!:
+                tbox = xywh2xyxy(labels[:, 1:5])  # target boxes shape: Nt,4]
                 # scale_boxes(batch_im[si].shape[1:], tbox, shape, shapes[si][1])  # native-space labels
-                labelsn = tf.concat((labels[:, 0:1], tbox), 1)  # native-space labels
-                correct_bboxes = process_batch(predn, labelsn, iouv)
-                correct_masks = process_batch(predn, labelsn, iouv, pred_masks, gt_masks, overlap=overlap, masks=True)
+                labelsn = tf.concat((labels[:, 0:1], tbox), 1)  # [tclass, tbbox] shape: [Nt, 5]native-space labels
+                # correct_bboxes[pidx,i]=True if Iou(pbbox[idx0], tbbox[idx1])>= iouv[i] and pclass[idx0]==tclass[idx1].
+                correct_bboxes = process_batch(predn, labelsn, iouv) # shape: [Npi, nMap] , bool, nmAp=10
+                # correct_masks[pidx,i]=True if Iou(pmask[idx0], tmaask[idx1])>= iouv[i] and pclass[idx0]==tclass[idx1].
+                correct_masks = process_batch(predn, labelsn, iouv, pred_masks, gt_masks, overlap=overlap, masks=True) # shape: [Npi, nMap] , bool, nmAp=10
                 if plots:
                     confusion_matrix.process_batch(predn, labelsn)
-            stats.append((correct_masks, correct_bboxes, pred[:, 4], pred[:, 5], labels[:, 0]))  # (conf, pcls, tcls)
+            # stats list: [tp-bbox, tp-masks, pclass, pconf, tclass]. shapes:  #[[Npi,10],[Npi,10],Nip,Npi,Nti]
+            stats.append((correct_masks, correct_bboxes, pred[:, 4], pred[:, 5], labels[:, 0]))
 
-            pred_masks = tf.cast(pred_masks, dtype=tf.uint8)
+            pred_masks = tf.cast(pred_masks, dtype=tf.uint8) # shaoe: [Npi, h/4,w/4]
             if plots and batch_i < 3:
                 plot_masks.append(pred_masks[:15])  # filter top 15 to plot
 
@@ -309,16 +311,17 @@ def run(
         # Plot images
         if plots and batch_i < 3:
             if len(plot_masks):
-                plot_masks = tf.caoncat(plot_masks, dim=0)
+                plot_masks = tf.concat(plot_masks, dim=0)
             plot_images_and_masks(batch_im, batch_targets, batch_masks, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names) # targets
             plot_images_and_masks(batch_im, output_to_target(preds, max_det=15), plot_masks, paths,
                                   save_dir / f'val_batch{batch_i}_pred.jpg', names)  # pred
 
         # callbacks.run('on_val_batch_end')
-
-    # Compute metrics
-    stats = [tf.concat(x, 0).numpy() for x in zip(*stats)]  # to numpy
+    # Compute metrics.
+    # stats concat: [[[Npi,10],[Npi,10],[Npi],[Npi],[Nti]] for i=0: Np]-> [[sum(Npi),10], [sum(Npi),10],[sum(Npi)], [sum(Npi)],[sum(Nti)]]:
+    stats = [tf.concat(x, 0).numpy() for x in zip(*stats)]
     if len(stats) and stats[0].any():
+        # result per bbox&masks: [tp,fp,precision,recall,f1,ap,unique classes]
         results = ap_per_class_box_and_mask(*stats, plot=plots, save_dir=save_dir, names=names)
         metrics.update(results)
     nt = np.bincount(stats[4].astype(int), minlength=nc)  # number of targets per class
@@ -349,9 +352,11 @@ def run(
 
     # Save JSON
     if save_json and len(jdict):
+
         w = Path(weights[0] if isinstance(weights, list) else weights).stem if weights is not None else ''  # weights
         anno_json = str(Path('../datasets/coco/annotations/instances_val2017.json'))  # annotations
-        pred_json = str(save_dir / f"{w}_predictions.json")  # predictions
+        pred_json = f'{save_dir}/{w}_predictions.json'  # predictions
+        pred_json=str(ROOT / f'{pred_json}')
         LOGGER.info(f'\nEvaluating pycocotools mAP... saving {pred_json}...')
         with open(pred_json, 'w') as f:
             json.dump(jdict, f)
