@@ -49,22 +49,22 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
     tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
 
     # Find unique classes
-    unique_classes, nt = np.unique(target_cls, return_counts=True)
-    nc = unique_classes.shape[0]  # number of classes, number of detections
+    unique_classes, nt = np.unique(target_cls, return_counts=True) # nt:nof times unqiue value comes
+    nc = unique_classes.shape[0]  # number of classes
 
     # Create Precision-Recall curve and compute AP for each class
     px, py = np.linspace(0, 1, 1000), []  # for plotting
     ap, p, r = np.zeros((nc, tp.shape[1])), np.zeros((nc, 1000)), np.zeros((nc, 1000))
-    for ci, c in enumerate(unique_classes):
+    for ci, c in enumerate(unique_classes): # loop on classes
         i = pred_cls == c
-        n_l = nt[ci]  # number of labels
-        n_p = i.sum()  # number of predictions
+        n_l = nt[ci]  # number of labels for current unique class
+        n_p = i.sum()  # number of predictions  for current unique class
         if n_p == 0 or n_l == 0:
             continue
 
         # Accumulate FPs and TPs
-        fpc = (1 - tp[i]).cumsum(0)
-        tpc = tp[i].cumsum(0)
+        fpc = (1 - tp[i]).cumsum(0) # sum all tp=False for preds of current class preds
+        tpc = tp[i].cumsum(0)  # sum all tp=True for preds of current class preds
 
         # Recall
         recall = tpc / (n_l + eps)  # recall curve
@@ -100,8 +100,8 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
 def compute_ap(recall, precision):
     """ Compute the average precision, given the recall and precision curves
     # Arguments
-        recall:    The recall curve (list)
-        precision: The precision curve (list)
+        recall:    The recall curve. shape: [Np]
+        precision: The precision curve. shape: [Np]
     # Returns
         Average precision, precision curve, recall curve
     """
