@@ -61,8 +61,6 @@ from models.tf_model import TFModel
 import segment.tf_val as validate  # for end-of-epoch mAP
 from optimizer import LRSchedule
 
-from load_train_data import LoadTrainData
-from tf_create_dataset import CreateDataset
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
@@ -128,15 +126,8 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     data_dict = data_dict or check_dataset(data)  # check if None
     train_path, val_path = data_dict['train'], data_dict['val']
 
-    # ltd = LoadTrainData()
     mosaic=True
     augment = True
-    # train_image_files, train_labels, train_segments = ltd.load_data(train_path, mosaic)
-    # create_dataset=CreateDataset(imgsz[0], degrees, translate, scale, shear, perspective)
-    # ds_train=create_dataset(train_image_files, train_labels, train_segments)
-    # val_image_files, val_labels, val_segments = ltd.load_data(val_path, mosaic)
-
-    # ds_val=create_dataset(val_image_files, val_labels, val_segments)
 
     nc = 1 if single_cls else int(data_dict['nc'])  # number of classes
     # names = {0: 'item'} if single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
@@ -147,8 +138,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     tf_model = TFModel(cfg=cfg,
                        ref_model_seq=None, nc=80, imgsz=imgsz, training=True)
     im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else batch_size)
-    # tf_model.predict(im)
-    # s=640
     ch=3
 
     keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im), name='train')
