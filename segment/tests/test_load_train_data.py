@@ -131,7 +131,7 @@ def test_dataset_creation(data_path, imgsz=640, line_thickness=3, nexamples=3, s
     # ds = create_dataloader(data_path, batch_size, [imgsz, imgsz], mask_ratio, mosaic, augment, degrees, translate,
     #                        scale, shear, perspective, hgain, sgain, vgain, flipud, fliplr, data_loader_debug)
 
-    ds = create_dataloader(data_path, batch_size,  [imgsz, imgsz], mask_ratio, mosaic, augment, hyp, data_loader_debug)
+    ds, ds_len = create_dataloader(data_path, batch_size,  [imgsz, imgsz], mask_ratio, mosaic, augment, hyp, data_loader_debug)
 
     # ss  = len(ds)
     # print(ss)
