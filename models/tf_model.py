@@ -25,6 +25,8 @@ import numpy as np
 import tensorflow as tf
 
 from tensorflow import keras
+from tensorflow.python.ops.numpy_ops import np_config
+np_config.enable_numpy_behavior() # allows running NumPy code, accelerated by TensorFlow
 from keras import mixed_precision
 
 
@@ -368,10 +370,10 @@ class TFDetect(keras.layers.Layer):
         self.grid = [tf.zeros(1)] * self.nl  # init grid
         # reshape anchors and normalize by stride values:
         self.anchors = tf.convert_to_tensor(w.anchors.numpy(), dtype=tf.float32) if w is not None else \
-            tf.reshape(tf.convert_to_tensor(anchors, dtype=tf.float32),[self.nl,self.na,2])/tf.reshape(self.stride, [self.nl,1,1] )
+            tf.convert_to_tensor(anchors, dtype=tf.float32).reshape([self.nl, self.na, 2]) / self.stride.reshape([self.nl, 1, 1])
         # rescale anchors by stride values and reshape to
-        self.anchor_grid = tf.reshape(self.anchors, [self.nl, 1, self.na, 1, 2])
-        self.anchor_grid = tf.transpose(self.anchor_grid, [0, 1, 3, 2, 4])  # shape: [nl, 1,1,na,2]
+        self.anchor_grid = self.anchors.reshape([self.nl, 1, self.na, 1, 2])
+        self.anchor_grid = self.anchor_grid.transpose( [0, 1, 3, 2, 4])  # shape: [nl, 1,1,na,2]
 
         self.m = [TFConv2d(x, self.no * self.na, 1, w=w.m[i] if w is not None else None) for i, x in enumerate(ch)]
         self.training = training  # set to False after building model
@@ -380,8 +382,8 @@ class TFDetect(keras.layers.Layer):
             ny, nx = self.imgsz[0] // self.stride[i], self.imgsz[1] // self.stride[i]
             xv, yv = tf.meshgrid(tf.range(nx, dtype=tf.float32), tf.range(ny, dtype=tf.float32)) # shapes: [ny,nx]
             # stack to grid, reshape & transpose to predictions matching shape:
-            self.grid[i]= tf.reshape(tf.stack([xv, yv], 2), [1, 1, ny, nx, 2])
-            self.grid[i] = tf.transpose(self.grid[i], [0, 2, 3, 1, 4]) # shape: [1, ny, nx, 1, 2]
+            self.grid[i]= tf.stack([xv, yv], 2).reshape( [1, 1, ny, nx, 2])
+            self.grid[i] = self.grid[i].transpose( [0, 2, 3, 1, 4]) # shape: [1, ny, nx, 1, 2]
 
     # @tf.function
     def call(self, inputs):
@@ -390,7 +392,7 @@ class TFDetect(keras.layers.Layer):
         for i in range(self.nl):
             x.append(self.m[i](inputs[i]))
             ny, nx = self.imgsz[0] // self.stride[i], self.imgsz[1] // self.stride[i]
-            x[i] = tf.reshape(x[i], [-1,ny, nx, self.na,  self.no]) # from [bs,ny,nx,na*no] to [bs,ny,nx,na,no]
+            x[i] = x[i].reshape( [-1,ny, nx, self.na,  self.no]) # from [bs,ny,nx,na*no] to [bs,ny,nx,na,no]
             if not self.training:  # inference: post process xywh values and pack all 3 out layers to a single array
                 y = x[i] # shape: [bs, ny,nx,na,xywh+conf+nc+nm]
                 # calulate bbox formulas:
@@ -399,9 +401,9 @@ class TFDetect(keras.layers.Layer):
                 # cobcat modified values back together:
                 y = tf.concat([xy, wh, tf.sigmoid(y[..., 4:5 + self.nc]), y[..., 5 + self.nc:]], -1)
                 # from shape: [bs, ny,nx,na,xywh+conf+nc+nm] to  [bs,nx*ny*na,xy+wh+conf+nc,+nm]:
-                z.append(tf.reshape(y, [-1, self.na * ny * nx, self.no]))
+                z.append(y.reshape([-1, self.na * ny * nx, self.no]))
             else: # train output a list of x[i] arrays , i=0:nl-1,  array shape:  [bs,na,ny,nx,no]
-                x[i] = tf.transpose(x[i], [0,3,1,2,4]) # from shape [bs,ny,nx,na, no] to [bs,na,ny,nx,no]
+                x[i] = x[i].transpose([0,3,1,2,4]) # from shape [bs,ny,nx,na, no] to [bs,na,ny,nx,no]
 
         return  x if self.training else (tf.concat(z, axis=1), x) # if not training output both outputs
 
@@ -443,7 +445,7 @@ class TFSegment(TFDetect):
     def call(self, x):
         p = self.proto(x[0])
         # p = TFUpsample(None, scale_factor=4, mode='nearest')(self.proto(x[0]))  # (optional) full-size protos
-        p = tf.transpose(p, [0, 3, 1, 2])  # from shape(1,160,160,32) to shape(1,32,160,160)
+        p = p.transpose( [0, 3, 1, 2])  # from shape(1,160,160,32) to shape(1,32,160,160)
         x = self.detect(self, x)
         return (x, p) if self.training else (x[0], p, x[1])
 
