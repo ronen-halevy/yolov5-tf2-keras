@@ -16,8 +16,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sn
-# import torch
 import tensorflow as tf
+from tensorflow.python.ops.numpy_ops import np_config
+np_config.enable_numpy_behavior() # allows running NumPy code, accelerated by TensorFlow
+
 from PIL import Image, ImageDraw, ImageFont
 
 from utils import TryExcept, threaded
@@ -225,9 +227,9 @@ def output_to_target(output, max_det=300):
     # Convert model output to target format [batch_id, class_id, x, y, w, h, conf] for plotting
     targets = []
     for i, o in enumerate(output):
-        box, conf, cls = o[:max_det, :6].cpu().split((4, 1, 1), 1)
-        j = tf.fill((conf.shape[0], 1), i)
-        targets.append(tf.concat((j, cls, xyxy2xywh(box), conf), 1))
+        box, conf, cls = tf.split(o[:max_det, :6], (4, 1, 1), axis=1)
+        j = tf.fill((box.shape[0], 1), i).astype(tf.float32)
+        targets.append(tf.concat((j, cls, xyxy2xywh(box), conf), axis=1)) # [idx, cls,bbox, conf] shape: [N , 7]
     return tf.concat(targets, 0).numpy()
 
 
@@ -388,7 +390,7 @@ def plot_val_study(file='', dir='', x=None):  # from utils.plots import *; plot_
     plt.savefig(f, dpi=300)
 
 
-@TryExcept()  # known issue https://github.com/ultralytics/yolov5/issues/5395
+# @TryExcept()  # known issue https://github.com/ultralytics/yolov5/issues/5395
 def plot_labels(labels, names=(), save_dir=Path('')):
     # plot dataset labels
     LOGGER.info(f"Plotting labels to {save_dir / 'labels.jpg'}... ")
@@ -417,8 +419,12 @@ def plot_labels(labels, names=(), save_dir=Path('')):
     sn.histplot(x, x='width', y='height', ax=ax[3], bins=50, pmax=0.9)
 
     # rectangles
-    labels[:, 1:3] = 0.5  # center
-    labels[:, 1:] = xywh2xyxy(labels[:, 1:]) * 2000
+    # labels[:, 1:3] = 0.5  # center
+    c_xy = tf.fill(labels[:,1:3].shape, 0.5)
+    xywh = tf.concat([c_xy,labels[:, 3:]], axis=1)
+    xyxy = xywh2xyxy(xywh) * 2000
+
+    labels = tf.concat([labels[:,0:1], xyxy], axis=1)
     img = Image.fromarray(np.ones((2000, 2000, 3), dtype=np.uint8) * 255)
     for cls, *box in labels[:1000]:
         ImageDraw.Draw(img).rectangle(box, width=1, outline=colors(cls))  # plot

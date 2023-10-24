@@ -54,7 +54,6 @@ def plot_images_and_masks(images, targets, masks, paths=None, fname='images.jpg'
         x, y = int(w * (i // ns)), int(h * (i % ns))  #  mosaic sub-image origin offsets
         annotator.rectangle([x, y, x + w, y + h], None, (255, 255, 255), width=2)  # borders
         if paths[i]:
-            a = Path(str(paths[i]))
             # .name[:40]
             annotator.text((x + 5, y + 5), text=Path(str(paths[i])).name[:40], txt_color=(220, 220, 220))  # filenames
         if targets.shape[0]:

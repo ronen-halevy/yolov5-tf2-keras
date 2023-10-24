@@ -186,7 +186,7 @@ class LoadImagesAndLabelsAndMasks:
     labels: RaggedTensor, float shapeL [Nti, 5] Where Nti varies between images 
     masks:  float32 shape:[h/4,w/4], pixels values: 0: nomask. smalest mask with largest pixel values.
     paths: Tensor, string. image path on disk
-    shapes: Tensor, float32, shape: [3,2] [[h,w], [ h / h0, w / w0], [padh padw]]
+    shapes: Tensor, float32, shape: [3,2] [[h,w], [ h / h0, w / w0], [padh, padw]]
      
      tf.constant(self.im_files[index]), shapes)
     '''
@@ -536,10 +536,8 @@ def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
     return mask # shape: [img_size]
 
 def create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp):
-    loader =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mask_ratio, mosaic, augment, hyp)
-    data_length = len(loader)
-
-    dataset = tf.data.Dataset.from_generator(loader.iter,
+    dataset =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mask_ratio, mosaic, augment, hyp)
+    dataset_loader = tf.data.Dataset.from_generator(dataset.iter,
                                              output_signature=(
                                                  tf.TensorSpec(shape=[imgsz[0], imgsz[1], 3], dtype=tf.float32, ),
                                                  tf.RaggedTensorSpec(shape=[None, 5], dtype=tf.float32,
@@ -551,9 +549,9 @@ def create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment,
                                              )
 
 
-    dataset=dataset.batch(batch_size)
+    dataset_loader=dataset_loader.batch(batch_size)
 
-    return dataset, data_length
+    return dataset_loader, dataset
 
 if __name__ == '__main__':
 
@@ -569,10 +567,10 @@ if __name__ == '__main__':
     augment=False
     batch_size=2
     mask_ratio = 4
-    dataset = create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, degrees, translate, hyp)
+    dataset_loader = create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, degrees, translate, hyp)
 
 
-    for img, labels, mask in dataset:
+    for img, labels, mask in dataset_loader:
         pass
 
 

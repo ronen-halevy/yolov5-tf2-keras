@@ -22,16 +22,10 @@ import random
 import subprocess
 import sys
 import time
-from copy import deepcopy
-from datetime import datetime
 from pathlib import Path
-
-import numpy as np
-
 
 import yaml
 from tqdm import tqdm
-
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
@@ -40,13 +34,13 @@ if str(ROOT) not in sys.path:
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from utils.callbacks import Callbacks
-from utils.downloads import attempt_download, is_url
+from utils.downloads import is_url
 from utils.general import (LOGGER, TQDM_BAR_FORMAT, check_dataset, check_file, check_git_info,
                              check_yaml, colorstr,
                            get_latest_run, increment_path,
                            print_args, print_mutation, yaml_save)
-from utils.loggers import GenericLogger
-from utils.plots import plot_evolve, plot_labels
+from segment.tb import GenericLogger
+from utils.tf_plots import plot_evolve, plot_labels
 from tf_dataloaders import create_dataloader
 from tf_loss import ComputeLoss
 from utils.segment.metrics import KEYS, fitness
@@ -130,7 +124,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     augment = True
 
     nc = 1 if single_cls else int(data_dict['nc'])  # number of classes
-    # names = {0: 'item'} if single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
+    names = {0: 'item'} if single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
     # is_coco = isinstance(val_path, str) and val_path.endswith('coco/val2017.txt')  # COCO dataset
 
     # Model
@@ -189,10 +183,18 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # Resume - TBD todo
     # nc = tf_model.nc  # number of classes
 
-    train_dataset, train_dataset_length = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp)
+    train_loader, train_dataset = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp)
+    train_dataset_length = len(train_dataset)
 
-    val_path=train_path # todo fix debug
-    val_dataset, val_dataset_length = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp)
+    labels = tf.concat(train_dataset.labels, 0)
+    val_path=train_path # todo debug need a chang2
+    val_loader, _  = create_dataloader(val_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp)
+
+    if not resume:
+        if plots:
+            plot_labels(labels, names, save_dir)
+
+
 
 
     anchors = tf.reshape(tf_model.anchors, [len(tf_model.anchors), -1, 2]) # shape: [nl, np, 2]
@@ -215,7 +217,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
     for epoch in range(epochs):
         # pbar = enumerate(train_dataset)
-        pbar = tqdm(train_dataset, total=nb, bar_format=TQDM_BAR_FORMAT)  # progress bar
+        pbar = tqdm(train_loader, total=nb, bar_format=TQDM_BAR_FORMAT)  # progress bar
 
         mloss = tf.zeros([4], dtype=tf.float32)  # mean losses
         # train:
@@ -236,8 +238,10 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
             new_btargets=tf.stack(new_btargets, axis=0)
 
             with (tf.GradientTape() as tape):
-                # im = tf.expand_dims(image,axis=0)
-                pred = keras_model(bimages)  # forward
+                # model forward, with training=True, outputs a tuple:2 - preds list:3 & proto. Details:
+                # preds shapes: [b,na,gyi,gxi,xywh+conf+cls+masks] where na=3,gy,gx[i=1:3]=size/8,/16,/32,masks:32 words
+                # proto shape: [b,32,size/4,size/4]
+                pred = keras_model(bimages)
                 loss, loss_items = compute_loss(pred, new_btargets, bmasks)
                 # lbox, lobj, lcls, lseg= tf.split(loss_items, num_or_size_splits=4, axis=-1)
 
@@ -260,9 +264,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                     files = sorted(save_dir.glob('train*.jpg'))
                     logger.log_images(files, 'Mosaics', epoch)
         # end batch ------------------------------------------------------------------------------------------------
-        # Scheduler
-        # lr = [x['lr'] for x in optimizer.param_groups]  # for loggers - todo check
-        # scheduler.step()
         # classes_name_file = '/home/ronen/devel/PycharmProjects/tf_yolov5/data/class-names/coco.names'
         # class_names = [c.strip() for c in open(classes_name_file).readlines()]
 
@@ -272,7 +273,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         # maps: array[nc]:  ap-bbox+ap-masks per class
         final_epoch = (epoch + 1 == epochs) or stopper.possible_stop
 
-        results, maps, _ = validate.run(val_dataset,
+        results, maps, _ = validate.run(val_loader,
                                         data_dict,
                                         batch_size=batch_size,
                                         imgsz=imgsz,
@@ -297,27 +298,15 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         stop = stopper(epoch=epoch, fitness=fi)  # early stop check
         if fi > best_fitness:
             best_fitness = fi
-        # log_vals = list(mloss) + list(results) + lr
+        log_vals = list(mloss) + list(results) + [optimizer.learning_rate]
         # callbacks.run('on_fit_epoch_end', log_vals, epoch, best_fitness, fi)
         # Log val metrics and media
-        # metrics_dict = dict(zip(KEYS, log_vals))
-        # logger.log_metrics(metrics_dict, epoch)
+        metrics_dict = dict(zip(KEYS, log_vals))
+        logger.log_metrics(metrics_dict, epoch)
 
         # Save model
         if (not nosave) or (final_epoch and not evolve):  # if save
-            # ckpt = {
-            #     'epoch': epoch,
-            #     'best_fitness': best_fitness,
-            #     'model': deepcopy(de_parallel(model)).half(),
-            #     'ema': deepcopy(ema.ema).half(),
-            #     'updates': ema.updates,
-            #     'optimizer': optimizer.state_dict(),
-            #     'opt': vars(opt),
-            #     'git': GIT_INFO,  # {remote, branch, commit} if a git repo
-            #     'date': datetime.now().isoformat()}
-
-            # Save last, best and delete
-            # torch.save(ckpt, last)
+            # Save last, best
             keras_model.save_weights(
                 last)
             if best_fitness == fi:
@@ -339,44 +328,30 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # end training -----------------------------------------------------------------------------------------------------
     # if RANK in {-1, 0}:
     LOGGER.info(f'\n{epoch - start_epoch + 1} epochs completed in {(time.time() - t0) / 3600:.3f} hours.')
-    # for f in last, best:
-    #     if f.exists():
-    #         # strip_optimizer(f)  # strip optimizers
-    #         if f is best:
-    #             LOGGER.info(f'\nValidating {f}...')
-    #             results, _, _ = validate.run(
-    #                 data_dict,
-    #                 batch_size=batch_size // WORLD_SIZE * 2,
-    #                 imgsz=imgsz,
-    #                 model=attempt_load(f, device).half(),
-    #                 iou_thres=0.65 if is_coco else 0.60,  # best pycocotools at iou 0.65
-    #                 single_cls=single_cls,
-    #                 dataloader=val_loader,
-    #                 save_dir=save_dir,
-    #                 save_json=is_coco,
-    #                 verbose=True,
-    #                 plots=plots,
-    #                 callbacks=callbacks,
-    #                 compute_loss=compute_loss,
-    #                 mask_downsample_ratio=mask_ratio,
-    #                 overlap=overlap)  # val best model with plots
-    #             if is_coco:
-    #                 # callbacks.run('on_fit_epoch_end', list(mloss) + list(results) + lr, epoch, best_fitness, fi)
-    #                 metrics_dict = dict(zip(KEYS, list(mloss) + list(results) + lr))
-    #                 logger.log_metrics(metrics_dict, epoch)
-    #
-    #     # callbacks.run('on_train_end', last, best, epoch, results)
-    #     # on train end callback using genericLogger
-    #     logger.log_metrics(dict(zip(KEYS[4:16], results)), epochs)
-    #     if not opt.evolve:
-    #         logger.log_model(best, epoch)
-    #     if plots:
-    #         plot_results_with_masks(file=save_dir / 'results.csv')  # save results.png
-    #         files = ['results.png', 'confusion_matrix.png', *(f'{x}_curve.png' for x in ('F1', 'PR', 'P', 'R'))]
-    #         files = [(save_dir / f) for f in files if (save_dir / f).exists()]  # filter
-    #         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}")
-    #         logger.log_images(files, 'Results', epoch + 1)
-    #         logger.log_images(sorted(save_dir.glob('val*.jpg')), 'Validation', epoch + 1)
+    val_keras_model.load_weights(best)
+    results, _, _ = validate.run(val_loader,
+                                    data_dict,
+                                    batch_size=batch_size,
+                                    imgsz=imgsz,
+                                    half=False,  # half precision model
+                                    model=val_keras_model,  # todo use ema
+                                    single_cls=single_cls,
+                                    save_dir=save_dir,
+                                    plots=True,
+                                    callbacks=callbacks,
+                                    compute_loss=compute_loss,
+                                    mask_downsample_ratio=mask_ratio,
+                                    overlap=overlap)
+
+    logger.log_metrics(metrics_dict, epochs)
+
+    if plots:
+        plot_results_with_masks(file=save_dir / 'results.csv')  # save results.png
+        files = ['results.png', 'confusion_matrix.png', *(f'{x}_curve.png' for x in ('F1', 'PR', 'P', 'R'))]
+        files = [(save_dir / f) for f in files if (save_dir / f).exists()]  # filter
+        LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}")
+        logger.log_images(files, 'Results', epoch + 1)
+        logger.log_images(sorted(save_dir.glob('val*.jpg')), 'Validation', epoch + 1)
     # # torch.cuda.empty_cache()
     return results
 
@@ -568,7 +543,7 @@ def run(**kwargs):
     for k, v in kwargs.items():
         setattr(opt, k, v)
     main(opt)
-from tensorflow.keras.models import Sequential
+
 if __name__ == '__main__':
     opt = parse_opt()
     main(opt)

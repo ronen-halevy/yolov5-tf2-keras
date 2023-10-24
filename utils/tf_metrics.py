@@ -9,7 +9,6 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-# import torch
 import tensorflow as tf
 
 
@@ -150,13 +149,13 @@ class ConfusionMatrix:
             return
 
         detections = detections[detections[:, 4] > self.conf]
-        gt_classes = labels[:, 0].int()
-        detection_classes = detections[:, 5].int()
+        gt_classes = tf.cast(labels[:, 0], tf.int32)
+        detection_classes = tf.cast(detections[:, 5], tf.int32)#.int()
         iou = box_iou(labels[:, 1:], detections[:, :4])
 
-        x = torch.where(iou > self.iou_thres)
-        if x[0].shape[0]:
-            matches = torch.cat((torch.stack(x, 1), iou[x[0], x[1]][:, None]), 1).cpu().numpy()
+        x = tf.where(iou > self.iou_thres)
+        if x.shape[0]:
+            matches = tf.concat((tf.stack(x, 1), iou[x[0], x[1]][:, None]), 1)#.cpu().numpy()
             if x[0].shape[0] > 1:
                 matches = matches[matches[:, 2].argsort()[::-1]]
                 matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
@@ -315,7 +314,7 @@ def wh_iou(wh1, wh2, eps=1e-7):
     # Returns the nxm IoU matrix. wh1 is nx2, wh2 is mx2
     wh1 = wh1[:, None]  # [N,1,2]
     wh2 = wh2[None]  # [1,M,2]
-    inter = torch.min(wh1, wh2).prod(2)  # [N,M]
+    inter = tf.min(wh1, wh2).prod(2)  # [N,M]
     return inter / (wh1.prod(2) + wh2.prod(2) - inter + eps)  # iou = inter / (area1 + area2 - inter)
 
 

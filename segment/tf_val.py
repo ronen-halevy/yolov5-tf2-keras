@@ -196,72 +196,78 @@ def run(
     # Configure
     is_coco = isinstance(data.get('val'), str) and data['val'].endswith(f'coco{os.sep}val2017.txt')  # COCO dataset
     nc = 1 if single_cls else int(data['nc'])  # number of classes
-    iouv = tf.linspace(0.5, 0.95, 10)  # iou vector for mAP@0.5:0.95
-    niou = tf.size(iouv) # num of elems
+    iouv = tf.linspace(0.5, 0.95, 10)  # vector for mAP calculated for ious 0.5:0.95
+    niou = tf.size(iouv) # len of iouv vector   # Dataloader
 
-    # Dataloader
-
-    seen = 0
-    confusion_matrix = ConfusionMatrix(nc=nc)
+    seen = 0 # loop on predictions counter
+    confusion_matrix = ConfusionMatrix(nc=nc) #
     names =  data['names'] # model.names if hasattr(model, 'names') else model.module.names  # get class names
     if isinstance(names, (list, tuple)):  # old format
         names = dict(enumerate(names))
     class_map = coco80_to_coco91_class() if is_coco else list(range(1000))
     s = ('%22s' + '%11s' * 10) % ('Class', 'Images', 'Instances', 'Box(P', "R", "mAP50", "mAP50-95)", "Mask(P", "R",
                                   "mAP50", "mAP50-95)")
-    dt = Profile(), Profile(), Profile()
+    dt = Profile(), Profile(), Profile() # timing profilers
     metrics = Metrics()
     loss = tf.zeros([4] ) # 4 loss sources: box, obj, cls, mask
     jdict, stats = [], []
     # callbacks.run('on_val_start')
     pbar = tqdm(dataloader, desc=s, bar_format=TQDM_BAR_FORMAT)  # progress bar
     for batch_i, (batch_im, batch_targets,  batch_masks, paths, shapes) in enumerate(pbar):# dataset batch by batch loop
-
-        # concat bidx to targets b4 flattening batch targets array [b,nt,5] -> [Nt,6]
+        # next loop concats bidx to targets: ragged [b,nt,5] -> list size Nt of: [bidx, class, bbox4]
         new_targets = []
         for idx, targets in enumerate(batch_targets): # loop on targets' batch
             if targets.shape[0]: # escape empty targets
                 bindex = tf.cast([idx], tf.float32)[None]
                 bindex = tf.tile(bindex, [targets.shape[0], 1]) # shape: [nt,1] , nt num of example's targets
                 new_targets.extend(tf.concat([bindex, targets.to_tensor()], axis=-1))  #[bindex,cls, xywh] shape: [nt,6]
-
+        # list size Nt: [bidx, class, bbox4]-> tensor[Nt, 6]
         batch_targets = tf.stack(new_targets, axis=0) # stack all targets. shape:[Nt,6], Nt sum of all batches targets
 
         nb, _, height, width = batch_im.shape  # batch size, channels, height, width
 
+        # inference + profiler:
+        with dt[0]:
+            # inference outputs 3 objects: 1. train_out is a list of 3 tensors per 3 output layers, preds is train_out
+            # packed to a single prediction tensor, while bbox and conf processed within. proto holds 32 proto masks.
+            # -train_out layers  shape:[b,gyi,gxi,na,xywh+conf+cls+masks] where b: batchsize,gyi,gxi=size/8,/16,/32,
+            # na:nof anchors per layer=3,masks:32 words
+            # -preds shapes:[b,Npi,xywh+conf+cls+masks] where Np: (na*sum(gyi*gxi)) i=1:3]
+            # proto shape: [b,32,size/4,size/4]
+            preds, protos, train_out = model(batch_im)
 
-        preds, protos, train_out = model(batch_im) # shapes: [b, N, 4+1+nc+nm], [b,nm.w/4,h/4], list, shapes:[b,na, gyi,gxi,4+1+nc+nm]
 
-        # Loss
-        if compute_loss:
+        with dt[1]:
+            # Loss
             loss += compute_loss((train_out, protos), batch_targets, batch_masks)[1]  # box, obj, cls, mask
 
         # NMS
         tbboxes = batch_targets[:, 2:] * (width, height, width, height) # scale tbbox
 
         batch_targets = tf.concat([batch_targets[:, 0:2], tbboxes], axis=-1) # re-concat targets [bi, cl, bbox]
-        lb =  []  # for autolabelling
+        # lb =  []  # for autolabelling
         plot_masks = []  # masks for plotting
         # Calc stats - a list of size contains tp-bbox and tp-masks.  ize list of bboxes and masks mAp
         # svae text and json and plots per prediction according to config flags.
+        processed_preds=[]
         for si, (pred, proto) in enumerate(zip(preds, protos)): # loop on preds batch
-            pred=non_max_suppression(pred, conf_thres, iou_thres, max_det) # pred shape: nboxes,
-            # scale nms selected pred boxes:
-            b, h, w, ch = tf.cast(batch_im.shape, tf.float32)  # batch, channel, height, width
-            pbboxes = pred[..., :4] * [w, h, w, h]  # xywh normalized to pixels
-            pred = tf.concat([pbboxes, pred[..., 4:]], axis=-1) # [Nt, bboxes+conf+cls+32masks], shape: [Nt, 4+1+1+23]
-
+            with dt[2]: # nof outputs limitted by max_det:
+                pred=non_max_suppression(pred, conf_thres, iou_thres, max_det) #shape:[Nt, 38] (xyxy+conf+cls+32masks)
+                # scale nms selected pred boxes:
+                b, h, w, ch = tf.cast(batch_im.shape, tf.float32)  # dataset images shape: batch,height,width,channel
+                pbboxes = pred[..., :4] * [w, h, w, h]  # xywh scale pred bboxes
+                pred = tf.concat([pbboxes, pred[..., 4:]], axis=-1) # pack scaled preds [back. shape: [Nt, 4+1+1+32]
             # Metrics
 
-            labels = batch_targets[batch_targets[:, 0] == si, 1:] # pick gt labels by bidx is si, i.e matching  preds
-            nl, npr = labels.shape[0], pred.shape[0]  # Nti, Npi: num of tlabels and predictions of batche's ith element
-            path, shape = Path(str(paths[si])), shapes[si][0] # target paths for info output, orig shapes for rescale
-            correct_masks = tf.zeros([npr, niou], dtype=tf.bool)  # init masks tp array
-            correct_bboxes = tf.zeros([npr, niou], dtype=tf.bool)  # init boxes tp array
-            seen += 1
-
-            if npr == 0:# if no post nms preds
-                if nl: # nlabels not 0, i.e. expected targets for this bn. store zerod stats.
+            labels = batch_targets[batch_targets[:, 0] == si, 1:] # pick gt labels with bi=si to match preds[si]
+            nl, npr = labels.shape[0], pred.shape[0]  # ntlabels and npreds of batche's si'th element. shapes:[Nti, Npi]
+            path, shape = Path(str(paths[si])), shapes[si][0] # target paths for out info, orig shapes for rescale
+            correct_masks = tf.zeros([npr, niou], dtype=tf.bool)  # init masks-tp (true positive)
+            correct_bboxes = tf.zeros([npr, niou], dtype=tf.bool)  # init boxes-tp
+            seen += 1 # loop counter
+            # if no nms selected preds and/or no related tlabels, store zero'ed stats:
+            if npr == 0:# if no nms selected preds remained
+                if nl: # ntlabels not 0, i.e. expected targets for this bn. store zerod stats.
                     stats.append((correct_masks, correct_bboxes, *tf.zeros((2, 0)), labels[:, 0]))
                     if plots:
                         confusion_matrix.process_batch(detections=None, labels=labels[:, 0])
@@ -269,62 +275,68 @@ def run(
 
             # Masks
             midx = [si] # mask idx
-            gt_masks = batch_masks[midx] # ground truth masks for the si-th pred
+            # gt masks:
+            gt_masks = batch_masks[midx] # ground truth masks for the si-th pred. shape: [1,h/4. w/4] i.e. [1,160,160]
 
-            # calc mask=mask@proto and crop to dounsampled by 4 predicted bbox bounderies:
+            # pred masks: calc mask=mask@proto and crop to dounsampled by 4 predicted bbox bounderies:
             pred_masks = process(proto, pred[:, 6:], pred[:, :4], shape=batch_im[si].shape[:2]) # shape: [Npi, h/4,w/4]
 
             # Predictions
             if single_cls:
-                pred[:, 5] = 0
-            predn = pred # todo .clone()
-            # todo cancel temp only!!!!!
-            # scale_boxes(batch_im[si].shape[:2], predn[:, :4], shape, shapes[si][1])  # native-space pred
+                pred[:, 5] = 0 # set class to 0
+            # scale pred bboxes - remove padding, scale by orig size factor & clip to original size:
+            bboxes = scale_boxes(batch_im[si].shape[:2], pred[:, :4], shape, shapes[si][1:3])  # native-space pred
+            pred = tf.concat([bboxes, pred[:, 4:]], axis=-1) # re-concat to shape: [Nt, 38]
 
             # Evaluate
-            if nl:
-                tbox = xywh2xyxy(labels[:, 1:5])  # target boxes shape: Nt,4]
-                # scale_boxes(batch_im[si].shape[1:], tbox, shape, shapes[si][1])  # native-space labels
-                labelsn = tf.concat((labels[:, 0:1], tbox), 1)  # [tclass, tbbox] shape: [Nt, 5]native-space labels
-                # correct_bboxes[pidx,i]=True if Iou(pbbox[idx0], tbbox[idx1])>= iouv[i] and pclass[idx0]==tclass[idx1].
-                correct_bboxes = process_batch(predn, labelsn, iouv) # shape: [Npi, nMap] , bool, nmAp=10
-                # correct_masks[pidx,i]=True if Iou(pmask[idx0], tmaask[idx1])>= iouv[i] and pclass[idx0]==tclass[idx1].
-                correct_masks = process_batch(predn, labelsn, iouv, pred_masks, gt_masks, overlap=overlap, masks=True) # shape: [Npi, nMap] , bool, nmAp=10
+            if nl: # if any tbboxes:
+                tbox = xywh2xyxy(labels[:, 1:5])  # target boxes shape: [Nt,4]
+                # scale tbboxes - remove padding, scale by orig shape, clip:
+                tbox=scale_boxes(batch_im[si].shape[1:], tbox, shape, shapes[si][1:3])  # native-space labels
+                labelsn = tf.concat((labels[:, 0:1], tbox), 1)  # [tclass, tbox] shape: [Nt, 5]native-space labels
+                # Find bboxes tp (true positive) preds. result type: bool shape: [Npi, nMap] , where nmAp=10:
+                correct_bboxes = process_batch(pred, labelsn, iouv)
+                # Find masks tp (true positive) preds. result type: bool shape: [Npi, nMap] , where nmAp=10:
+                correct_masks = process_batch(pred, labelsn, iouv, pred_masks, gt_masks, overlap=overlap, masks=True)
                 if plots:
-                    confusion_matrix.process_batch(predn, labelsn)
-            # stats list: [tp-bbox, tp-masks, pclass, pconf, tclass]. shapes:  #[[Npi,10],[Npi,10],Nip,Npi,Nti]
+                    confusion_matrix.process_batch(pred, labelsn)
+
+            # stats list: [tp-bbox, tp-masks, pclass, pconf, tclass]. Shapes: [[Npi,10],[Npi,10],Nip,Npi,Nti]
             stats.append((correct_masks, correct_bboxes, pred[:, 4], pred[:, 5], labels[:, 0]))
 
             pred_masks = tf.cast(pred_masks, dtype=tf.uint8) # shaoe: [Npi, h/4,w/4]
-            if plots and batch_i < 3:
+            if plots and batch_i < 3: # plot masks of first 3 examples
                 plot_masks.append(pred_masks[:15])  # filter top 15 to plot
 
             # Save/log
             if save_txt:
-                save_one_txt(predn, save_conf, shape, file=save_dir / 'labels' / f'{path.stem}.txt')
+                save_one_txt(pred, save_conf, shape, file=save_dir / 'labels' / f'{path.stem}.txt')
             if save_json:
                 pred_masks = scale_image(batch_im[si].shape[1:],
                                          pred_masks.permute(1, 2, 0).contiguous().cpu().numpy(), shape, shapes[si][1])
-                save_one_json(predn, jdict, path, class_map, pred_masks)  # append to COCO-JSON dictionary
+                save_one_json(pred, jdict, path, class_map, pred_masks)  # append to COCO-JSON dictionary
             # callbacks.run('on_val_image_end', pred, predn, path, names, im[si])
-
+            processed_preds.append(pred)
+        processed_preds=tf.stack(processed_preds, axis=0)
         # Plot images
         if plots and batch_i < 3:
             if len(plot_masks):
-                plot_masks = tf.concat(plot_masks, dim=0)
+                plot_masks = tf.concat(plot_masks, axis=0)
             plot_images_and_masks(batch_im, batch_targets, batch_masks, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names) # targets
-            plot_images_and_masks(batch_im, output_to_target(preds, max_det=15), plot_masks, paths,
+            arrange_pred =  output_to_target(processed_preds, max_det=15) # for plot-preds in targets shape:[Np,predind+conf+bbox]
+            plot_images_and_masks(batch_im,arrange_pred, plot_masks, paths,
                                   save_dir / f'val_batch{batch_i}_pred.jpg', names)  # pred
 
-        # callbacks.run('on_val_batch_end')
+    # callbacks.run('on_val_batch_end')
     # Compute metrics.
-    # stats concat: [[[Npi,10],[Npi,10],[Npi],[Npi],[Nti]] for i=0: Np]-> [[sum(Npi),10], [sum(Npi),10],[sum(Npi)], [sum(Npi)],[sum(Nti)]]:
+    # Rearrange stats: list [Np] to list [5]. Details:
+    #[[[Npi,10],[Npi,10],[Npi],[Npi],[Nti]] for i=0:npreds]->[[sum(Npi),10],[sum(Npi),10],[sum(Npi)],[sum(Npi)],[sum(Nti)]]
     stats = [tf.concat(x, 0).numpy() for x in zip(*stats)]
-    if len(stats) and stats[0].any():
+    if len(stats) and stats[0].any(): # todo run this
         # result per bbox&masks: [tp,fp,precision,recall,f1,ap,unique classes]
         results = ap_per_class_box_and_mask(*stats, plot=plots, save_dir=save_dir, names=names)
         metrics.update(results)
-    nt = np.bincount(stats[4].astype(int), minlength=nc)  # number of targets per class
+    nt = np.bincount(stats[4].astype(int), minlength=nc)  # list[nc], histogram of number of targets per class
 
     # Print results
     pf = '%22s' + '%11i' * 2 + '%11.3g' * 8  # print format
@@ -341,7 +353,7 @@ def run(
     t = tuple(x.t / seen * 1E3 for x in dt)  # speeds per image
     if not training:
         shape = (batch_size, 3, imgsz, imgsz)
-        LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {shape}' % t)
+        LOGGER.info(f'Speed: %.1fms inference, %.1fms loss, %.1fms NMS per image at shape {shape}' % t)
 
     # Plots
     if plots:
@@ -385,6 +397,7 @@ def run(
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}{s}")
     final_metric = mp_bbox, mr_bbox, map50_bbox, map_bbox, mp_mask, mr_mask, map50_mask, map_mask
+    # return: final_metric, [boxloss, objloss, clsloss, maskloss]/len(dataloader), ap[nc], t[3]
     return (*final_metric, *(loss / len(list(dataloader))).tolist()), metrics.get_maps(nc), t
 
 
