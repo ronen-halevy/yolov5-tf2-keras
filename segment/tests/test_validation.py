@@ -113,6 +113,9 @@ if __name__ == '__main__':
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         mloss = tf.zeros([4], dtype=tf.float32)  # mean losses
 
+        #return:results(12) maps(80) t(3):(mp_bbox,mr_bbox,map50_bbox, map_bbox, mp_mask, mr_mask, map50_mask, map_mask,
+        # boxloss, objloss, clsloss, maskloss),
+        # [boxloss, objloss, clsloss, maskloss]/len(dataloader), ap[nc], t[3]
         results, maps, _ = validate.run(ds,
                                         data_dict,
                                         batch_size=batch_size,
@@ -130,8 +133,8 @@ if __name__ == '__main__':
 
         import numpy as np
         ####
-        # Update best mAP
-        fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
+        # Update best mAP - weighted combination: 0.1*map50_bbox+0.9*map_bbox+0.1*map50_mask+0.9*map_mask:
+        fi = fitness(np.array(results).reshape(1, -1)) # shape: [1]
         # stop = stopper(epoch=epoch, fitness=fi)  # early stop check
         if fi > best_fitness:
             best_fitness = fi
