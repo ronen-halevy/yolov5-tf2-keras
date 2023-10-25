@@ -34,7 +34,7 @@ from keras import mixed_precision
 #                            DWConvTranspose2d, Focus, autopad)
 # from models.experimental import  attempt_load
 # from models.yolo import Detect, Segment
-# from utils.activations import SiLU
+from utils.activations import SiLU
 from utils.tf_general import LOGGER, make_divisible, print_args
 
 from utils.tf_plots import feature_visualization
@@ -705,19 +705,19 @@ class AgnosticNMS(keras.layers.Layer):
         return padded_boxes, padded_scores, padded_classes, valid_detections
 
 
-# def activations(act=SiLU):
-#     # Returns TF activation from input PyTorch activation
-#     if 'LeakyReLU' in str(act): #  in ['nn.LeakyReLU']:
-#     # if isinstance(act, nn.LeakyReLU):
-#         return lambda x: keras.activations.relu(x, alpha=0.1)
-#     elif 'Hardswish' in str(act): #  in ['Hardswish']:
-#     # elif isinstance(act, nn.Hardswish):
-#         return lambda x: x * tf.nn.relu6(x + 3) * 0.166666667
-#     elif 'SiLU' in  str(act): #  in ['nn.SiLU', 'SiLU']:
-#     # elif isinstance(act, (SiLU)):
-#         return lambda x: keras.activations.swish(x)
-#     else:
-#         raise Exception(f'no matching TensorFlow activation found for PyTorch activation {act}')
+def activations(act=SiLU):
+    # Returns TF activation from input PyTorch activation
+    if 'LeakyReLU' in str(act): #  in ['nn.LeakyReLU']:
+    # if isinstance(act, nn.LeakyReLU):
+        return lambda x: keras.activations.relu(x, alpha=0.1)
+    elif 'Hardswish' in str(act): #  in ['Hardswish']:
+    # elif isinstance(act, nn.Hardswish):
+        return lambda x: x * tf.nn.relu6(x + 3) * 0.166666667
+    elif 'SiLU' in  str(act): #  in ['nn.SiLU', 'SiLU']:
+    # elif isinstance(act, (SiLU)):
+        return lambda x: keras.activations.swish(x)
+    else:
+        raise Exception(f'no matching TensorFlow activation found for PyTorch activation {act}')
 
 
 def representative_dataset_gen(dataset, ncalib=100):
