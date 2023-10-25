@@ -35,10 +35,11 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from utils.callbacks import Callbacks
 from utils.downloads import is_url
-from utils.general import (LOGGER, TQDM_BAR_FORMAT, check_dataset, check_file, check_git_info,
+
+from utils.tf_general import (LOGGER, TQDM_BAR_FORMAT,  check_file,
                              check_yaml, colorstr,
-                           get_latest_run, increment_path,
-                           print_args, print_mutation, yaml_save)
+                            increment_path,print_args, check_dataset,print_mutation, yaml_save)
+
 from segment.tb import GenericLogger
 from utils.tf_plots import plot_evolve, plot_labels
 from tf_dataloaders import create_dataloader
@@ -59,7 +60,6 @@ from optimizer import LRSchedule
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
 WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
-GIT_INFO = check_git_info()
 
 
 
@@ -269,10 +269,10 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
         # data_dict = {'nc': 80, 'names': class_names}
         val_keras_model.set_weights(keras_model.get_weights())
-        # results, list[12] - mp_bbox, mr_bbox, map50_bbox, map_bbox, mp_mask, mr_mask, map50_mask, map_mask,  box_loss, obj_loss, cls_loss, mask_loss
-        # maps: array[nc]:  ap-bbox+ap-masks per class
         final_epoch = (epoch + 1 == epochs) or stopper.possible_stop
 
+        # results, list[12] - mp_bbox, mr_bbox, map50_bbox, map_bbox, mp_mask, mr_mask, map50_mask, map_mask,  box_loss, obj_loss, cls_loss, mask_loss
+        # maps: array[nc]:  ap-bbox+ap-masks per cla
         results, maps, _ = validate.run(val_loader,
                                         data_dict,
                                         batch_size=batch_size,
@@ -291,7 +291,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         keras_model.save_weights(
                     last)
 
-        ########################################################
         # Update best mAP
         # fi=0.1*map50_bbox +0.9*map_bbox+0.1*map50_mask+0.9 map_maskzs
         fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
