@@ -131,8 +131,8 @@ def process_batch(detections, labels, iouv, pred_masks=None, gt_masks=None, over
         x = tf.where(tf.math.logical_and((iou >= iouv[i]) , correct_class))
         # x = tf.cast(x, tf.float32) # where returns int64
         if x.shape[0]:
-            # matches: [[id00, idy10, iou[id00, id10]].....[id0n, id1n, iou[id0n, id1n]]   shape: (N, 3]
-            matches = (tf.concat((tf.stack(x, 1),tf.gather_nd(iou, x)[..., None]), 1).numpy())  #
+            # matches: [[id00, id10, iou[id00, id10]].....[id0n, id1n, iou[id0n, id1n]]   shape: (N, 3]
+            matches = (tf.concat((x.astype(tf.float32),tf.gather_nd(iou, x)[..., None]), 1).numpy())  #
             if x[0].shape[0] > 1: # multi match detections
                 matches = matches[matches[:, 2].argsort()[::-1]] # sort matches triplets by iou val. shape: (N, 3]
                 # select unique tbox index to avoid multi matches for the same target index
@@ -249,8 +249,8 @@ def run(
         plot_masks = []  # masks for plotting
         # Calc stats - a list of size contains tp-bbox and tp-masks.  ize list of bboxes and masks mAp
         # svae text and json and plots per prediction according to config flags.
-        processed_preds=[]
-        for si, (pred, proto) in enumerate(zip(preds, protos)): # loop on preds batch
+        list_preds=[]
+        for si, (pred, proto) in enumerate(zip(preds, protos)): # loop on preds batch - image by image
             with dt[2]: # nof outputs limitted by max_det:
                 pred=non_max_suppression(pred, conf_thres, iou_thres, max_det) #shape:[Nt, 38] (xyxy+conf+cls+32masks)
                 # scale nms selected pred boxes:
@@ -306,7 +306,7 @@ def run(
 
             pred_masks = tf.cast(pred_masks, dtype=tf.uint8) # shaoe: [Npi, h/4,w/4]
             if plots and batch_i < 3: # plot masks of first 3 examples
-                plot_masks.append(pred_masks[:15])  # filter top 15 to plot
+                plot_masks.append(pred_masks[:15])  # filter top 15 images to plot
 
             # Save/log
             if save_txt:
@@ -315,15 +315,18 @@ def run(
                 pred_masks = scale_image(batch_im[si].shape[1:],
                                          pred_masks.permute(1, 2, 0).contiguous().cpu().numpy(), shape, shapes[si][1])
                 save_one_json(pred, jdict, path, class_map, pred_masks)  # append to COCO-JSON dictionary
-            # callbacks.run('on_val_image_end', pred, predn, path, names, im[si])
-            processed_preds.append(pred)
-        processed_preds=tf.stack(processed_preds, axis=0)
+            # arrange preds in a target-like structure, as a preparetion for plot_images_and_masks method call
+            box, conf, cls = tf.split(pred[:, :6], (4, 1, 1), axis=1)
+            bi = tf.fill(cls.shape, si).astype(tf.float32) # bidx
+            xywh=xyxy2xywh(box)
+            pred=tf.concat((bi, cls,xywh , conf), axis=1) # target-like pred structure shape:[Npi, 7]
+            list_preds.append(pred[:15])  #  filter top 15 images to plot
         # Plot images
         if plots and batch_i < 3:
+            arrange_pred = tf.concat(list_preds, axis=0)# flattened batch images array. shape: [Np,7]
             if len(plot_masks):
-                plot_masks = tf.concat(plot_masks, axis=0)
+                plot_masks = tf.concat(plot_masks, axis=0) #  top 15 mask preds per image. shape: [
             plot_images_and_masks(batch_im, batch_targets, batch_masks, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names) # targets
-            arrange_pred =  output_to_target(processed_preds, max_det=15) # for plot-preds in targets shape:[Np,predind+conf+bbox]
             plot_images_and_masks(batch_im,arrange_pred, plot_masks, paths,
                                   save_dir / f'val_batch{batch_i}_pred.jpg', names)  # pred
 
