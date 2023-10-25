@@ -230,7 +230,7 @@ def output_to_target(output, max_det=300):
         box, conf, cls = tf.split(o[:max_det, :6], (4, 1, 1), axis=1)
         j = tf.fill((box.shape[0], 1), i).astype(tf.float32)
         targets.append(tf.concat((j, cls, xyxy2xywh(box), conf), axis=1)) # [idx, cls,bbox, conf] shape: [N , 7]
-    return tf.concat(targets, 0).numpy()
+    return tf.concat(targets, axis=0).numpy()
 
 
 # @threaded

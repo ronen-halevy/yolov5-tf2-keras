@@ -40,8 +40,8 @@ import yaml
 # from ultralytics.yolo.utils.checks import check_requirements
 
 from utils import TryExcept, emojis
-from utils.downloads import curl_download, gsutil_getsize
-from utils.metrics import box_iou, fitness
+# from utils.downloads import curl_download, gsutil_getsize
+# from utils.metrics import box_iou, fitness
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
@@ -156,22 +156,6 @@ if platform.system() == 'Windows':
         setattr(LOGGER, fn.__name__, lambda x: fn(emojis(x)))  # emoji safe logging
 
 
-def user_config_dir(dir='Ultralytics', env_var='YOLOV5_CONFIG_DIR'):
-    # Return path of user configuration directory. Prefer environment variable if exists. Make dir if required.
-    env = os.getenv(env_var)
-    if env:
-        path = Path(env)  # use environment variable
-    else:
-        cfg = {'Windows': 'AppData/Roaming', 'Linux': '.config', 'Darwin': 'Library/Application Support'}  # 3 OS dirs
-        path = Path.home() / cfg.get(platform.system(), '')  # OS-specific config dir
-        path = (path if is_writeable(path) else Path('/tmp')) / dir  # GCP and AWS lambda fix, only /tmp is writeable
-    path.mkdir(exist_ok=True)  # make if required
-    return path
-
-
-CONFIG_DIR = user_config_dir()  # Ultralytics settings dir
-
-
 class Profile(contextlib.ContextDecorator):
     # YOLOv5 Profile class. Usage: @Profile() decorator or 'with Profile():' context manager
     def __init__(self, t=0.0):
@@ -213,25 +197,6 @@ class Timeout(contextlib.ContextDecorator):
             if self.suppress and exc_type is TimeoutError:  # Suppress TimeoutError
                 return True
 
-
-class WorkingDirectory(contextlib.ContextDecorator):
-    # Usage: @WorkingDirectory(dir) decorator or 'with WorkingDirectory(dir):' context manager
-    def __init__(self, new_dir):
-        self.dir = new_dir  # new dir
-        self.cwd = Path.cwd().resolve()  # current dir
-
-    def __enter__(self):
-        os.chdir(self.dir)
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        os.chdir(self.cwd)
-
-
-def methods(instance):
-    # Get class/instance methods
-    return [f for f in dir(instance) if callable(getattr(instance, f)) and not f.startswith('__')]
-
-
 def print_args(args: Optional[dict] = None, show_file=True, show_func=False):
     # Print function arguments (optional args dict)
     x = inspect.currentframe().f_back  # previous frame
@@ -262,115 +227,115 @@ def print_args(args: Optional[dict] = None, show_file=True, show_func=False):
 #         os.environ['PYTHONHASHSEED'] = str(seed)
 #
 
-def intersect_dicts(da, db, exclude=()):
-    # Dictionary intersection of matching keys and shapes, omitting 'exclude' keys, using da values
-    return {k: v for k, v in da.items() if k in db and all(x not in k for x in exclude) and v.shape == db[k].shape}
+# def intersect_dicts(da, db, exclude=()):
+#     # Dictionary intersection of matching keys and shapes, omitting 'exclude' keys, using da values
+#     return {k: v for k, v in da.items() if k in db and all(x not in k for x in exclude) and v.shape == db[k].shape}
+#
+
+# def get_default_args(func):
+#     # Get func() default arguments
+#     signature = inspect.signature(func)
+#     return {k: v.default for k, v in signature.parameters.items() if v.default is not inspect.Parameter.empty}
 
 
-def get_default_args(func):
-    # Get func() default arguments
-    signature = inspect.signature(func)
-    return {k: v.default for k, v in signature.parameters.items() if v.default is not inspect.Parameter.empty}
+# def get_latest_run(search_dir='.'):
+#     # Return path to most recent 'last.pt' in /runs (i.e. to --resume from)
+#     last_list = glob.glob(f'{search_dir}/**/last*.pt', recursive=True)
+#     return max(last_list, key=os.path.getctime) if last_list else ''
+#
+
+# def file_age(path=__file__):
+#     # Return days since last file update
+#     dt = (datetime.now() - datetime.fromtimestamp(Path(path).stat().st_mtime))  # delta
+#     return dt.days  # + dt.seconds / 86400  # fractional days
+
+#
+# def file_date(path=__file__):
+#     # Return human-readable file modification date, i.e. '2021-3-26'
+#     t = datetime.fromtimestamp(Path(path).stat().st_mtime)
+#     return f'{t.year}-{t.month}-{t.day}'
 
 
-def get_latest_run(search_dir='.'):
-    # Return path to most recent 'last.pt' in /runs (i.e. to --resume from)
-    last_list = glob.glob(f'{search_dir}/**/last*.pt', recursive=True)
-    return max(last_list, key=os.path.getctime) if last_list else ''
+# def file_size(path):
+#     # Return file/dir size (MB)
+#     mb = 1 << 20  # bytes to MiB (1024 ** 2)
+#     path = Path(path)
+#     if path.is_file():
+#         return path.stat().st_size / mb
+#     elif path.is_dir():
+#         return sum(f.stat().st_size for f in path.glob('**/*') if f.is_file()) / mb
+#     else:
+#         return 0.0
 
 
-def file_age(path=__file__):
-    # Return days since last file update
-    dt = (datetime.now() - datetime.fromtimestamp(Path(path).stat().st_mtime))  # delta
-    return dt.days  # + dt.seconds / 86400  # fractional days
+# def check_online():
+#     # Check internet connectivity
+#     import socket
+#
+#     def run_once():
+#         # Check once
+#         try:
+#             socket.create_connection(('1.1.1.1', 443), 5)  # check host accessibility
+#             return True
+#         except OSError:
+#             return False
+#
+#     return run_once() or run_once()  # check twice to increase robustness to intermittent connectivity issues
 
 
-def file_date(path=__file__):
-    # Return human-readable file modification date, i.e. '2021-3-26'
-    t = datetime.fromtimestamp(Path(path).stat().st_mtime)
-    return f'{t.year}-{t.month}-{t.day}'
+# def git_describe(path=ROOT):  # path must be a directory
+#     # Return human-readable git description, i.e. v5.0-5-g3e25f1e https://git-scm.com/docs/git-describe
+#     try:
+#         assert (Path(path) / '.git').is_dir()
+#         return check_output(f'git -C {path} describe --tags --long --always', shell=True).decode()[:-1]
+#     except Exception:
+#         return ''
 
 
-def file_size(path):
-    # Return file/dir size (MB)
-    mb = 1 << 20  # bytes to MiB (1024 ** 2)
-    path = Path(path)
-    if path.is_file():
-        return path.stat().st_size / mb
-    elif path.is_dir():
-        return sum(f.stat().st_size for f in path.glob('**/*') if f.is_file()) / mb
-    else:
-        return 0.0
+# @TryExcept()
+# @WorkingDirectory(ROOT)
+# def check_git_status(repo='ultralytics/yolov5', branch='master'):
+#     # YOLOv5 status check, recommend 'git pull' if code is out of date
+#     url = f'https://github.com/{repo}'
+#     msg = f', for updates see {url}'
+#     s = colorstr('github: ')  # string
+#     assert Path('.git').exists(), s + 'skipping check (not a git repository)' + msg
+#     assert check_online(), s + 'skipping check (offline)' + msg
+#
+#     splits = re.split(pattern=r'\s', string=check_output('git remote -v', shell=True).decode())
+#     matches = [repo in s for s in splits]
+#     if any(matches):
+#         remote = splits[matches.index(True) - 1]
+#     else:
+#         remote = 'ultralytics'
+#         check_output(f'git remote add {remote} {url}', shell=True)
+#     check_output(f'git fetch {remote}', shell=True, timeout=5)  # git fetch
+#     local_branch = check_output('git rev-parse --abbrev-ref HEAD', shell=True).decode().strip()  # checked out
+#     n = int(check_output(f'git rev-list {local_branch}..{remote}/{branch} --count', shell=True))  # commits behind
+#     if n > 0:
+#         pull = 'git pull' if remote == 'origin' else f'git pull {remote} {branch}'
+#         s += f"⚠️ YOLOv5 is out of date by {n} commit{'s' * (n > 1)}. Use '{pull}' or 'git clone {url}' to update."
+#     else:
+#         s += f'up to date with {url} ✅'
+#     LOGGER.info(s)
 
 
-def check_online():
-    # Check internet connectivity
-    import socket
-
-    def run_once():
-        # Check once
-        try:
-            socket.create_connection(('1.1.1.1', 443), 5)  # check host accessibility
-            return True
-        except OSError:
-            return False
-
-    return run_once() or run_once()  # check twice to increase robustness to intermittent connectivity issues
-
-
-def git_describe(path=ROOT):  # path must be a directory
-    # Return human-readable git description, i.e. v5.0-5-g3e25f1e https://git-scm.com/docs/git-describe
-    try:
-        assert (Path(path) / '.git').is_dir()
-        return check_output(f'git -C {path} describe --tags --long --always', shell=True).decode()[:-1]
-    except Exception:
-        return ''
-
-
-@TryExcept()
-@WorkingDirectory(ROOT)
-def check_git_status(repo='ultralytics/yolov5', branch='master'):
-    # YOLOv5 status check, recommend 'git pull' if code is out of date
-    url = f'https://github.com/{repo}'
-    msg = f', for updates see {url}'
-    s = colorstr('github: ')  # string
-    assert Path('.git').exists(), s + 'skipping check (not a git repository)' + msg
-    assert check_online(), s + 'skipping check (offline)' + msg
-
-    splits = re.split(pattern=r'\s', string=check_output('git remote -v', shell=True).decode())
-    matches = [repo in s for s in splits]
-    if any(matches):
-        remote = splits[matches.index(True) - 1]
-    else:
-        remote = 'ultralytics'
-        check_output(f'git remote add {remote} {url}', shell=True)
-    check_output(f'git fetch {remote}', shell=True, timeout=5)  # git fetch
-    local_branch = check_output('git rev-parse --abbrev-ref HEAD', shell=True).decode().strip()  # checked out
-    n = int(check_output(f'git rev-list {local_branch}..{remote}/{branch} --count', shell=True))  # commits behind
-    if n > 0:
-        pull = 'git pull' if remote == 'origin' else f'git pull {remote} {branch}'
-        s += f"⚠️ YOLOv5 is out of date by {n} commit{'s' * (n > 1)}. Use '{pull}' or 'git clone {url}' to update."
-    else:
-        s += f'up to date with {url} ✅'
-    LOGGER.info(s)
-
-
-@WorkingDirectory(ROOT)
-def check_git_info(path='.'):
-    # YOLOv5 git info check, return {remote, branch, commit}
-    check_requirements('gitpython')
-    import git
-    try:
-        repo = git.Repo(path)
-        remote = repo.remotes.origin.url.replace('.git', '')  # i.e. 'https://github.com/ultralytics/yolov5'
-        commit = repo.head.commit.hexsha  # i.e. '3134699c73af83aac2a481435550b968d5792c0d'
-        try:
-            branch = repo.active_branch.name  # i.e. 'main'
-        except TypeError:  # not on any branch
-            branch = None  # i.e. 'detached HEAD' state
-        return {'remote': remote, 'branch': branch, 'commit': commit}
-    except git.exc.InvalidGitRepositoryError:  # path is not a git dir
-        return {'remote': None, 'branch': None, 'commit': None}
+# @WorkingDirectory(ROOT)
+# def check_git_info(path='.'):
+#     # YOLOv5 git info check, return {remote, branch, commit}
+#     check_requirements('gitpython')
+#     import git
+#     try:
+#         repo = git.Repo(path)
+#         remote = repo.remotes.origin.url.replace('.git', '')  # i.e. 'https://github.com/ultralytics/yolov5'
+#         commit = repo.head.commit.hexsha  # i.e. '3134699c73af83aac2a481435550b968d5792c0d'
+#         try:
+#             branch = repo.active_branch.name  # i.e. 'main'
+#         except TypeError:  # not on any branch
+#             branch = None  # i.e. 'detached HEAD' state
+#         return {'remote': remote, 'branch': branch, 'commit': commit}
+#     except git.exc.InvalidGitRepositoryError:  # path is not a git dir
+#         return {'remote': None, 'branch': None, 'commit': None}
 
 
 def check_python(minimum='3.7.0'):
@@ -390,7 +355,7 @@ def check_version(current='0.0.0', minimum='0.0.0', name='version ', pinned=Fals
     return result
 
 
-@TryExcept()
+# @TryExcept()
 def check_requirements(requirements=ROOT / 'requirements.txt', exclude=(), install=True, cmds=''):
     # Check installed dependencies meet YOLOv5 requirements (pass *.txt file or list of packages or single package str)
     prefix = colorstr('red', 'bold', 'requirements:')
@@ -464,9 +429,9 @@ def check_suffix(file='yolov5s.pt', suffix=('.pt',), msg=''):
                 assert s in suffix, f'{msg}{f} acceptable suffix is {suffix}'
 
 
-def check_yaml(file, suffix=('.yaml', '.yml')):
-    # Search/download YAML file (if necessary) and return path, checking suffix
-    return check_file(file, suffix)
+# def check_yaml(file, suffix=('.yaml', '.yml')):
+#     # Search/download YAML file (if necessary) and return path, checking suffix
+#     return check_file(file, suffix)
 
 
 def check_file(file, suffix=''):
@@ -509,178 +474,178 @@ def check_font(font=FONT, progress=False):
         # torch.hub.download_url_to_file(url, str(file), progress=progress)
         urllib.request.urlretrieve(url, str(file))
 
-
-def check_dataset(data, autodownload=True):
-    # Download, check and/or unzip dataset if not found locally
-
-    # Download (optional)
-    extract_dir = ''
-    if isinstance(data, (str, Path)) and (is_zipfile(data) or is_tarfile(data)):
-        download(data, dir=f'{DATASETS_DIR}/{Path(data).stem}', unzip=True, delete=False, curl=False, threads=1)
-        data = next((DATASETS_DIR / Path(data).stem).rglob('*.yaml'))
-        extract_dir, autodownload = data.parent, False
-
-    # Read yaml (optional)
-    if isinstance(data, (str, Path)):
-        data = yaml_load(data)  # dictionary
-
-    # Checks
-    for k in 'train', 'val', 'names':
-        assert k in data, emojis(f"data.yaml '{k}:' field missing ❌")
-    if isinstance(data['names'], (list, tuple)):  # old array format
-        data['names'] = dict(enumerate(data['names']))  # convert to dict
-    assert all(isinstance(k, int) for k in data['names'].keys()), 'data.yaml names keys must be integers, i.e. 2: car'
-    data['nc'] = len(data['names'])
-
-    # Resolve paths
-    path = Path(extract_dir or data.get('path') or '')  # optional 'path' default to '.'
-    if not path.is_absolute():
-        path = (ROOT / path).resolve()
-        data['path'] = path  # download scripts
-    for k in 'train', 'val', 'test':
-        if data.get(k):  # prepend path
-            if isinstance(data[k], str):
-                x = (path / data[k]).resolve()
-                if not x.exists() and data[k].startswith('../'):
-                    x = (path / data[k][3:]).resolve()
-                data[k] = str(x)
-            else:
-                data[k] = [str((path / x).resolve()) for x in data[k]]
-
-    # Parse yaml
-    train, val, test, s = (data.get(x) for x in ('train', 'val', 'test', 'download'))
-    if val:
-        val = [Path(x).resolve() for x in (val if isinstance(val, list) else [val])]  # val path
-        if not all(x.exists() for x in val):
-            LOGGER.info('\nDataset not found ⚠️, missing paths %s' % [str(x) for x in val if not x.exists()])
-            if not s or not autodownload:
-                raise Exception('Dataset not found ❌')
-            t = time.time()
-            if s.startswith('http') and s.endswith('.zip'):  # URL
-                f = Path(s).name  # filename
-                LOGGER.info(f'Downloading {s} to {f}...')
-                # torch.hub.download_url_to_file(s, f)
-                urllib.request.urlretrieve(s, f)
-
-                Path(DATASETS_DIR).mkdir(parents=True, exist_ok=True)  # create root
-                unzip_file(f, path=DATASETS_DIR)  # unzip
-                Path(f).unlink()  # remove zip
-                r = None  # success
-            elif s.startswith('bash '):  # bash script
-                LOGGER.info(f'Running {s} ...')
-                r = subprocess.run(s, shell=True)
-            else:  # python script
-                r = exec(s, {'yaml': data})  # return None
-            dt = f'({round(time.time() - t, 1)}s)'
-            s = f"success ✅ {dt}, saved to {colorstr('bold', DATASETS_DIR)}" if r in (0, None) else f'failure {dt} ❌'
-            LOGGER.info(f'Dataset download {s}')
-    check_font('Arial.ttf' if is_ascii(data['names']) else 'Arial.Unicode.ttf', progress=True)  # download fonts
-    return data  # dictionary
-
 #
-# def check_amp(model):
-#     # Check PyTorch Automatic Mixed Precision (AMP) functionality. Return True on correct operation
-#     from models.common import AutoShape, DetectMultiBackend
+# def check_dataset(data, autodownload=True):
+#     # Download, check and/or unzip dataset if not found locally
 #
-#     def amp_allclose(model, im):
-#         # All close FP32 vs AMP results
-#         m = AutoShape(model, verbose=False)  # model
-#         a = m(im).xywhn[0]  # FP32 inference
-#         m.amp = True
-#         b = m(im).xywhn[0]  # AMP inference
-#         return a.shape == b.shape and torch.allclose(a, b, atol=0.1)  # close to 10% absolute tolerance
+#     # Download (optional)
+#     extract_dir = ''
+#     if isinstance(data, (str, Path)) and (is_zipfile(data) or is_tarfile(data)):
+#         download(data, dir=f'{DATASETS_DIR}/{Path(data).stem}', unzip=True, delete=False, curl=False, threads=1)
+#         data = next((DATASETS_DIR / Path(data).stem).rglob('*.yaml'))
+#         extract_dir, autodownload = data.parent, False
 #
-#     prefix = colorstr('AMP: ')
-#     device = next(model.parameters()).device  # get model device
-#     if device.type in ('cpu', 'mps'):
-#         return False  # AMP only used on CUDA devices
-#     f = ROOT / 'data' / 'images' / 'bus.jpg'  # image to check
-#     im = f if f.exists() else 'https://ultralytics.com/images/bus.jpg' if check_online() else np.ones((640, 640, 3))
-#     try:
-#         assert amp_allclose(deepcopy(model), im) or amp_allclose(DetectMultiBackend('yolov5n.pt', device), im)
-#         LOGGER.info(f'{prefix}checks passed ✅')
-#         return True
-#     except Exception:
-#         help_url = 'https://github.com/ultralytics/yolov5/issues/7908'
-#         LOGGER.warning(f'{prefix}checks failed ❌, disabling Automatic Mixed Precision. See {help_url}')
-#         return False
+#     # Read yaml (optional)
+#     if isinstance(data, (str, Path)):
+#         data = yaml_load(data)  # dictionary
 #
-
-def yaml_load(file='data.yaml'):
-    # Single-line safe yaml loading
-    with open(file, errors='ignore') as f:
-        return yaml.safe_load(f)
-
-
-def yaml_save(file='data.yaml', data={}):
-    # Single-line safe yaml saving
-    with open(file, 'w') as f:
-        yaml.safe_dump({k: str(v) if isinstance(v, Path) else v for k, v in data.items()}, f, sort_keys=False)
-
-
-def unzip_file(file, path=None, exclude=('.DS_Store', '__MACOSX')):
-    # Unzip a *.zip file to path/, excluding files containing strings in exclude list
-    if path is None:
-        path = Path(file).parent  # default path
-    with ZipFile(file) as zipObj:
-        for f in zipObj.namelist():  # list all archived filenames in the zip
-            if all(x not in f for x in exclude):
-                zipObj.extract(f, path=path)
-
-
-def url2file(url):
-    # Convert URL to filename, i.e. https://url.com/file.txt?auth -> file.txt
-    url = str(Path(url)).replace(':/', '://')  # Pathlib turns :// -> :/
-    return Path(urllib.parse.unquote(url)).name.split('?')[0]  # '%2F' to '/', split https://url.com/file.txt?auth
-
-
-def download(url, dir='.', unzip=True, delete=True, curl=False, threads=1, retry=3):
-    # Multithreaded file download and unzip function, used in data.yaml for autodownload
-    def download_one(url, dir):
-        # Download 1 file
-        success = True
-        if os.path.isfile(url):
-            f = Path(url)  # filename
-        else:  # does not exist
-            f = dir / Path(url).name
-            LOGGER.info(f'Downloading {url} to {f}...')
-            for i in range(retry + 1):
-                if curl:
-                    success = curl_download(url, f, silent=(threads > 1))
-                else:
-                    # torch.hub.download_url_to_file(url, f, progress=threads == 1)  # torch download
-                    urllib.request.urlretrieve(url, f)
-                    success = f.is_file()
-                if success:
-                    break
-                elif i < retry:
-                    LOGGER.warning(f'⚠️ Download failure, retrying {i + 1}/{retry} {url}...')
-                else:
-                    LOGGER.warning(f'❌ Failed to download {url}...')
-
-        if unzip and success and (f.suffix == '.gz' or is_zipfile(f) or is_tarfile(f)):
-            LOGGER.info(f'Unzipping {f}...')
-            if is_zipfile(f):
-                unzip_file(f, dir)  # unzip
-            elif is_tarfile(f):
-                subprocess.run(['tar', 'xf', f, '--directory', f.parent], check=True)  # unzip
-            elif f.suffix == '.gz':
-                subprocess.run(['tar', 'xfz', f, '--directory', f.parent], check=True)  # unzip
-            if delete:
-                f.unlink()  # remove zip
-
-    dir = Path(dir)
-    dir.mkdir(parents=True, exist_ok=True)  # make directory
-    if threads > 1:
-        pool = ThreadPool(threads)
-        pool.imap(lambda x: download_one(*x), zip(url, repeat(dir)))  # multithreaded
-        pool.close()
-        pool.join()
-    else:
-        for u in [url] if isinstance(url, (str, Path)) else url:
-            download_one(u, dir)
-
-
+#     # Checks
+#     for k in 'train', 'val', 'names':
+#         assert k in data, emojis(f"data.yaml '{k}:' field missing ❌")
+#     if isinstance(data['names'], (list, tuple)):  # old array format
+#         data['names'] = dict(enumerate(data['names']))  # convert to dict
+#     assert all(isinstance(k, int) for k in data['names'].keys()), 'data.yaml names keys must be integers, i.e. 2: car'
+#     data['nc'] = len(data['names'])
+#
+#     # Resolve paths
+#     path = Path(extract_dir or data.get('path') or '')  # optional 'path' default to '.'
+#     if not path.is_absolute():
+#         path = (ROOT / path).resolve()
+#         data['path'] = path  # download scripts
+#     for k in 'train', 'val', 'test':
+#         if data.get(k):  # prepend path
+#             if isinstance(data[k], str):
+#                 x = (path / data[k]).resolve()
+#                 if not x.exists() and data[k].startswith('../'):
+#                     x = (path / data[k][3:]).resolve()
+#                 data[k] = str(x)
+#             else:
+#                 data[k] = [str((path / x).resolve()) for x in data[k]]
+#
+#     # Parse yaml
+#     train, val, test, s = (data.get(x) for x in ('train', 'val', 'test', 'download'))
+#     if val:
+#         val = [Path(x).resolve() for x in (val if isinstance(val, list) else [val])]  # val path
+#         if not all(x.exists() for x in val):
+#             LOGGER.info('\nDataset not found ⚠️, missing paths %s' % [str(x) for x in val if not x.exists()])
+#             if not s or not autodownload:
+#                 raise Exception('Dataset not found ❌')
+#             t = time.time()
+#             if s.startswith('http') and s.endswith('.zip'):  # URL
+#                 f = Path(s).name  # filename
+#                 LOGGER.info(f'Downloading {s} to {f}...')
+#                 # torch.hub.download_url_to_file(s, f)
+#                 urllib.request.urlretrieve(s, f)
+#
+#                 Path(DATASETS_DIR).mkdir(parents=True, exist_ok=True)  # create root
+#                 unzip_file(f, path=DATASETS_DIR)  # unzip
+#                 Path(f).unlink()  # remove zip
+#                 r = None  # success
+#             elif s.startswith('bash '):  # bash script
+#                 LOGGER.info(f'Running {s} ...')
+#                 r = subprocess.run(s, shell=True)
+#             else:  # python script
+#                 r = exec(s, {'yaml': data})  # return None
+#             dt = f'({round(time.time() - t, 1)}s)'
+#             s = f"success ✅ {dt}, saved to {colorstr('bold', DATASETS_DIR)}" if r in (0, None) else f'failure {dt} ❌'
+#             LOGGER.info(f'Dataset download {s}')
+#     check_font('Arial.ttf' if is_ascii(data['names']) else 'Arial.Unicode.ttf', progress=True)  # download fonts
+#     return data  # dictionary
+#
+# #
+# # def check_amp(model):
+# #     # Check PyTorch Automatic Mixed Precision (AMP) functionality. Return True on correct operation
+# #     from models.common import AutoShape, DetectMultiBackend
+# #
+# #     def amp_allclose(model, im):
+# #         # All close FP32 vs AMP results
+# #         m = AutoShape(model, verbose=False)  # model
+# #         a = m(im).xywhn[0]  # FP32 inference
+# #         m.amp = True
+# #         b = m(im).xywhn[0]  # AMP inference
+# #         return a.shape == b.shape and torch.allclose(a, b, atol=0.1)  # close to 10% absolute tolerance
+# #
+# #     prefix = colorstr('AMP: ')
+# #     device = next(model.parameters()).device  # get model device
+# #     if device.type in ('cpu', 'mps'):
+# #         return False  # AMP only used on CUDA devices
+# #     f = ROOT / 'data' / 'images' / 'bus.jpg'  # image to check
+# #     im = f if f.exists() else 'https://ultralytics.com/images/bus.jpg' if check_online() else np.ones((640, 640, 3))
+# #     try:
+# #         assert amp_allclose(deepcopy(model), im) or amp_allclose(DetectMultiBackend('yolov5n.pt', device), im)
+# #         LOGGER.info(f'{prefix}checks passed ✅')
+# #         return True
+# #     except Exception:
+# #         help_url = 'https://github.com/ultralytics/yolov5/issues/7908'
+# #         LOGGER.warning(f'{prefix}checks failed ❌, disabling Automatic Mixed Precision. See {help_url}')
+# #         return False
+# #
+#
+# def yaml_load(file='data.yaml'):
+#     # Single-line safe yaml loading
+#     with open(file, errors='ignore') as f:
+#         return yaml.safe_load(f)
+#
+#
+# def yaml_save(file='data.yaml', data={}):
+#     # Single-line safe yaml saving
+#     with open(file, 'w') as f:
+#         yaml.safe_dump({k: str(v) if isinstance(v, Path) else v for k, v in data.items()}, f, sort_keys=False)
+#
+#
+# def unzip_file(file, path=None, exclude=('.DS_Store', '__MACOSX')):
+#     # Unzip a *.zip file to path/, excluding files containing strings in exclude list
+#     if path is None:
+#         path = Path(file).parent  # default path
+#     with ZipFile(file) as zipObj:
+#         for f in zipObj.namelist():  # list all archived filenames in the zip
+#             if all(x not in f for x in exclude):
+#                 zipObj.extract(f, path=path)
+#
+#
+# def url2file(url):
+#     # Convert URL to filename, i.e. https://url.com/file.txt?auth -> file.txt
+#     url = str(Path(url)).replace(':/', '://')  # Pathlib turns :// -> :/
+#     return Path(urllib.parse.unquote(url)).name.split('?')[0]  # '%2F' to '/', split https://url.com/file.txt?auth
+#
+#
+# def download(url, dir='.', unzip=True, delete=True, curl=False, threads=1, retry=3):
+#     # Multithreaded file download and unzip function, used in data.yaml for autodownload
+#     def download_one(url, dir):
+#         # Download 1 file
+#         success = True
+#         if os.path.isfile(url):
+#             f = Path(url)  # filename
+#         else:  # does not exist
+#             f = dir / Path(url).name
+#             LOGGER.info(f'Downloading {url} to {f}...')
+#             for i in range(retry + 1):
+#                 if curl:
+#                     success = curl_download(url, f, silent=(threads > 1))
+#                 else:
+#                     # torch.hub.download_url_to_file(url, f, progress=threads == 1)  # torch download
+#                     urllib.request.urlretrieve(url, f)
+#                     success = f.is_file()
+#                 if success:
+#                     break
+#                 elif i < retry:
+#                     LOGGER.warning(f'⚠️ Download failure, retrying {i + 1}/{retry} {url}...')
+#                 else:
+#                     LOGGER.warning(f'❌ Failed to download {url}...')
+#
+#         if unzip and success and (f.suffix == '.gz' or is_zipfile(f) or is_tarfile(f)):
+#             LOGGER.info(f'Unzipping {f}...')
+#             if is_zipfile(f):
+#                 unzip_file(f, dir)  # unzip
+#             elif is_tarfile(f):
+#                 subprocess.run(['tar', 'xf', f, '--directory', f.parent], check=True)  # unzip
+#             elif f.suffix == '.gz':
+#                 subprocess.run(['tar', 'xfz', f, '--directory', f.parent], check=True)  # unzip
+#             if delete:
+#                 f.unlink()  # remove zip
+#
+#     dir = Path(dir)
+#     dir.mkdir(parents=True, exist_ok=True)  # make directory
+#     if threads > 1:
+#         pool = ThreadPool(threads)
+#         pool.imap(lambda x: download_one(*x), zip(url, repeat(dir)))  # multithreaded
+#         pool.close()
+#         pool.join()
+#     else:
+#         for u in [url] if isinstance(url, (str, Path)) else url:
+#             download_one(u, dir)
+#
+#
 def make_divisible(x, divisor):
     # Returns nearest x divisible by divisor
     # if isinstance(divisor, torch.Tensor):
@@ -688,14 +653,14 @@ def make_divisible(x, divisor):
     return math.ceil(x / divisor) * divisor
 
 
-def clean_str(s):
-    # Cleans a string by replacing special characters with underscore _
-    return re.sub(pattern='[|@#!¡·$€%&()=?¿^*;:,¨´><+]', repl='_', string=s)
-
-
-def one_cycle(y1=0.0, y2=1.0, steps=100):
-    # lambda function for sinusoidal ramp from y1 to y2 https://arxiv.org/pdf/1812.01187.pdf
-    return lambda x: ((1 - math.cos(x * math.pi / steps)) / 2) * (y2 - y1) + y1
+# def clean_str(s):
+#     # Cleans a string by replacing special characters with underscore _
+#     return re.sub(pattern='[|@#!¡·$€%&()=?¿^*;:,¨´><+]', repl='_', string=s)
+#
+#
+# def one_cycle(y1=0.0, y2=1.0, steps=100):
+#     # lambda function for sinusoidal ramp from y1 to y2 https://arxiv.org/pdf/1812.01187.pdf
+#     return lambda x: ((1 - math.cos(x * math.pi / steps)) / 2) * (y2 - y1) + y1
 
 
 def colorstr(*input):
@@ -764,21 +729,21 @@ def coco80_to_coco91_class():  # converts 80-index (val2014) to 91-index (paper)
 
 def xyxy2xywh(x):
     # Convert nx4 boxes from [x1, y1, x2, y2] to [x, y, w, h] where xy1=top-left, xy2=bottom-right
-    y = x.clone() if isinstance(x, tf.Tensor) else np.copy(x)
-    y[..., 0] = (x[..., 0] + x[..., 2]) / 2  # x center
-    y[..., 1] = (x[..., 1] + x[..., 3]) / 2  # y center
-    y[..., 2] = x[..., 2] - x[..., 0]  # width
-    y[..., 3] = x[..., 3] - x[..., 1]  # height
-    return y
+    xc = (x[..., 0:1] + x[..., 2:3]) / 2  # x center
+    yc = (x[..., 1:2] + x[..., 3:4]) / 2  # y center
+    w = x[..., 2:3] - x[..., 0:1]  # width
+    h = x[..., 3:4] - x[..., 1:2]  # height
+    xywh = tf.concat([xc,yc,w,h], axis=1)
+    return xywh
 
 
 def xywh2xyxy(x):
     # Convert nx4 boxes from [x, y, w, h] to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
     xmin = x[..., 0] - x[..., 2] / 2  # top left x
-    xmax = x[..., 1] - x[..., 3] / 2  # top left y
-    ymin = x[..., 0] + x[..., 2] / 2  # bottom right x
+    ymin = x[..., 1] - x[..., 3] / 2  # top left y
+    xmax = x[..., 0] + x[..., 2] / 2  # bottom right x
     ymax = x[..., 1] + x[..., 3] / 2  # bottom right y
-    return tf.stack([xmin, xmax, ymin, ymax], axis=-1)
+    return tf.stack([xmin,ymin , xmax, ymax], axis=-1)
 
 
 def xywhn2xyxy(x, w=640, h=640, padw=0, padh=0):
@@ -882,8 +847,11 @@ def segments2boxes(segments):
 
 
 
-# find image's padding size, shift boxes' coords accordingly.
 # rescale boxes, and clip to original image size
+# img1_shape Tensor: [2], [h,w]
+# boxes: float, Tensor, shape: [Nt, 4]
+# img0_shape: Float Tensor[2], original image size
+# ratio_pad: Float, Tensor[2],  h / h0, w / w0
 def scale_boxes(img1_shape, boxes, img0_shape, ratio_pad=None):
     # Rescale boxes (xyxy) from img1_shape to img0_shape
     if ratio_pad is None:  # calculate from img0_shape
@@ -893,10 +861,16 @@ def scale_boxes(img1_shape, boxes, img0_shape, ratio_pad=None):
         gain = ratio_pad[0][0]
         pad = ratio_pad[1]
 
-    boxes[..., [0, 2]] -= pad[0]  # x padding
-    boxes[..., [1, 3]] -= pad[1]  # y padding
-    boxes[..., :4] /= gain
-    clip_boxes(boxes, img0_shape)
+    b0 = tf.clip_by_value((boxes[:, 0:1] - pad[0])/ gain, 0,  img0_shape[1]) # remove padding, scale, clip
+    b1 = tf.clip_by_value((boxes[:, 1:2] - pad[1])/ gain, 0,  img0_shape[0])  # y padding
+    b2 = tf.clip_by_value((boxes[:, 2:3] - pad[0])/ gain, 0,  img0_shape[1])  # x padding
+    b3 = tf.clip_by_value((boxes[:, 3:4] - pad[1])/ gain, 0,  img0_shape[0])  # y padding
+
+     ##todo check problem here! + return value not used!!!
+    # b4 = boxes[:, :4] / gain
+
+    boxes = tf.concat([b0,b1,b2,b3], axis=-1)
+    # clip_boxes(boxes, img0_shape)
     return boxes
 
 
@@ -939,7 +913,7 @@ def clip_segments(segments, shape):
         segments[:, 1] = segments[:, 1].clip(0, shape[0])  # y
 
 
-#
+
 # def non_max_suppression(
 #         pred,
 #         conf_thres,
@@ -1104,11 +1078,11 @@ def imwrite(filename, img):
         return False
 
 
-def imshow(path, im):
-    imshow_(path.encode('unicode_escape').decode(), im)
+# def imshow(path, im):
+#     imshow_(path.encode('unicode_escape').decode(), im)
 
 
-if Path(inspect.stack()[0].filename).parent.parent.as_posix() in inspect.stack()[-1].filename:
-    cv2.imread, cv2.imwrite, cv2.imshow = imread, imwrite, imshow  # redefine
+# if Path(inspect.stack()[0].filename).parent.parent.as_posix() in inspect.stack()[-1].filename:
+#     cv2.imread, cv2.imwrite, cv2.imshow = imread, imwrite, imshow  # redefine
 
 # Variables ------------------------------------------------------------------------------------------------------------
