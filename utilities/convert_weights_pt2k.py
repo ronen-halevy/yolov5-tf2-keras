@@ -42,11 +42,11 @@ def run(
         weights=ROOT / 'yolov5l-seg.pt',  # weights path
         imgsz=(640, 640),  # inference size h,w
         batch_size=1,  # batch size
-        dynamic=False,  # dynamic batch size
         tf_weights_dir='.',
         tf_model_dir='.',
         **kwargs
 ):
+    ref_model = attempt_load(weights, device=torch.device('cpu'), inplace=True, fuse=True)
     # PyTorch model
     im = torch.zeros((batch_size, 3, *imgsz))  # BCHW image
     # fuse is essential for porting weights to keras. TBD
@@ -61,26 +61,26 @@ def run(
     # _ = tf_model.predict(im)  # inference
 
     # Keras model
-    im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else batch_size)
+    im = keras.Input(shape=(*imgsz, 3), batch_size=None) # assume input is dataset - no batch size to be specified
     keras_model = keras.Model(inputs=im, outputs=tf_model.predict(im))
     keras_model.summary()
 
+    LOGGER.info(f'Source Weights: {weights}')
+    LOGGER.info('PyTorch, TensorFlow and Keras models successfully verified.\nUse export.py for TF model export.')
     keras_model.save_weights(tf_weights_dir)
+    LOGGER.info(f'Keras Weights saved to {tf_weights_dir}')
     # keras_model.trainable=True
     # tf.keras.models.save_model(keras_model, tf_model_dir)
     keras_model.save(tf_model_dir)
-
-    LOGGER.info('PyTorch, TensorFlow and Keras models successfully verified.\nUse export.py for TF model export.')
+    LOGGER.info(f'Keras Model saved to {tf_model_dir}')
     return keras_model, tf_model
 
 
 def parse_opt():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default=ROOT / 'yolov5s-seg.pt', help='weights path')
+    parser.add_argument('--weights', type=str, default=ROOT / '/home/ronen/Downloads/best_2_colors_squares.pt', help='weights path')
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[640], help='inference size h,w')
-    parser.add_argument('--batch-size', type=int, default=1, help='batch size')
-    parser.add_argument('--dynamic', action='store_true', help='dynamic batch size')
-    parser.add_argument('--tf_weights_dir', type=str, default='./keras_weights/rr.tf', help='produced weights target location')
+    parser.add_argument('--tf_weights_dir', type=str, default='./keras_weights/rrcoco.tf', help='produced weights target location')
     parser.add_argument('--tf_model_dir', type=str, default='./keras_model', help='produced weights target location')
 
     opt = parser.parse_args()
