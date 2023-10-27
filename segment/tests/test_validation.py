@@ -2,7 +2,8 @@
 from pathlib import Path
 import sys
 import yaml
-
+import tensorflow as tf
+from tensorflow import keras
 
 import segment.tf_val as validate  # for end-of-epoch mAP
 from utils.tf_general import increment_path
@@ -11,8 +12,7 @@ from models.tf_model import TFModel
 from segment.tf_loss import ComputeLoss
 from utils.segment.tf_metrics import fitness
 
-import tensorflow as tf # todo - move up after torch removed from tfmodel silu
-from tensorflow import keras
+
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
