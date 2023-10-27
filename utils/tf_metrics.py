@@ -143,14 +143,14 @@ class ConfusionMatrix:
             None, updates confusion matrix accordingly
         """
         if detections is None:
-            gt_classes = labels.int()
+            gt_classes = labels.astype(tf.int32)
             for gc in gt_classes:
                 self.matrix[self.nc, gc] += 1  # background FN
             return
 
         detections = detections[detections[:, 4] > self.conf]
-        gt_classes = tf.cast(labels[:, 0], tf.int32)
-        detection_classes = tf.cast(detections[:, 5], tf.int32)#.int()
+        gt_classes = labels[:, 0].astype(tf.int32)
+        detection_classes = detections[:, 5].astype(tf.int32)#.int()
         iou = box_iou(labels[:, 1:], detections[:, :4])
 
         x = tf.where(iou > self.iou_thres)

@@ -140,7 +140,7 @@ class ComputeLoss:
             n = b.shape[0]  # number of targets
             if n:
                 # pxy, pwh, _, pcls = pi[b, a, gj, gi].tensor_split((2, 4, 5), dim=1)  # faster, requires torch 1.8.0
-                pxy, pwh, _, pcls, pmask = tf.split(pi[tf.cast(b, tf.int32), tf.cast(a, tf.int32), gj, gi], (2, 2, 1, self.nc, nm), 1)
+                pxy, pwh, _, pcls, pmask = tf.split(pi[b.astype(tf.int32), a.astype(tf.int32), gj, gi], (2, 2, 1, self.nc, nm), 1)
                 # Regression
                 pxy = tf.sigmoid(pxy) * 2 - 0.5
                 pwh = (tf.sigmoid(pwh) * 2) ** 2 * anchors[i]
@@ -148,20 +148,20 @@ class ComputeLoss:
                 iou = tf.squeeze(bbox_iou(pbox, tbox[i], CIoU=True))  # iou(prediction, target)
                 lbox += (1.0 - iou).mean()  # iou loss
                 # Objectness
-                iou = tf.cast(tf.maximum(iou, 0), tobj.dtype)
+                iou = tf.maximum(iou, 0).astype(tobj.dtype)
                 if self.sort_obj_iou:
                     j = iou.argsort()
                     b, a, gj, gi, iou = b[j], a[j], gj[j], gi[j], iou[j]
                 if self.gr < 1:
                     iou = (1.0 - self.gr) + self.gr * iou
                 # tobj[b, a, gj, gi] = iou  # iou ratio
-                index = tf.transpose([tf.cast(b, tf.int32), tf.cast(a, tf.int32), gj, gi] )
+                index = tf.transpose([b.astype(tf.int32), a.astype(tf.int32), gj, gi] )
                 tobj= tf.tensor_scatter_nd_update(tobj,index, iou)
 
                 # Classification
                 if self.nc > 1:  # cls loss (only if multiple classes)
                     # create [nt, nc] one_hot class array:
-                    t= tf.one_hot(indices=tf.cast(tcls[i], tf.int32), depth=pcls.shape[1])
+                    t= tf.one_hot(indices=tcls[i].astype(tf.int32), depth=pcls.shape[1])
                     lcls += self.BCEcls( t, pcls)  # BCE
 
                 # Mask regression
@@ -172,11 +172,11 @@ class ComputeLoss:
                 for bi in tf.unique(b)[0]:
                     j = b == bi  # matching index
                     if self.overlap:
-                        mask_gti = tf.where(masks[tf.cast(bi, tf.int32)][None] == tf.reshape(tidxs[i][j], [-1, 1, 1]), 1.0, 0.0)
+                        mask_gti = tf.where(masks[bi.astype(tf.int32)][None] == tf.reshape(tidxs[i][j], [-1, 1, 1]), 1.0, 0.0)
 
                     else:
                         mask_gti = masks[tidxs[i]][j]
-                    lseg += self.single_mask_loss(mask_gti, pmask[j], proto[tf.cast(bi, tf.int32)], mxyxy[j], marea[j])
+                    lseg += self.single_mask_loss(mask_gti, pmask[j], proto[bi.astype(tf.int32)], mxyxy[j], marea[j])
 
                 # Append targets to text file
                 # with open('targets.txt', 'a') as file:
@@ -242,7 +242,7 @@ class ComputeLoss:
         for i in range(self.nl):
             anchors, shape = self.anchors[i], p[i].shape # take layer's anchors and grid. p[i] shape: [na,gy,gx]
             # gain from tf.ones([8]) to  [1, 1, gs, gs, gs, gs, 1, 1]  where gs is [80,40,20] for i=0:2
-            gain = tf.tensor_scatter_nd_update(gain, [[2],[3],[4],[5]], tf.cast(tf.constant(shape)[[3, 2, 3, 2]], tf.float32))
+            gain = tf.tensor_scatter_nd_update(gain, [[2],[3],[4],[5]], tf.constant(shape)[[3, 2, 3, 2]].astype(tf.float32))
             # gain[2:6] =
 
             # Match targets to anchors: resize xywh to grid size:
@@ -252,7 +252,7 @@ class ComputeLoss:
                 # unmatching anchor's boxes records.:
                 # Matches:
 
-                r = (t[..., 4:6]/  tf.cast(anchors[:,None,:], tf.float32) )# wh/anchors ratio. shape: [na, nt,2]
+                r = (t[..., 4:6]/  anchors[:,None,:].astype(tf.float32) )# wh/anchors ratio. shape: [na, nt,2]
                 j = tf.math.reduce_max(tf.math.maximum(r, 1 / r), axis=-1) < self.anchor_t  # compare, bool shape: [na, nt]
                 t = t[j]  # filter out unmatched to anchors targets. shape:  [nt, 8] where nt changed to nt_filtered
 
@@ -287,7 +287,7 @@ class ComputeLoss:
 
             (a,tidx), (b, c) =  tf.transpose(ati), tf.transpose(bc)  # anchors, image, class
 
-            gij = tf.cast((gxy - offsets), tf.int32) # gij=gxy-offs giving left corner of grid square
+            gij = (gxy - offsets).astype(tf.int32) # gij=gxy-offs giving left corner of grid square
             gij = tf.clip_by_value(gij,[0,0], [shape[2] - 1,shape[3] - 1] )
 
             gi, gj = gij.T  # grid indices
@@ -296,9 +296,9 @@ class ComputeLoss:
             indices.append((b, a, gj, gi))
 
             # xc,yc,w,h where xc,yc is offset from grid squares corner:
-            tbox.append(tf.concat((gxy - tf.cast(gij, tf.float32), gwh), 1)) # list.size: 3. shape: [nt, 4]
+            tbox.append(tf.concat((gxy - gij.astype(tf.float32), gwh), 1)) # list.size: 3. shape: [nt, 4]
 
-            anch.append(anchors[tf.cast(a, tf.int32)])   # anchor indices. list.size: 3. shape: [nt]
+            anch.append(anchors[a.astype(tf.int32)])   # anchor indices. list.size: 3. shape: [nt]
 
             tcls.append(c)  # class. list.size: 3. shape: nt
             tidxs.append(tidx) # target indices, i.e. running count of target in image shape: [nt]
@@ -326,7 +326,7 @@ def main():
      [116, 90, 156, 198, 373, 326]]  # P5/32
     anchors = tf.reshape(anchors_cfg, [3, -1, 2])
     stride=[8,16,32]
-    anchors = tf.cast(anchors / tf.reshape(stride, (-1, 1, 1)), tf.float32)
+    anchors = (anchors / tf.reshape(stride, (-1, 1, 1))).astype(tf.float32)
     fl_gamma=0
     loss = ComputeLoss( na,nl,nc,nm,anchors, fl_gamma, box_lg, obj_lg, cls_lg, anchor_t,  autobalance=False)
 
