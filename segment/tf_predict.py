@@ -162,10 +162,10 @@ def run(
         keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im))
     if load_weights:  # normally True when load_model is false
         keras_model.load_weights(weights_load_path)
-    if save_weights:
-        keras_model.save_weights(weights_save_path)
-    if save_model:
-        keras_model.save(model_save_path)
+    # if save_weights:
+    #     keras_model.save_weights(weights_save_path)
+    # if save_model:
+    #     keras_model.save(model_save_path)
 
     keras_model.summary()
 
@@ -233,8 +233,9 @@ def run(
             else:
                 # Do:  a. mask=mask@proto b. crop to dounsampled by 4 predicted bbox bounderies:
                 masks = process_mask(proto, nms_pred[:, 6:], nms_pred[:, :4], im.shape[0:2], upsample=True)  # HWC
-                nms_pred[:, :4] = scale_boxes(im.shape[0:2], nms_pred[:, :4],
-                                              im0.shape).round()  # rescale boxes to im0 size
+                nms_pred_box = tf.math.round(scale_boxes(im.shape[0:2], nms_pred[:, :4],
+                                              im0.shape))#.round()  # rescale boxes to im0 size
+                nms_pred = tf.concat([nms_pred_box, nms_pred[:,4:]], axis=1)
 
             # Segments
             if save_txt:
@@ -313,15 +314,27 @@ def parse_opt():
                         help='lmodel_load_path')
     parser.add_argument('--model_save_path', type=str, default=ROOT / 'segment/saved_models/yolov5l-seg_saved_model',
                         help='model_save_path')
+    # shapes weights:
+    shapes=False
+    if shapes:
+        parser.add_argument('--weights_load_path', type=str, default=ROOT / 'models/keras_weights/rr.tf',
+                            help='load weights path')
+        parser.add_argument('--source', type=str,
+                            default='/home/ronen/devel/PycharmProjects/shapes-dataset/dataset/train/images')  # default=ROOT / 'data/images', help='file/dir/URL/glob/screen/0(webcam)')
+        parser.add_argument('--class_names_file', type=str, default=ROOT / '../shapes-dataset/dataset/class.names',
+                            help='class names')
+    else:
 
-    parser.add_argument('--weights_load_path', type=str, default=ROOT / 'models/keras_weights/rr.tf',
-                        help='load weights path')
-    parser.add_argument('--weights_save_path', type=str, default=ROOT / 'segment/saved_weights/rr.tf',
-                        help='save weights path')
-    parser.add_argument('--source', type=str, default='/home/ronen/devel/PycharmProjects/shapes-dataset/dataset/train/images')# default=ROOT / 'data/images', help='file/dir/URL/glob/screen/0(webcam)')
+        parser.add_argument('--weights_load_path', type=str, default=ROOT / 'utilities/keras_weights/yolov5s-seg.tf',
+                            help='load weights path')
+        parser.add_argument('--source', type=str, default=ROOT / 'data/image_bus')# '/home/ronen/devel/PycharmProjects/shapes-dataset/dataset/train/images'
+        parser.add_argument('--class_names_file', type=str, default=ROOT / 'data/class-names/coco.names',
+                             help='class names')
+
     parser.add_argument('--data', type=str, default=ROOT / 'data/coco128.yaml', help='(optional) dataset.yaml path')
-    parser.add_argument('--class_names_file', type=str, default=ROOT / '../shapes-dataset/dataset/class.names',
-                         help='class names')
+
+    # parser.add_argument('--weights_save_path', type=str, default=ROOT / 'utilities/keras_weights/yolov5s-seg.tf',
+    #                     help='save weights path')
     # parser.add_argument('--class_names_file', type=str, default=ROOT / 'data/class-names/coco.names',
     #                     help='class names')
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[640, 640],
@@ -355,7 +368,7 @@ def parse_opt():
 
 
 def main(opt):
-    check_requirements(exclude=('tensorboard', 'thop'))
+    # check_requirements(exclude=('tensorboard', 'thop'))
 
     run(**vars(opt))
 
