@@ -90,6 +90,7 @@ class LoadImagesAndLabelsAndMasks:
         self.augmentation = Augmentation( hsv_h=hyp["hsv_h"], hsv_s=hyp["hsv_s"], hsv_v=hyp["hsv_v"], flipud=hyp["flipud"], fliplr=hyp["fliplr"]        )
         # self.augmentation = Augmentation(hgain, sgain, vgain, flipud, fliplr)
 
+    @property
     def __len__(self):
         return len(self.image_file)
 
@@ -252,7 +253,7 @@ class LoadImagesAndLabelsAndMasks:
         img = tf.image.decode_image(img_orig, channels=3, expand_animations=False)
         img = tf.cast(img, tf.float32)
         img_resized = tf.image.resize(img / 255, size)
-        return (img, img.shape[:2],  img_resized.shape[:2], (0.,0. )) # pad is 0 by def while aspect ratio not preserved
+        return (img_resized, img.shape[:2],  img_resized.shape[:2], (0.,0. )) # pad is 0 by def while aspect ratio not preserved
 
     def scatter_img_to_mosaic(self, dst_img, src_img, dst_xy):
         """
