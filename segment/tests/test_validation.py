@@ -1,25 +1,23 @@
 
 from pathlib import Path
 import sys
-
 import yaml
 
-import tensorflow as tf
-from tensorflow import keras
 
 import segment.tf_val as validate  # for end-of-epoch mAP
 from utils.tf_general import increment_path
-
 from segment.tf_dataloaders import create_dataloader
 from models.tf_model import TFModel
+from segment.tf_loss import ComputeLoss
+from utils.segment.tf_metrics import fitness
+
+import tensorflow as tf # todo - move up after torch removed from tfmodel silu
+from tensorflow import keras
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
-
-from segment.tf_loss import ComputeLoss
-from utils.segment.tf_metrics import fitness
 
 def create_model(cfg):
     dynamic = False
@@ -82,7 +80,7 @@ if __name__ == '__main__':
     cfg = '/home/ronen/devel/PycharmProjects/tf_yolov5/models/segment/yolov5s-seg.yaml'
     keras_model, tf_model = create_model(cfg)
 
-    weights_load_path = ROOT / '../models/keras_weights/rr.tf' # 'models/keras_weights/rr.tf',  # used if load_model=False
+    weights_load_path = ROOT / '../utilities/keras_weights/yolov5s-seg.tf' # 'models/keras_weights/rr.tf',  # used if load_model=False
 
     load_weights=True
     if load_weights:  # normally True when load_model is false
@@ -98,7 +96,7 @@ if __name__ == '__main__':
 
     nl = anchors.shape[0] # number of layers (output grids)
     na = anchors.shape[1]  # number of anchors
-    nc = len(class_names)-1
+    nc = len(class_names)#-1
     nm=32
     compute_loss = ComputeLoss( na,nl,nc,nm, anchors, hyp['fl_gamma'], hyp['box'], hyp['obj'], hyp['cls'], hyp['anchor_t'], autobalance=False)  # init loss class
 
@@ -125,7 +123,7 @@ if __name__ == '__main__':
                                         single_cls=single_cls,
                                         # dataloader=val_loader,
                                         save_dir=save_dir,
-                                        plots=False,
+                                        plots=True,
                                         callbacks=callbacks,
                                         compute_loss=compute_loss,
                                         mask_downsample_ratio=mask_ratio,
