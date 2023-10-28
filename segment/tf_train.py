@@ -42,7 +42,7 @@ from utils.tf_general import (LOGGER, TQDM_BAR_FORMAT,  check_file,
 
 from segment.tb import GenericLogger
 from utils.tf_plots import plot_evolve, plot_labels
-from tf_dataloaders import create_dataloader
+from tf_dataloaders import create_dataloader,LoadImagesAndLabelsAndMasks
 from tf_loss import ComputeLoss
 from utils.segment.metrics import KEYS, fitness
 from utils.segment.tf_plots import plot_images_and_masks, plot_results_with_masks
@@ -182,13 +182,20 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # ema = tf.train.ExponentialMovingAverage(decay=0.9999) # todo check ema
     # Resume - TBD todo
     # nc = tf_model.nc  # number of classes
+    debug = False # use for step-by-set tataset debig
+    if debug:
+        dataset =  LoadImagesAndLabelsAndMasks(train_path, imgsz, mask_ratio, mosaic, augment, hyp)
+        dbg_entries=1
+        for idx in range(dbg_entries):
+            ds=dataset[idx]
+
 
     train_loader, train_dataset = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp)
     train_dataset_length = len(train_dataset)
 
     labels = tf.concat(train_dataset.labels, 0)
     val_path=train_path # todo debug need a chang2
-    val_loader, _  = create_dataloader(val_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp)
+    val_loader, _  = create_dataloader(val_path, batch_size, imgsz, mask_ratio, mosaic=False, augment=False, hyp=hyp)
 
     if not resume:
         if plots:
@@ -357,11 +364,16 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
 def parse_opt(known=False):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default=ROOT / '/segment/saved_weights/yolov5s-seg_weights.tf.', help='initial weights path')
+    parser.add_argument('--weights', type=str, default=ROOT / 'utilities/keras_weights/yolov5s-seg.tf', help='initial weights path')
     parser.add_argument('--cfg', type=str, default='../models/segment/yolov5s-seg.yaml', help='model.yaml path')
-    parser.add_argument('--data', type=str, default=ROOT / 'data/shapes-seg.yaml', help='dataset.yaml path')
+    shapes=False
+    if shapes:
+        parser.add_argument('--data', type=str, default=ROOT / 'data/shapes-seg.yaml', help='dataset.yaml path')
+    else:
+        parser.add_argument('--data', type=str, default=ROOT / 'data/coco128-seg.yaml', help='dataset.yaml path')
+
     parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.scratch-low.yaml', help='hyperparameters path')
-    parser.add_argument('--epochs', type=int, default=200, help='total training epochs')
+    parser.add_argument('--epochs', type=int, default=2, help='total training epochs')
     parser.add_argument('--batch-size', type=int, default=2, help='total batch size for all GPUs, -1 for autobatch')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='train, val image size (pixels)')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
