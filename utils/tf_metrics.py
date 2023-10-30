@@ -134,8 +134,12 @@ class ConfusionMatrix:
 
     def process_batch(self, detections, labels):
         """
-        Return intersection-over-union (Jaccard index) of boxes.
+        Updates confusion matrix, with matching detection/label entries:
+        1. Compute intersection-over-union (Jaccard index) of all label-detection boxes.
         Both sets of boxes are expected to be in (x1, y1, x2, y2) format.
+        2. Threshold iou, and select best unique detection/label entries.
+        3. incr matrix related det/gt histogram entries. Increment gt unmatched and drt unmatched histogram entries.
+
         Arguments:
             detections (Array[N, 6]), x1, y1, x2, y2, conf, class
             labels (Array[M, 5]), class, x1, y1, x2, y2
@@ -149,31 +153,34 @@ class ConfusionMatrix:
             return
 
         detections = detections[detections[:, 4] > self.conf]
-        gt_classes = labels[:, 0].astype(tf.int32)
+        gt_classes = labels[:, 0].astype(tf.int32) # shape: [Nt,1]
         detection_classes = detections[:, 5].astype(tf.int32)#.int()
-        iou = box_iou(labels[:, 1:], detections[:, :4])
+        iou = box_iou(labels[:, 1:], detections[:, :4])# iou (tbbox, pbbox) , Shape [N,M]
 
-        x = tf.where(iou > self.iou_thres)
-        if x.shape[0]:
-            matches = tf.concat((tf.stack(x, 1), iou[x[0], x[1]][:, None]), 1)#.cpu().numpy()
+        x = tf.where(iou > self.iou_thres) # coords of N iou entries above thresh. shape: [N, 2]
+        if x.shape[0]: # arrange iou threshold remainders as matches.
+            matched_ious= iou[x[:,0], x[:,1]][:, None] # shape: [N,1]
+            matches = tf.concat([x.astype(tf.float32), matched_ious], axis=1) # concat (cordx,cordy,iou) shape[N,3]
             if x[0].shape[0] > 1:
-                matches = matches[matches[:, 2].argsort()[::-1]]
-                matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
-                matches = matches[matches[:, 2].argsort()[::-1]]
-                matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
+                # Arrange matches: each label or detection may belong to a single match entry. Filter unique:
+                matches = matches[tf.argsort(matches[:, 2])[::-1]] #sort by iou, since unique keeps last occurance
+                matches = matches[tf.unique(matches[:, 1])[1]] # keep unique preds
+                matches = matches[tf.argsort(matches[:, 2])[::-1]] #sort by iou, since unique keeps last occurance
+                matches = matches[tf.unique(matches[:, 0])[1]]# keep unique targets.
         else:
-            matches = np.zeros((0, 3))
+            matches = tf.zeros((0, 3),dtype=tf.float32)
 
         n = matches.shape[0] > 0
-        m0, m1, _ = matches.transpose().astype(int)
+        m0, m1, _ = matches.transpose().astype(tf.int32) # m0:matched labels indices, m1:matched dets indices, shape[N]
         for i, gc in enumerate(gt_classes):
-            j = m0 == i
-            if n and sum(j) == 1:
+            j = m0 == i # j bool,  shape: [N], true if gc found in matches.
+            # if gt_class in matches, incr related dets/gt histogram. Otherwise, incr nonmatch/gt hostogram:
+            if n and sum(j) == 1: #  Note that m0 holds unique vals, so sum(j) takes 0 or 1 value
                 self.matrix[detection_classes[m1[j]], gc] += 1  # correct
             else:
                 self.matrix[self.nc, gc] += 1  # true background
-
         if n:
+            # incr dets/unmatched detection histogram:
             for i, dc in enumerate(detection_classes):
                 if not any(m1 == i):
                     self.matrix[dc, self.nc] += 1  # predicted background
@@ -276,16 +283,17 @@ def box_iou(box1, box2, eps=1e-7):
         iou (Tensor[N, M]): the NxM matrix containing the pairwise
             IoU values for every element in boxes1 and boxes2
     """
-    (a1, a2) = tf.split(tf.expand_dims(box1, 1), 2,axis=2) # xy_min, xy_max boxa
-    (b1, b2) = tf.split(tf.expand_dims(box2, 0), 2,axis=2)# xy_min, xy_max boxb
+    (a1, a2) = tf.split(tf.expand_dims(box1, 1), 2,axis=2) # xy_min, xy_max of boxa, shapes each: [N,1,2]
+    (b1, b2) = tf.split(tf.expand_dims(box2, 0), 2,axis=2)# xy_min, xy_max of boxb,  shapes each: [1,M,2]
+    # find intersection area between N boxes a & M boxes b:
+    min_xy_max =  tf.math.minimum(a2, b2) # shape: [N,M,2]
+    max_xy_min =  tf.math.maximum(a1, b1) # shape: [N,M,2]
+    y = min_xy_max-max_xy_min # Intersections widths and heights shape: [N,M,2]
+    y=tf.math.maximum(y,0) # clamp 0  shape: [N,M,2]
+    inter = tf.math.reduce_prod(y, 2) # intersection areas w*h shape: [N,M]
+    area_a,area_b =  tf.math.reduce_prod(a2 - a1, axis=2), tf.math.reduce_prod(b2 - b1, axis=2) #shape:[N,1],shape:[1,M]
+    return inter / (area_a+area_b-inter + eps) # Shape [N,M]
 
-    # inter = (torch.min(a2, b2) - torch.max(a1, b1)).clamp(0).prod(2)
-    y=tf.math.minimum(a2, b2) - tf.math.maximum(a1, b1)
-    y=tf.math.maximum(y,0) # clamp 0
-    inter = tf.math.reduce_prod(y, 2) # Intersection area
-
-    # IoU = inter / (area1 + area2 - inter):
-    return inter / (tf.math.reduce_prod(a2 - a1, axis=2) + tf.math.reduce_prod(b2 - b1, axis=2) - inter + eps)
 
 
 def bbox_ioa(box1, box2, eps=1e-7):

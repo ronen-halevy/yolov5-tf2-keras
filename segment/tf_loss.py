@@ -129,7 +129,7 @@ class ComputeLoss:
         lobj = tf.zeros([1])   # object loss
         lseg = tf.zeros([1])
         # tcls, tbox, indices, anchors = self.build_targets(p, targets)  # targets
-        tcls, tbox, indices, anchors, tidxs, xywhn = self.build_targets(p, targets)  # targets
+        tcls, tbox, indices, anchors, tidxs, xywhn = self.build_targets(p, targets)  # targets entry, each is list[nl]
 
 
         # Losses
@@ -195,7 +195,7 @@ class ComputeLoss:
         lcls *= self.cls_lg
         lseg *= self.box_lg / bs
         loss = lbox + lobj + lcls + lseg
-        return loss * bs, tf.concat((lbox, lobj, lcls, lseg), axis=-1)
+        return loss * bs, tf.concat((lbox, lseg, lobj, lcls), axis=-1)
 
     def single_mask_loss(self, gt_mask, pred, proto, xyxy, area):
         pred_mask = tf.reshape(pred @ tf.reshape(proto, (self.nm, -1)),[ -1, *proto.shape[1:]])  # (n,32) @ (32,80,80) -> (n,80,80)
@@ -206,20 +206,21 @@ class ComputeLoss:
 
 
     def build_targets(self, p, targets):
-        # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
-        na, nt = self.na, targets.shape[0]  # number of anchors, num of targets in images batch
-        tcls, tbox, indices, anch, tidxs, xywhn = [], [], [], [], [], []
+        # Build targets for compute_loss()
+        # input: p list[3] of [b,nl,g_yi,g_xi], targets(nt,6] image,class,x,y,w,h) where g_yi,g_xi=80,80&40,40&20,20
+        na, nt = self.na, targets.shape[0]  # num of anchors, num of targets in images batch
+        tcls, tbox, indices, anch, tidxs, xywhn = [], [], [], [], [], [] # init result lists
 
-        gain = tf.ones([8])  # normalized to gridspace gain
+        gain = tf.ones([8]) # gain to scale box coords to grid space coords scale. Note that gain[2:6] is grid dependent
 
-        ai = tf.tile(tf.reshape(tf.range(na, dtype= tf.float32), (na, 1)), [1,nt]) # anchor index. shape: [na, nt]
+        ai = tf.tile(tf.reshape(tf.range(na, dtype= tf.float32),(na, 1)),[1,nt])#anchor inds shape:[na,nt]
 
         # objects overlap assign objects pixels by a per class index. CPixels common to multi assigned by greater index
         if self.overlap:
             batch = p[0].shape[0] # images in batch
             ti = []
             for idx in range(batch):# loop on batch to create targets index range per image
-                num =tf.math.reduce_sum ( tf.cast(targets[:, 0:1] == idx, tf.float32)) # targets in image
+                num =tf.math.reduce_sum ( (targets[:, 0:1] == idx).astype(tf.float32)) # nof targets in image
                 ti.append(tf.tile(tf.range(num, dtype=tf.float32 )[None], [na,1]) + 1)  #entries shape:(na, num)
             ti = tf.concat(ti, axis=1)  # e.g. batch=2 ,3&1 targets:[[1,2,3,1], [1,2,3,1], [1,2,3,1]],shape:(na, nt)
         else:# no overlap: flat ti indices, e.g. batch=2, 4&1 targets: [[1,2,3,4], [1,2,3,4], [1,2,3,4]], shape:(na, nt)
@@ -293,7 +294,7 @@ class ComputeLoss:
             gi, gj = gij.T  # grid indices
 
             # Append  b,a,gj,gi:
-            indices.append((b, a, gj, gi))
+            indices.append((b, a, gj, gi)) # hold gj,gi targer indices in grid.Note
 
             # xc,yc,w,h where xc,yc is offset from grid squares corner:
             tbox.append(tf.concat((gxy - gij.astype(tf.float32), gwh), 1)) # list.size: 3. shape: [nt, 4]
@@ -304,7 +305,7 @@ class ComputeLoss:
             tidxs.append(tidx) # target indices, i.e. running count of target in image shape: [nt]
             xywhn.append(tf.concat((gxy, gwh), 1) / gain[2:6])  # xywh normalized shape: [nt, 4]
 
-        return tcls, tbox, indices, anch, tidxs, xywhn
+        return tcls, tbox, indices, anch, tidxs, xywhn # arranged target values, each a list[nl]
 
 
 # if __name__ == '__main__':

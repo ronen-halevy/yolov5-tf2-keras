@@ -121,8 +121,8 @@ def process_batch(detections, labels, iouv, pred_masks=None, gt_masks=None, over
         # iou between Nti and Npi pred masks. iou resultant shape: [Nti,Npi]
         iou = mask_iou(tf.reshape(gt_masks, (gt_masks.shape[0], -1)), tf.reshape(pred_masks, (pred_masks.shape[0], -1)))
     else:  # boxes
-        # iou between Nti and Npi pred boxes. iou resultant shape: [Nti,Npi]
-        iou = box_iou(labels[:, 1:], detections[:, :4])
+        # iou between Nti and Npi pred boxes. iou resultant shape: [Nt,Np]
+        iou = box_iou(labels[:, 1:], detections[:, :4]) # shape: [Nt,Np]
 
     correct = np.zeros((detections.shape[0], iouv.shape[0])).astype(bool) # shape: [Nd, nmAp], nmAp=10. Init vals: False
     correct_class = labels[:, 0:1] == detections[:, 5] # shape: [Nti, Npi] True if tclass=pclass
@@ -209,7 +209,7 @@ def run(
                                   "mAP50", "mAP50-95)")
     dt = Profile(), Profile(), Profile() # timing profilers
     metrics = Metrics()
-    loss = tf.zeros([4] ) # 4 loss sources: box, obj, cls, mask
+    loss = tf.zeros([4] ) # 4 loss sources: [lbox, lseg, lobj, lcls]
     jdict, stats = [], []
     # callbacks.run('on_val_start')
     pbar = tqdm(dataloader, desc=s, bar_format=TQDM_BAR_FORMAT)  # progress bar
@@ -224,7 +224,7 @@ def run(
         # list size Nt: [bidx, class, bbox4]-> tensor[Nt, 6]
         batch_targets = tf.stack(new_targets, axis=0) # stack all targets. shape:[Nt,6], Nt sum of all batches targets
 
-        nb, _, height, width = batch_im.shape  # batch size, channels, height, width
+        nb, height, width, _ = batch_im.shape  # batch size, channels, height, width
 
         # inference + profiler:
         with dt[0]:
@@ -238,8 +238,8 @@ def run(
 
 
         with dt[1]:
-            # Loss
-            loss += compute_loss((train_out, protos), batch_targets, batch_masks)[1]  # box, obj, cls, mask
+            # Loss:
+            loss += compute_loss((train_out, protos), batch_targets, batch_masks)[1]  # [lbox, lseg, lobj, lcls]
 
         # NMS
         tbboxes = batch_targets[:, 2:] * (width, height, width, height) # scale tbbox
