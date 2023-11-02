@@ -91,56 +91,55 @@ def save_one_json(predn, jdict, path, class_map, pred_masks):
             'segmentation': rles[i]})
 
 
-def process_batch(detections, labels, iouv, pred_masks=None, gt_masks=None, overlap=False, masks=False):
+def process_batch(detections, labels, iouv, pred_masks=None, gt_masks=None, masks=False):
     """
-    Return correct prediction matrix.
-    A prediction is a match for pred pidx and 0<=i<=nmAp if IoU(detections(pidx, :4], labels[tidx, 1:])>=iouv[i] and
-    labels[pidx, 0:1] == detections[tidx, 5]
+    Returns a tp (true positive) vector  of tp_i entries, i=0:9. tp_i is true if iou(gt_val,pred_val)>iouv[i], i=0:9 and
+    gt_class==pred_class.
+    shape of the correct vector with N entries : [N, 10]
+    Detection can be either a mask or a bbox, and iou is computed accordingly.
 
-    if masks:
-         correct[idx0, i]= True is Iou(pbbox[idx0], tbbox[idx1])>= iouv[i] and pclass[idx0]==tclass[idx1]
-
-    else:
-        correct[idx0, i]= True is Iou(pbbox[idx0], tbbox[idx1])>= iouv[i] and pclass[idx0]==tclass[idx1]
     Arguments:
-        detections (array[N, 6]), x1, y1, x2, y2, conf, class
-        labels (array[M, 5]), class, x1, y1, x2, y2
+        detections (array[Np, 6]), x1, y1, x2, y2, conf, class
+        labels (array[nl, 5]), class, x1, y1, x2, y2
         iouv (array [10]), iou vector for mAP@0.5:0.95  linspace(start: 0.5, end: 0.95,steps: 10)
+        pred_masks: shape: A mask map per each of the N predictions  1-object pixel 0-background, shape:[Np,h/4, w/4]
+        gt_masks: shape: [1,h/4, w/4], mask target pixels marked 1:Nt or 0 if pixel is not of a target object
+        masks: bool, if True calculate tp_m else tp_box
+
     Returns:
         correct (array[N, 10]), for 10 IoU levels
     """
+    # part 1: calculate iou between all target and preds, masks or bboxes according to masks flag.
     if masks:
-    #     if overlap:
         nl = len(labels) # num of target labels
-        index = tf.reshape(tf.range(nl), [nl, 1, 1]) + 1  # index shape: [nl,1,1]
-        gt_masks = tf.tile(gt_masks, (nl, 1, 1))   # duplicate tmask nl times. shape(1,640,640) -> (nl,640,640)
-        gt_masks = tf.where(gt_masks == index, 1.0, 0.0)  #each mask instance holds a single mask, pixels set to 1
-        if gt_masks.shape[1:] != pred_masks.shape[1:]: # if diff sizes - rescale
-            gt_masks = tf.image.resize(gt_masks[...,None], pred_masks.shape[1:]) # F.interpolate(gt_masks[None], pred_masks.shape[1:], mode="bilinear", align_corners=False)[0]
-            gt_masks = gt_masks.gt_(0.5) # after bilinear interpolation, take mask pixels above 0,5
-        # iou between Nti and Npi pred masks. iou resultant shape: [Nti,Npi]
-        iou = mask_iou(tf.reshape(gt_masks, (gt_masks.shape[0], -1)), tf.reshape(pred_masks, (pred_masks.shape[0], -1)))
-    else:  # boxes
-        # iou between Nti and Npi pred boxes. iou resultant shape: [Nt,Np]
-        iou = box_iou(labels[:, 1:], detections[:, :4]) # shape: [Nt,Np]
+        index = tf.reshape(tf.range(nl), [nl, 1, 1]) + 1  # index shape: [nl,1,1]. used to match mask values.
+        gt_masks = tf.tile(gt_masks, (nl, 1, 1))   # duplicate. shape:[nl,h/4,w,4]
+        gt_masks = tf.where(gt_masks == index, 1.0, 0.0)  # mask per object, pix vals: 1 or 0, shape:[nl,h/4,w,4]
+        # iou between nl and Npi pred masks. iou resultant shape: [nl,Npi]
+        gt_mask_reshaped = tf.reshape(gt_masks, (gt_masks.shape[0], -1)) # shape: [nl, w/4*h/4)
+        pred_mask_reshaped = tf.reshape(pred_masks, (pred_masks.shape[0], -1))  # shape: [Np,  w/4*h/4)
+        iou = mask_iou(gt_mask_reshaped, pred_mask_reshaped) # shape: [nl, Np]
 
-    correct = np.zeros((detections.shape[0], iouv.shape[0])).astype(bool) # shape: [Nd, nmAp], nmAp=10. Init vals: False
+    else:  # boxes
+        # iou between Nti and Npi pred boxes. iou resultant shape: [nl,Np]
+        iou = box_iou(labels[:, 1:], detections[:, :4]) # shape: [nl,Np]
+    # part 2: init `correct` shape[Np,10] to False, 10 tp entries per each prediction. tp_i=True if iou>iouv[i] thresh.
+    correct = np.zeros((detections.shape[0], iouv.shape[0])).astype(bool) # shape: [Np, nmAp], nmAp=10. Init vals: False
     correct_class = labels[:, 0:1] == detections[:, 5] # shape: [Nti, Npi] True if tclass=pclass
+    # part 3: Loop on thresholds. `matches` shape: [N_match,3], keeps [label_ind,pred_ind,iou_v] for thresholded iou vals.
+    # set True value in `correct` according to `matches` unique pred_ind.
     for i in range(len(iouv)): # loop on 10 mAPs vector
-        # x holds 2d indices to IoU elements, which cond is True. (tensor([x0,x1,..xn]), tensor([y0,y1,...yn]))
-        x = tf.where(tf.math.logical_and((iou >= iouv[i]) , correct_class))
-        # x = tf.cast(x, tf.float32) # where returns int64
-        if x.shape[0]:
-            # matches: [[id00, id10, iou[id00, id10]].....[id0n, id1n, iou[id0n, id1n]]   shape: (N, 3]
-            matches = (tf.concat((x.astype(tf.float32),tf.gather_nd(iou, x)[..., None]), 1).numpy())  #
-            if x[0].shape[0] > 1: # multi match detections
-                matches = matches[matches[:, 2].argsort()[::-1]] # sort matches triplets by iou val. shape: (N, 3]
-                # select unique tbox index to avoid multi matches for the same target index
-                matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
+        x = tf.where(tf.math.logical_and((iou >= iouv[i]) , correct_class))# thresh survivers indices. shape: [n,2]
+        if x.shape[0]: # if any iou thresh survivors:
+            matches = (tf.concat((x.astype(tf.float32),tf.gather_nd(iou, x)[..., None]), 1).numpy()) # concat (cordx,cordy,iou) shape[N,3]
+            if x[0].shape[0] > 1: # if 2d coords i.e. labels and preds:
+                # remove duplicates: each label or detection may belong to a single match entry. Filter unique:
+                matches = matches[matches[:, 2].argsort()[::-1]]  #sort by iou since unique takes last occurance.
+                matches = matches[np.unique(matches[:, 1], return_index=True)[1]] # keep unique preds
                 #  select unique pbox index to avoid multi matches for the same pred index
-                matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
-            correct[matches[:, 1].astype(int), i] = True #  Mark correct=True for all matched pidx per current i.
-    return tf.convert_to_tensor(correct, dtype=tf.bool)
+                matches = matches[np.unique(matches[:, 0], return_index=True)[1]] # take unique targets. shape:[nl,3]
+            correct[matches[:, 1].astype(int), i] = True # mark True for all matched pred indices, in current thresh_ji
+    return tf.convert_to_tensor(correct, dtype=tf.bool) # correct[Np,10] is True for matching preds
 
 
 # @smart_inference_mode()
@@ -244,9 +243,9 @@ def run(
         # NMS
         tbboxes = batch_targets[:, 2:] * (width, height, width, height) # scale tbbox
 
-        batch_targets = tf.concat([batch_targets[:, 0:2], tbboxes], axis=-1) # re-concat targets [bi, cl, bbox]
+        batch_targets = tf.concat([batch_targets[:, 0:2], tbboxes], axis=-1) # re-concat targets [si, cl, bbox]
         # lb =  []  # for autolabelling
-        plot_masks = []  # masks for plotting
+        plot_masks = []  # batch masks for plotting
         # Calc stats - a list of size contains tp-bbox and tp-masks.  ize list of bboxes and masks mAp
         # svae text and json and plots per prediction according to config flags.
         list_preds=[]
@@ -259,7 +258,7 @@ def run(
                 pred = tf.concat([pbboxes, pred[..., 4:]], axis=-1) # pack scaled preds [back. shape: [Nt, 4+1+1+32]
             # Metrics
 
-            labels = batch_targets[batch_targets[:, 0] == si, 1:] # pick gt labels with bi=si to match preds[si]
+            labels = batch_targets[batch_targets[:, 0] == si, 1:] # pick gt labels with sample_idx=si to match preds[si]
             nl, npr = labels.shape[0], pred.shape[0]  # ntlabels and npreds of batche's si'th element. shapes:[Nti, Npi]
             path, shape = Path(str(paths[si])), shapes[si][0] # target paths for out info, orig shapes for rescale
             correct_masks = tf.zeros([npr, niou], dtype=tf.bool)  # init masks-tp (true positive)
@@ -297,39 +296,40 @@ def run(
                 # Find bboxes tp (true positive) preds. result type: bool shape: [Npi, nMap] , where nmAp=10:
                 correct_bboxes = process_batch(pred, labelsn, iouv)
                 # Find masks tp (true positive) preds. result type: bool shape: [Npi, nMap] , where nmAp=10:
-                correct_masks = process_batch(pred, labelsn, iouv, pred_masks, gt_masks, overlap=overlap, masks=True)
+                correct_masks = process_batch(pred, labelsn, iouv, pred_masks, gt_masks, masks=True)
                 if plots:
                     confusion_matrix.process_batch(pred, labelsn)
 
-            # stats list: [tp-bbox, tp-masks, pclass, pconf, tclass]. Shapes: [[Npi,10],[Npi,10],Nip,Npi,Nti]
+            #  append per current pred: [tp-bbox, tp-masks, pclass, pconf, tclass]:
             stats.append((correct_masks, correct_bboxes, pred[:, 4], pred[:, 5], labels[:, 0]))
 
             pred_masks = tf.cast(pred_masks, dtype=tf.uint8) # shaoe: [Npi, h/4,w/4]
             if plots and batch_i < 3: # plot masks of first 3 examples
-                plot_masks.append(pred_masks[:15])  # filter top 15 images to plot
+                plot_masks.append(pred_masks[:15])  # filter top 15 pred objects to plot
 
-            # Save/log
+            # Save/log Todo ronen support this logs:
             if save_txt:
                 save_one_txt(pred, save_conf, shape, file=save_dir / 'labels' / f'{path.stem}.txt')
             if save_json:
                 pred_masks = scale_image(batch_im[si].shape[1:],
                                          pred_masks.permute(1, 2, 0).contiguous().cpu().numpy(), shape, shapes[si][1])
                 save_one_json(pred, jdict, path, class_map, pred_masks)  # append to COCO-JSON dictionary
-            # arrange preds in a target-like structure, as a preparetion for plot_images_and_masks method call
+            # arrange preds in a target-like flattened, preds marked by si_tag, for calling plot_images_and_masks().
             box, conf, cls = tf.split(pred[:, :6], (4, 1, 1), axis=1)
-            bi = tf.fill(cls.shape, si).astype(tf.float32) # bidx
             xywh=xyxy2xywh(box)
-            pred=tf.concat((bi, cls,xywh , conf), axis=1) # target-like pred structure shape:[Npi, 7]
-            list_preds.append(pred[:15])  #  filter top 15 images to plot
+            si_tag = tf.fill(cls.shape, si).astype(tf.float32) # tags pred index. shape: [np], val: pred index
+            pred=tf.concat((si_tag, cls,xywh , conf), axis=1) # pred: [Npi,(si,cls,xywh,conf)] shape:[Npi, 7]
+            list_preds.append(pred[:15])  #  keep top 15 images to plot
+            # end pred in preds-batch loop
         # Plot images
         if plots and batch_i < 3:
-            arrange_pred = tf.concat(list_preds, axis=0)# flattened batch images array. shape: [Np,7]
+            arrange_pred = tf.concat(list_preds, axis=0)# flattened preds arry (preds indexed by si_tag).shape: [Np,7]
             if len(plot_masks):
-                plot_masks = tf.concat(plot_masks, axis=0) #  top 15 mask preds per image. shape: [
+                plot_masks = tf.concat(plot_masks, axis=0) # concat batch preds' top 15 masks. shape:[Np*15, h/4,w/4]
             plot_images_and_masks(batch_im, batch_targets, batch_masks, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names) # targets
             plot_images_and_masks(batch_im,arrange_pred, plot_masks, paths,
                                   save_dir / f'val_batch{batch_i}_pred.jpg', names)  # pred
-
+    # end dataset batches loop
     # callbacks.run('on_val_batch_end')
     # Compute metrics.
     # Rearrange stats: list [Np] to list [5]. Details:
