@@ -44,7 +44,7 @@ from segment.tb import GenericLogger
 from utils.tf_plots import plot_evolve, plot_labels
 from tf_dataloaders import create_dataloader,LoadImagesAndLabelsAndMasks
 from tf_loss import ComputeLoss
-from utils.segment.metrics import KEYS, fitness
+from utils.segment.tf_metrics import KEYS, fitness
 from utils.segment.tf_plots import plot_images_and_masks, plot_results_with_masks
 from utils.tf_utils import (EarlyStopping)
 
@@ -131,7 +131,9 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     dynamic = False
     tf_model = TFModel(cfg=cfg,
                        ref_model_seq=None, nc=80, imgsz=imgsz, training=True)
-    im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else batch_size)
+    # im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else batch_size)
+    im = keras.Input(shape=(None,None, 3), batch_size=None if dynamic else batch_size)
+
     ch=3
 
     keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im), name='train')
@@ -249,8 +251,8 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                 # preds shapes: [b,na,gyi,gxi,xywh+conf+cls+masks] where na=3,gy,gx[i=1:3]=size/8,/16,/32,masks:32 words
                 # proto shape: [b,32,size/4,size/4]
                 pred = keras_model(bimages)
-                loss, loss_items = compute_loss(pred, new_btargets, bmasks)
-                # lbox, lobj, lcls, lseg= tf.split(loss_items, num_or_size_splits=4, axis=-1)
+                loss, loss_items = compute_loss(pred, new_btargets, bmasks) # returns: sum(loss),  [lbox, lseg, lobj, lcls]
+                #  lbox, lseg, lobj, lcls= tf.split(loss_items, num_or_size_splits=4, axis=-1)
 
             grads = tape.gradient(loss, keras_model.trainable_variables)
             optimizer.apply_gradients(
