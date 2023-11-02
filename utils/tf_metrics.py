@@ -135,43 +135,46 @@ class ConfusionMatrix:
     def process_batch(self, detections, labels):
         """
         Updates confusion matrix, with matching detection/label entries:
-        1. Compute intersection-over-union (Jaccard index) of all label-detection boxes.
-        Both sets of boxes are expected to be in (x1, y1, x2, y2) format.
-        2. Threshold iou, and select best unique detection/label entries.
-        3. incr matrix related det/gt histogram entries. Increment gt unmatched and drt unmatched histogram entries.
+        1. Threshold detections using conf.
+        2. Compute iou (Jaccard index) of all label-detection boxes.
+        3. Threshold iou by iou_thres
+        4. arrange matched_. [N_survivors, (iou,index_l,index_p)] shape: [N_survivors,3]
+        5. remove duplicates from matches: each label or detection may belong to a single match entry.
+        6. results: incr confusion `matrix` histogram by 1, at location [det_class, label_class]
 
         Arguments:
-            detections (Array[N, 6]), x1, y1, x2, y2, conf, class
-            labels (Array[M, 5]), class, x1, y1, x2, y2
+            detections (Array[np, 6]), x1, y1, x2, y2, conf, class
+            labels (Array[nl, 5]), class, x1, y1, x2, y2
         Returns:
-            None, updates confusion matrix accordingly
+            None, updates confusion matrix accordingly. matrix shape: [nc+1, nc+1]
         """
         if detections is None:
             gt_classes = labels.astype(tf.int32)
             for gc in gt_classes:
                 self.matrix[self.nc, gc] += 1  # background FN
             return
-
-        detections = detections[detections[:, 4] > self.conf]
-        gt_classes = labels[:, 0].astype(tf.int32) # shape: [Nt,1]
-        detection_classes = detections[:, 5].astype(tf.int32)#.int()
-        iou = box_iou(labels[:, 1:], detections[:, :4])# iou (tbbox, pbbox) , Shape [N,M]
-
-        x = tf.where(iou > self.iou_thres) # coords of N iou entries above thresh. shape: [N, 2]
-        if x.shape[0]: # arrange iou threshold remainders as matches.
-            matched_ious= iou[x[:,0], x[:,1]][:, None] # shape: [N,1]
-            matches = tf.concat([x.astype(tf.float32), matched_ious], axis=1) # concat (cordx,cordy,iou) shape[N,3]
+        # 1. Threshold detections
+        detections = detections[detections[:, 4] > self.conf] # threshold detections
+        # 2. Compute iou between all nl labels boxes and np pred boxes:
+        iou = box_iou(labels[:, 1:], detections[:, :4])# iou (tbbox, pbbox) , Shape [nl,np]
+        # 3 Theshold results:
+        x = tf.where(iou > self.iou_thres) # thresh.  N numof thresh survivors. shape: [N, 2],
+        if x.shape[0]: # if any matches survived thresh:
+            # 4. arrange matches:  [N_survivors, (iou,index_label,index_pred)]
+            matches = tf.concat([x.astype(tf.float32), iou[x[:,0], x[:,1]][:, None] ], axis=1) # concat (cordx,cordy,iou) shape[N,3]
             if x[0].shape[0] > 1:
-                # Arrange matches: each label or detection may belong to a single match entry. Filter unique:
-                matches = matches[tf.argsort(matches[:, 2])[::-1]] #sort by iou, since unique keeps last occurance
+                # 5. remove duplicates: each label or detection may belong to a single match entry. Filter unique:
+                matches = matches[tf.argsort(matches[:, 2])[::-1]] #sort by iou since unique takes last occurance.
                 matches = matches[tf.unique(matches[:, 1])[1]] # keep unique preds
-                matches = matches[tf.argsort(matches[:, 2])[::-1]] #sort by iou, since unique keeps last occurance
-                matches = matches[tf.unique(matches[:, 0])[1]]# keep unique targets.
+                # matches = matches[tf.argsort(matches[:, 2])[::-1]] #sort by iou, since unique takes last occurance
+                matches = matches[tf.unique(matches[:, 0])[1]]# take unique targets.
         else:
             matches = tf.zeros((0, 3),dtype=tf.float32)
 
         n = matches.shape[0] > 0
         m0, m1, _ = matches.transpose().astype(tf.int32) # m0:matched labels indices, m1:matched dets indices, shape[N]
+        detection_classes = detections[:, 5].astype(tf.int32)#.int()
+        gt_classes = labels[:, 0].astype(tf.int32) # shape: [Nt,1]
         for i, gc in enumerate(gt_classes):
             j = m0 == i # j bool,  shape: [N], true if gc found in matches.
             # if gt_class in matches, incr related dets/gt histogram. Otherwise, incr nonmatch/gt hostogram:
