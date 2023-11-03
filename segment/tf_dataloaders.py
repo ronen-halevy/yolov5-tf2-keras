@@ -39,6 +39,8 @@ import psutil
 import yaml
 from PIL import ExifTags, Image, ImageOps
 import cv2
+from tensorflow.python.ops.numpy_ops import np_config
+np_config.enable_numpy_behavior() # allows running NumPy code, accelerated by TensorFlow
 
 from tqdm import tqdm
 # from utils.general import LOGGER, colorstr
@@ -231,12 +233,12 @@ class LoadImagesAndLabelsAndMasks:
         if segments.shape[0]:
             masks = self.polygons2masks(segments, self.imgsz, self.downsample_ratio, is_ragged)
         else:
-            masks = tf.cast(tf.fill([img.shape[0]//self.downsample_ratio, img.shape[1]//self.downsample_ratio], 0), tf.float32)# np.zeros(img_size, dtype=np.uint8)
+            masks = tf.fill([img.shape[0]//self.downsample_ratio, img.shape[1]//self.downsample_ratio], 0).astype(tf.float32)# np.zeros(img_size, dtype=np.uint8)
 
         labels = xyxy2xywhn(labels, w=640, h=640, clip=True, eps=1e-3)  # return xywh normalized
         if self.augment:
             img, labels, masks = self.augmentation(img, labels, masks)
-            img = tf.cast(img, tf.float32)/255
+            img = img.astype(tf.float32)/255
         labels= tf.RaggedTensor.from_tensor(labels)
         return (img, labels,  masks, tf.constant(self.im_files[index]), shapes)
 
@@ -250,10 +252,9 @@ class LoadImagesAndLabelsAndMasks:
     def decode_resize(self, filename, size):
         img_orig = tf.io.read_file(filename)
 
-        img = tf.image.decode_image(img_orig, channels=3, expand_animations=False)
-        img = tf.cast(img, tf.float32)
+        img = tf.image.decode_image(img_orig, channels=3, expand_animations=False).astype(tf.float32)
         img_resized = tf.image.resize(img / 255, size)
-        return (img_resized, img.shape[:2],  img_resized.shape[:2], (0.,0. )) # pad is 0 by def while aspect ratio not preserved
+        return (img_resized, img.shape[:2], img_resized.shape[:2], (0.,0.)) # pad is 0 by def while aspect ratio not preserved
 
     def scatter_img_to_mosaic(self, dst_img, src_img, dst_xy):
         """
@@ -292,23 +293,17 @@ class LoadImagesAndLabelsAndMasks:
         #     :rtype: float array, shape: [nboxes, 4]
         #     """
         #     # Convert nx4 boxes from [x, y, w, h] normalized to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
-        xmin = tf.math.multiply(tf.cast(w, tf.float32), (x[..., 1:2] - x[..., 3:4] / 2)) + tf.cast(padw,
-                                                                                                   tf.float32)  # top left x
-        ymin = tf.math.multiply(tf.cast(h, tf.float32), (x[..., 2:3] - x[..., 4:5] / 2)) + tf.cast(padh,
-                                                                                                   tf.float32)  # top left y
-        xmax = tf.math.multiply(tf.cast(w, tf.float32), (x[..., 1:2] + x[..., 3:4] / 2)) + tf.cast(padw,
-                                                                                                   tf.float32)  # bottom right x
-        ymax = tf.math.multiply(tf.cast(h, tf.float32), (x[..., 2:3] + x[..., 4:5] / 2)) + tf.cast(padh,
-                                                                                                   tf.float32)  # bottom right y
-        y = tf.concat(
-            [x[..., 0:1], xmin, ymin, xmax, ymax], axis=-1, name='concat'
-        )
+        xmin = tf.math.multiply(float(w), (x[..., 1:2] - x[..., 3:4] / 2)) + float(padw) # top left x
+        ymin = tf.math.multiply(float(h), (x[..., 2:3] - x[..., 4:5] / 2)) + float(padh) # top left y
+        xmax = tf.math.multiply(float(w), (x[..., 1:2] + x[..., 3:4] / 2)) + float(padw) # bottom right x
+        ymax = tf.math.multiply(float(h), (x[..., 2:3] + x[..., 4:5] / 2)) + float(padh) # bottom right y
+        y = tf.concat([x[..., 0:1], xmin, ymin, xmax, ymax], axis=-1, name='concat')
         return y
     def xyn2xy(self, x, w=640, h=640, padw=0, padh=0):
         # Convert normalized segments into pixel segments, shape (n,2)
 
-        xcoord = tf.math.multiply(tf.cast(w, tf.float32), x[:, 0:1]) + tf.cast(padw, tf.float32)  # top left x
-        ycoord = tf.math.multiply(tf.cast(h, tf.float32), x[:, 1:2]) + tf.cast(padh, tf.float32)  # top left y
+        xcoord = tf.math.multiply(float(w), x[:, 0:1]) + float(padw)  # top left x
+        ycoord = tf.math.multiply(float(h), x[:, 1:2]) + float(padh)  # top left y
         y = tf.concat(
             [xcoord, ycoord], axis=-1, name='stack'
         )
@@ -326,7 +321,7 @@ class LoadImagesAndLabelsAndMasks:
         seg_coords = seg_coords.to_tensor()
         seg_coords = tf.concat([seg_coords, seg_coords[0:1, :]], axis=0)  # close polygon's loop before interpolation
         x_ref_max = seg_coords.shape[0] - 1 # x max
-        x = tf.cast(tf.linspace(0., x_ref_max, ninterp), dtype=tf.float32)  # n interpolation points. n points array
+        x = tf.linspace(0., x_ref_max, ninterp).astype(tf.float32)  # n interpolation points. n points array
 
         # interpolate polygon's to N points - loop on x & y
         segment = [tfp.math.interp_regular_1d_grid(
@@ -400,7 +395,7 @@ class LoadImagesAndLabelsAndMasks:
             segments = tf.map_fn(fn=lambda segment: self.resample_segments(ninterp, segment), elems=segments,
                                  fn_output_signature=tf.TensorSpec(shape=[1000, 3], dtype=tf.float32,
                                                                    ));
-            segments = tf.matmul(segments, tf.cast(tf.transpose(M), tf.float32))  # affine transform
+            segments = tf.matmul(segments, tf.transpose(M).astype(tf.float32))  # affine transform
             segments = tf.gather(segments, [0, 1], axis=-1)
 
             bboxes = segments2boxes_exclude_outbound_points(segments)
@@ -471,7 +466,7 @@ class LoadImagesAndLabelsAndMasks:
 
 
         clipped_bboxes = tf.clip_by_value(
-            labels4[:, 1:], 0, 2 * tf.cast(w, tf.float32), name='labels4'
+            labels4[:, 1:], 0, 2 * float(w), name='labels4'
         )
         labels4 = tf.concat([labels4[..., 0:1], clipped_bboxes], axis=-1)
 
@@ -513,7 +508,7 @@ class LoadImagesAndLabelsAndMasks:
         masks = tf.gather(masks, index, axis=0)  # sort masks by areas shape: [nmasks]
         # set value to masks pixels - increasing cpint from 1 to index, (=num of masks):
         index = tf.sort(index, axis=-1, direction='ASCENDING', name=None)
-        index = tf.cast(index, tf.float32) + 1.
+        index = index.astype(tf.float32) + 1.
         masks = tf.math.multiply(masks, tf.reshape(index, [-1, 1, 1])) # mult by index to set value
         masks = tf.reduce_max(masks, axis=0) # reduce to merge and keep smallest mask pixes if overlap
         return masks
