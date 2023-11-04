@@ -91,7 +91,7 @@ def save_one_json(predn, jdict, path, class_map, pred_masks):
             'segmentation': rles[i]})
 
 
-def process_batch(detections, labels, iouv, pred_masks=None, gt_masks=None, masks=False):
+def process_batch(detections, labels, iouv, pred_masks=None, gt_masks=None, overlap=False, masks=False):
     """
     Returns a tp (true positive) vector  of tp_i entries, i=0:9. tp_i is true if iou(gt_val,pred_val)>iouv[i], i=0:9 and
     gt_class==pred_class.
@@ -115,6 +115,10 @@ def process_batch(detections, labels, iouv, pred_masks=None, gt_masks=None, mask
         index = tf.reshape(tf.range(nl), [nl, 1, 1]) + 1  # index shape: [nl,1,1]. used to match mask values.
         gt_masks = tf.tile(gt_masks, (nl, 1, 1))   # duplicate. shape:[nl,h/4,w,4]
         gt_masks = tf.where(gt_masks == index, 1.0, 0.0)  # mask per object, pix vals: 1 or 0, shape:[nl,h/4,w,4]
+        # iou between nl and Npi pred masks. iou resultant shape: [nl,Npi]
+        if gt_masks.shape[1:] != pred_masks.shape[1:]: # if diff sizes - rescale
+            gt_masks = tf.image.resize(gt_masks[...,None], pred_masks.shape[1:]) # F.interpolate(gt_masks[None], pred_masks.shape[1:], mode="bilinear", align_corners=False)[0]
+            gt_masks = gt_masks.gt_(0.5) # after bilinear interpolation, take mask pixels above 0,5
         # iou between nl and Npi pred masks. iou resultant shape: [nl,Npi]
         gt_mask_reshaped = tf.reshape(gt_masks, (gt_masks.shape[0], -1)) # shape: [nl, w/4*h/4)
         pred_mask_reshaped = tf.reshape(pred_masks, (pred_masks.shape[0], -1))  # shape: [Np,  w/4*h/4)
@@ -212,6 +216,9 @@ def run(
     jdict, stats = [], []
     # callbacks.run('on_val_start')
     pbar = tqdm(dataloader, desc=s, bar_format=TQDM_BAR_FORMAT)  # progress bar
+    # batch loop on gt dataloader entries. batch size: b
+    # shape: batch_targets, shape:[Nt,6], batch_masks, shape:[b,h/4,w/4], paths of img src, shape:[b]
+    # shapes: shape0, shape old/shape new, pad:[b,3,2]
     for batch_i, (batch_im, batch_targets,  batch_masks, paths, shapes) in enumerate(pbar):# dataset batch by batch loop
         # next loop concats bidx to targets: ragged [b,nt,5] -> list size Nt of: [bidx, class, bbox4]
         new_targets = []
@@ -260,7 +267,7 @@ def run(
 
             labels = batch_targets[batch_targets[:, 0] == si, 1:] # pick gt labels with sample_idx=si to match preds[si]
             nl, npr = labels.shape[0], pred.shape[0]  # ntlabels and npreds of batche's si'th element. shapes:[Nti, Npi]
-            path, shape = Path(str(paths[si])), shapes[si][0] # target paths for out info, orig shapes for rescale
+            path, old_shape = Path(str(paths[si])), shapes[si][0] # target paths for out info, orig shapes for rescale
             correct_masks = tf.zeros([npr, niou], dtype=tf.bool)  # init masks-tp (true positive)
             correct_bboxes = tf.zeros([npr, niou], dtype=tf.bool)  # init boxes-tp
             seen += 1 # loop counter
@@ -284,19 +291,19 @@ def run(
             if single_cls:
                 pred[:, 5] = 0 # set class to 0
             # scale pred bboxes - remove padding, scale by orig size factor & clip to original size:
-            bboxes = scale_boxes(batch_im[si].shape[:2], pred[:, :4], shape, shapes[si][1:3])  # native-space pred
+            bboxes = scale_boxes(batch_im[si].shape[:2], pred[:, :4], old_shape, shapes[si][1:3])  # native-space pred
             pred = tf.concat([bboxes, pred[:, 4:]], axis=-1) # re-concat to shape: [Nt, 38]
 
             # Evaluate
             if nl: # if any tbboxes:
                 tbox = xywh2xyxy(labels[:, 1:5])  # target boxes shape: [Nt,4]
                 # scale tbboxes - remove padding, scale by orig shape, clip:
-                tbox=scale_boxes(batch_im[si].shape[1:], tbox, shape, shapes[si][1:3])  # native-space labels
+                tbox=scale_boxes(batch_im[si].shape[1:], tbox, old_shape, shapes[si][1:3])  # native-space labels
                 labelsn = tf.concat((labels[:, 0:1], tbox), 1)  # [tclass, tbox] shape: [Nt, 5]native-space labels
                 # Find bboxes tp (true positive) preds. result type: bool shape: [Npi, nMap] , where nmAp=10:
                 correct_bboxes = process_batch(pred, labelsn, iouv)
                 # Find masks tp (true positive) preds. result type: bool shape: [Npi, nMap] , where nmAp=10:
-                correct_masks = process_batch(pred, labelsn, iouv, pred_masks, gt_masks, masks=True)
+                correct_masks = process_batch(pred, labelsn, iouv, pred_masks, gt_masks, overlap=overlap, masks=True)
                 if plots:
                     confusion_matrix.process_batch(pred, labelsn)
 
@@ -309,10 +316,10 @@ def run(
 
             # Save/log Todo ronen support this logs:
             if save_txt:
-                save_one_txt(pred, save_conf, shape, file=save_dir / 'labels' / f'{path.stem}.txt')
+                save_one_txt(pred, save_conf, old_shape, file=save_dir / 'labels' / f'{path.stem}.txt')
             if save_json:
                 pred_masks = scale_image(batch_im[si].shape[1:],
-                                         pred_masks.permute(1, 2, 0).contiguous().cpu().numpy(), shape, shapes[si][1])
+                                         pred_masks.permute(1, 2, 0).contiguous().cpu().numpy(), old_shape, shapes[si][1])
                 save_one_json(pred, jdict, path, class_map, pred_masks)  # append to COCO-JSON dictionary
             # arrange preds in a target-like flattened, preds marked by si_tag, for calling plot_images_and_masks().
             box, conf, cls = tf.split(pred[:, :6], (4, 1, 1), axis=1)
