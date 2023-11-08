@@ -60,7 +60,7 @@ for orientation in ExifTags.TAGS.keys():
     if ExifTags.TAGS[orientation] == 'Orientation':
         break
 
-
+# Note: rect, not implemented
 # class LoadTrainData:
 class LoadImagesAndLabelsAndMasks:
     def __init__(self, path, imgsz, mask_ratio, mosaic,augment, hyp, debug=False):
@@ -193,18 +193,35 @@ class LoadImagesAndLabelsAndMasks:
      
      tf.constant(self.im_files[index]), shapes)
     '''
-
     def __getitem__(self, index):
-        is_ragged=False
-        # index = self.indices[index]
+        '''
+        Produces a dataset entry for a single sample pointed by index.
+        If mosaic, entry is produced by 3 more randomly selected samples.
 
-        mosaic = random.random() < self.mosaic
+        :param index: index points to an image entry in self.im_files list
+        :type index: int
+        :return:
+         img: shape: [self.imgsz[0], self.imgsz[1],3], resized image, float, normalized to 1.
+         labels: Per image object entry with [cls,x,y,w,h] where bbox normalized. Ragged tensor, since entries nt
+         varies. shape: [nt,5].
+         masks: shape: [h/4,w/4], pixels' val in ranges 1:numof masks, takes smallest idx if overlap. 0 if non mask.
+         files: self.im_files[index] i.e src file path (in mosaic too-only 1 src returned). Tensor, str.
+         shapes:  [(h0,w0),(h1/w0,w1/w0),(padh,padw)], all zeros if mosaic. shape:[3,2],float
+        '''
+        mosaic = random.random() < self.mosaic # randmoly select mosaic mode, unless self.mosaic is 0 or 1.
+        # why is_ragged needed: in case of mosaic or augment true, all processed segments are interpolated to 1000
+        # points. Otherwise, segment is a ragged tensor shape: [nt,(npolygons),2], where npolygons differs, that's why
+        # ragged. However, before feeding to cv2.polly() polygon-by-polygon, must convert to tensor otherwise crash. So,
+        # is_ragged is used, as otherwise code can't tell if tensor is ragged and needs conversion to tensor.
+
+        is_ragged = False
         if self.augment and mosaic:
             img, labels, segments  =self.load_mosaic(index)
             shapes = tf.zeros([3,2], float) # for mAP rescaling. Dummy same shape (keep generator's spec) for mosaic
+            # is_ragged = False
         else:
-            (img,(h0, w0),(h, w), pad)  = self.decode_resize(self.im_files[index], self.imgsz)
-            shapes = tf.constant(((float(h0), float(w0)), (h / h0, w / w0), pad) ) # for mAP rescaling.
+            (img,(h0, w0),(h1, w1), pad)  = self.decode_resize(index)
+            shapes = tf.constant(((float(640), float(640 )), (h1 / 640, w1 / 640), pad) ) # for mAP rescaling.
 
             segments= tf.ragged.constant( self.segments[index])
             segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, self.imgsz[0], self.imgsz[1], padw=0, padh=0), elems=segments,
@@ -222,11 +239,7 @@ class LoadImagesAndLabelsAndMasks:
                                                                 perspective=self.hyp['perspective'],
                                                                 border=[0,0]
                                                                 )  # border to remove
-                is_ragged = False # segments not ragged, but upsampled to constant num of points
-
             else:
-                # ragged to tensor for convinence:
-                # labels = labels.to_tensor() # shape: [nlabels, 5]
                 is_ragged = True
 
         # segments= tf.RaggedTensor.from_tensor(segments)
@@ -249,12 +262,13 @@ class LoadImagesAndLabelsAndMasks:
         for i in self.indices :
             yield self[i]
 
-    def decode_resize(self, filename, size):
+    def decode_resize(self, index):
+        filename=self.im_files[index]
         img_orig = tf.io.read_file(filename)
-
         img = tf.image.decode_image(img_orig, channels=3, expand_animations=False).astype(tf.float32)
-        img_resized = tf.image.resize(img / 255, size)
-        return (img_resized, img.shape[:2], img_resized.shape[:2], (0.,0.)) # pad is 0 by def while aspect ratio not preserved
+        img_resized = tf.image.resize(img / 255, self.imgsz)
+        return (
+        img_resized, img.shape[:2], img_resized.shape[:2], (0., 0.))  # pad is 0 by def while aspect ratio not preserved
 
     def scatter_img_to_mosaic(self, dst_img, src_img, dst_xy):
         """
@@ -429,8 +443,10 @@ class LoadImagesAndLabelsAndMasks:
 
         w, h = self.imgsz[0], self.imgsz[1]
         # arrange mosaic 4:
-        for idx in range(4):
-            index = indices[idx]
+        # for idx in range(4):
+        for idx, index in enumerate(indices):
+            img, _,_,_ = self.decode_resize(index)
+
             if idx == 0:  # top left mosaic dest zone,  bottom-right aligned src image fraction:
                 x1a, y1a, x2a, y2a = tf.math.maximum(xc - w, 0), tf.math.maximum(yc - h,
                                                                                  0), xc, yc  # xmin, ymin, xmax, ymax
@@ -447,7 +463,6 @@ class LoadImagesAndLabelsAndMasks:
                 x1a, y1a, x2a, y2a = xc, yc, tf.math.minimum(xc + w, w * 2), tf.math.minimum(w * 2, yc + h)  #
                 x1b, y1b, x2b, y2b = 0, 0, tf.math.minimum(w, x2a - x1a), tf.math.minimum(y2a - y1a,
                                                                                           h)  # src image fraction
-            img, _,_,_ = self.decode_resize(self.image_files[index], self.imgsz)
 
             img4 = self.scatter_img_to_mosaic(dst_img=img4, src_img=img[y1b:y2b, x1b:x2b], dst_xy=(x1a, x2a, y1a, y2a))
             padw = x1a - x1b  # shift of src scattered image from mosaic left end. Used for bbox and segment alignment.
@@ -506,7 +521,7 @@ class LoadImagesAndLabelsAndMasks:
         areas = tf.math.reduce_sum(masks, axis=[1, 2])  # shape: [nmasks]
         index = tf.argsort(areas, axis=-1, direction='DESCENDING', stable=False, name=None)  # shape: [nmasks]
         masks = tf.gather(masks, index, axis=0)  # sort masks by areas shape: [nmasks]
-        # set value to masks pixels - increasing cpint from 1 to index, (=num of masks):
+        # set value to masks pixels - increasing int from 1 to index, (=num of masks):
         index = tf.sort(index, axis=-1, direction='ASCENDING', name=None)
         index = index.astype(tf.float32) + 1.
         masks = tf.math.multiply(masks, tf.reshape(index, [-1, 1, 1])) # mult by index to set value
@@ -517,12 +532,13 @@ class LoadImagesAndLabelsAndMasks:
 def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
     """
     Args:
+        is_ragged:
         img_size (tuple): The image size.
         polygons: [1, npoints, 2]
     """
 
-    polygon = tf.cond(is_ragged, true_fn=lambda:polygon, false_fn=lambda: polygon)
-
+    # polygon = tf.cond(is_ragged, true_fn=lambda:polygon, false_fn=lambda: polygon)
+    # init allzeros mask
     mask = np.zeros(img_size, dtype=np.uint8)
 
     if is_ragged:
