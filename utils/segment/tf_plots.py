@@ -57,7 +57,8 @@ def plot_images_and_masks(images, targets, masks, paths=None, fname='images.jpg'
             # .name[:40]
             annotator.text((x + 5, y + 5), text=Path(str(paths[i])).name[:40], txt_color=(220, 220, 220))  # filenames
         if targets.shape[0]:
-            idx = targets[:, 0] == i # targets[:,0] indicates bs id. mask targets which belong to current image i
+            # targets[:,0] indicates bs id:
+            idx = targets[:, 0] == i# mask targets which belong to current image i. shape: [Nt]
             ti = targets[idx]  # image targets
 
             boxes = tf.transpose(xywh2xyxy(ti[:, 2:6]))#.T
@@ -92,8 +93,8 @@ def plot_images_and_masks(images, targets, masks, paths=None, fname='images.jpg'
                     index = np.arange(nl).reshape(nl, 1, 1) + 1
                     image_masks = np.repeat(image_masks, nl, axis=0)
                     image_masks = np.where(image_masks == index, 1.0, 0.0)
-                else:
-                    image_masks = masks[idx]
+                else: # either a single object or non-overlapping masks.
+                    image_masks = masks[idx] # take current sample's single mask
 
                 im = np.asarray(annotator.im).copy()
                 for j, box in enumerate(boxes.T.tolist()):
