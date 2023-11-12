@@ -290,9 +290,10 @@ def run(
             # Predictions
             if single_cls:
                 pred[:, 5] = 0 # set class to 0
+            predn =pred
             # scale pred bboxes - remove padding, scale by orig size factor & clip to original size:
-            bboxes = scale_boxes(batch_im[si].shape[:2], pred[:, :4], old_shape, shapes[si][1:3])  # native-space pred
-            pred = tf.concat([bboxes, pred[:, 4:]], axis=-1) # re-concat to shape: [Nt, 38]
+            bboxes = scale_boxes(batch_im[si].shape[:2], predn[:, :4], old_shape, shapes[si][1:3])  # native-space pred
+            predn = tf.concat([bboxes, predn[:, 4:]], axis=-1) # re-concat to shape: [Nt, 38]
 
             # Evaluate
             if nl: # if any tbboxes:
@@ -301,11 +302,11 @@ def run(
                 tbox=scale_boxes(batch_im[si].shape[1:], tbox, old_shape, shapes[si][1:3])  # native-space labels
                 labelsn = tf.concat((labels[:, 0:1], tbox), 1)  # [tclass, tbox] shape: [Nt, 5]native-space labels
                 # Find bboxes tp (true positive) preds. result type: bool shape: [Npi, nMap] , where nmAp=10:
-                correct_bboxes = process_batch(pred, labelsn, iouv)
+                correct_bboxes = process_batch(predn, labelsn, iouv)
                 # Find masks tp (true positive) preds. result type: bool shape: [Npi, nMap] , where nmAp=10:
-                correct_masks = process_batch(pred, labelsn, iouv, pred_masks, gt_masks, overlap=overlap, masks=True)
+                correct_masks = process_batch(predn, labelsn, iouv, pred_masks, gt_masks, overlap=overlap, masks=True)
                 if plots:
-                    confusion_matrix.process_batch(pred, labelsn)
+                    confusion_matrix.process_batch(predn, labelsn)
 
             #  append per current pred: [tp-bbox, tp-masks, pclass, pconf, tclass]:
             stats.append((correct_masks, correct_bboxes, pred[:, 4], pred[:, 5], labels[:, 0]))
@@ -316,11 +317,11 @@ def run(
 
             # Save/log Todo ronen support this logs:
             if save_txt:
-                save_one_txt(pred, save_conf, old_shape, file=save_dir / 'labels' / f'{path.stem}.txt')
+                save_one_txt(predn, save_conf, old_shape, file=save_dir / 'labels' / f'{path.stem}.txt')
             if save_json:
                 pred_masks = scale_image(batch_im[si].shape[1:],
                                          pred_masks.permute(1, 2, 0).contiguous().cpu().numpy(), old_shape, shapes[si][1])
-                save_one_json(pred, jdict, path, class_map, pred_masks)  # append to COCO-JSON dictionary
+                save_one_json(predn, jdict, path, class_map, pred_masks)  # append to COCO-JSON dictionary
             # arrange preds in a target-like flattened, preds marked by si_tag, for calling plot_images_and_masks().
             box, conf, cls = tf.split(pred[:, :6], (4, 1, 1), axis=1)
             xywh=xyxy2xywh(box)
