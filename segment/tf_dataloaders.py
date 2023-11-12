@@ -220,7 +220,7 @@ class LoadImagesAndLabelsAndMasks:
             shapes = tf.zeros([3,2], float) # for mAP rescaling. Dummy same shape (keep generator's spec) for mosaic
             # is_ragged = False
         else:
-            (img, (h0, w0),(h1, w1), pad)  = self.decode_resize(index)
+            (img, (h0, w0),(h1, w1), pad)  = self.decode_resize(index, padding=True)
             shapes = tf.constant(((float(h0), float(w0)), (h1 / h0, w1 / w0), pad) ) # for mAP rescaling.
             segments= tf.ragged.constant( self.segments[index])
             padw, padh = pad[0], pad[1]
