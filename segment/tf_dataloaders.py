@@ -220,14 +220,15 @@ class LoadImagesAndLabelsAndMasks:
             shapes = tf.zeros([3,2], float) # for mAP rescaling. Dummy same shape (keep generator's spec) for mosaic
             # is_ragged = False
         else:
-            (img,(h0, w0),(h1, w1), pad)  = self.decode_resize(index)
-            shapes = tf.constant(((float(640), float(640 )), (h1 / 640, w1 / 640), pad) ) # for mAP rescaling.
-
+            (img, (h0, w0),(h1, w1), pad)  = self.decode_resize(index)
+            shapes = tf.constant(((float(h0), float(w0)), (h1 / h0, w1 / w0), pad) ) # for mAP rescaling.
             segments= tf.ragged.constant( self.segments[index])
-            segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, self.imgsz[0], self.imgsz[1], padw=0, padh=0), elems=segments,
-                            fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
-                                                                    ragged_rank=1));
-            labels = self.xywhn2xyxy(self.labels[index], self.imgsz[0], self.imgsz[1], padw=0, padh=0)
+            padw, padh = pad[0], pad[1]
+            segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w1, h1, padw, padh), elems=segments,
+                                 fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
+                                                                         ragged_rank=1));
+            labels = self.xywhn2xyxy(self.labels[index], w1, h1, padw, padh)
+
             if self.augment:
                 img, labels, segments = self.random_perspective(img,
                                                                 labels,
@@ -255,20 +256,32 @@ class LoadImagesAndLabelsAndMasks:
         labels= tf.RaggedTensor.from_tensor(labels)
         return (img, labels,  masks, tf.constant(self.im_files[index]), shapes)
 
-
-
-
     def iter(self):
         for i in self.indices :
             yield self[i]
 
-    def decode_resize(self, index):
-        filename=self.im_files[index]
+
+    def decode_resize(self, index, preserve_aspect_ratio=True, padding=False):
+        filename = self.im_files[index]
         img_orig = tf.io.read_file(filename)
-        img = tf.image.decode_image(img_orig, channels=3, expand_animations=False).astype(tf.float32)
-        img_resized = tf.image.resize(img / 255, self.imgsz)
+
+        img0 = tf.image.decode_image(img_orig, channels=3).astype(tf.float32)/255
+        img_resized = img0 # init
+        r = self.imgsz[0] / max(img0.shape[:2])  # ratio, + note- imgsz is of a square...
+        padh = padw = 0
+        if r != 1: # don't resize if h or w equals  self.imgsz
+            img_resized = tf.image.resize(img0, self.imgsz, preserve_aspect_ratio=True)
+        resized_shape = img_resized.shape[:2]
+        if padding:
+            padh = int((self.imgsz[1] - img_resized.shape[0]) / 2)
+            padw = int((self.imgsz[0] - img_resized.shape[1]) / 2)
+
+            img_resized = tf.image.pad_to_bounding_box(
+                img_resized, padh, padw, self.imgsz[1], self.imgsz[0]
+            )
+
         return (
-        img_resized, img.shape[:2], img_resized.shape[:2], (0., 0.))  # pad is 0 by def while aspect ratio not preserved
+        img_resized, img0.shape[:2], resized_shape, (padw, padh))  # pad is 0 by def while aspect ratio not preserved
 
     def scatter_img_to_mosaic(self, dst_img, src_img, dst_xy):
         """
@@ -290,7 +303,7 @@ class LoadImagesAndLabelsAndMasks:
             dst_img, indices, src_img
         )
         return dst
-    def xywhn2xyxy(self, x, w=640, h=640, padw=0, padh=0):
+    def xywhn2xyxy(self, x, w, h, padw=0, padh=0):
         #     """
         #      transform scale and align bboxes: xywh to xyxy, scaled to image size, shift by padw,padh to location in mosaic
         #     :param x: xywh normalized bboxes
@@ -313,7 +326,7 @@ class LoadImagesAndLabelsAndMasks:
         ymax = tf.math.multiply(float(h), (x[..., 2:3] + x[..., 4:5] / 2)) + float(padh) # bottom right y
         y = tf.concat([x[..., 0:1], xmin, ymin, xmax, ymax], axis=-1, name='concat')
         return y
-    def xyn2xy(self, x, w=640, h=640, padw=0, padh=0):
+    def xyn2xy(self, x, w, h, padw=0, padh=0):
         # Convert normalized segments into pixel segments, shape (n,2)
 
         xcoord = tf.math.multiply(float(w), x[:, 0:1]) + float(padw)  # top left x
