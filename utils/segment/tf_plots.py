@@ -61,12 +61,12 @@ def plot_images_and_masks(images, targets, masks, paths=None, fname='images.jpg'
             idx = targets[:, 0] == i# mask targets which belong to current image i. shape: [Nt]
             ti = targets[idx]  # image targets
 
-            boxes = tf.transpose(xywh2xyxy(ti[:, 2:6]))#.T
+            boxes = tf.transpose(xywh2xyxy(ti[:, 2:6]))# shape: [4, nboxes]
             classes = ti[:, 1].astype('int')
             labels = ti.shape[1] == 6  # labels if no conf column
             conf = None if labels else ti[:, 6]  # check for confidence presence (label vs pred)
 
-            if boxes.shape[1]: # Note that boxes is transposed here
+            if boxes.shape[1]: # if nboxes>0, Note that boxes is transposed here
                 if boxes.max() <= 1.01:  # if normalized with tolerance 0.01
                     # boxes[[0, 2]] *= w  # scale to pixels
                     # boxes[[1, 3]] *= h

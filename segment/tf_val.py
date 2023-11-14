@@ -258,11 +258,14 @@ def run(
         list_preds=[]
         for si, (pred, proto) in enumerate(zip(preds, protos)): # loop on preds batch - image by image
             with dt[2]: # nof outputs limitted by max_det:
-                pred=non_max_suppression(pred, conf_thres, iou_thres, max_det) #shape:[Nt, 38] (xyxy+conf+cls+32masks)
-                # scale nms selected pred boxes:
                 b, h, w, ch = tf.cast(batch_im.shape, tf.float32)  # dataset images shape: batch,height,width,channel
                 pbboxes = pred[..., :4] * [w, h, w, h]  # xywh scale pred bboxes
                 pred = tf.concat([pbboxes, pred[..., 4:]], axis=-1) # pack scaled preds [back. shape: [Nt, 4+1+1+32]
+                pred=non_max_suppression(pred, conf_thres, iou_thres, max_det) #shape:[Nt, 38] (xyxy+conf+cls+32masks)
+                # scale nms selected pred boxes:
+                # b, h, w, ch = tf.cast(batch_im.shape, tf.float32)  # dataset images shape: batch,height,width,channel
+                # pbboxes = pred[..., :4] * [w, h, w, h]  # xywh scale pred bboxes
+                # pred = tf.concat([pbboxes, pred[..., 4:]], axis=-1) # pack scaled preds [back. shape: [Nt, 4+1+1+32]
             # Metrics
 
             labels = batch_targets[batch_targets[:, 0] == si, 1:] # pick gt labels with sample_idx=si to match preds[si]
@@ -327,15 +330,16 @@ def run(
             xywh=xyxy2xywh(box)
             si_tag = tf.fill(cls.shape, si).astype(tf.float32) # tags pred index. shape: [np], val: pred index
             pred=tf.concat((si_tag, cls,xywh , conf), axis=1) # pred: [Npi,(si,cls,xywh,conf)] shape:[Npi, 7]
-            list_preds.append(pred[:15])  #  keep top 15 images to plot
+            if pred.shape[0]:
+                list_preds.append(pred[:15])  #  keep top 15 images to plot
             # end pred in preds-batch loop
         # Plot images
         if plots and batch_i < 3:
-            arrange_pred = tf.concat(list_preds, axis=0)# flattened preds arry (preds indexed by si_tag).shape: [Np,7]
+            arrange_pred = tf.concat(list_preds, axis=0) if list_preds else tf.constant([]) # flattened preds arry (preds indexed by si_tag).shape: [Np,7]
             if len(plot_masks):
                 plot_masks = tf.concat(plot_masks, axis=0) # concat batch preds' top 15 masks. shape:[Np*15, h/4,w/4]
             plot_images_and_masks(batch_im, batch_targets, batch_masks, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names) # targets
-            plot_images_and_masks(batch_im,arrange_pred, plot_masks, paths,
+            plot_images_and_masks(batch_im, arrange_pred, plot_masks, paths,
                                   save_dir / f'val_batch{batch_i}_pred.jpg', names)  # pred
     # end dataset batches loop
     # callbacks.run('on_val_batch_end')
