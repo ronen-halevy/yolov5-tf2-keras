@@ -344,11 +344,12 @@ def run(
     # end dataset batches loop
     # callbacks.run('on_val_batch_end')
     # Compute metrics.
-    # Rearrange stats: list [Np] to list [5]. Details:
-    #[[[Npi,10],[Npi,10],[Npi],[Npi],[Nti]] for i=0:npreds]->[[sum(Npi),10],[sum(Npi),10],[sum(Npi)],[sum(Npi)],[sum(Nti)]]
+    # Rearrange stats: list [Np] to list [5]. Details: stat entry (list of npreds entries: [tp_m,tp_b,conf,pcls,tclss]
+
+    # stat entry shape: [[[Npi,10],[Npi,10],[Npi],[Npi],[Nti]] for i=0:npreds]->[[sum(Npi),10],[sum(Npi),10],[sum(Npi)],[sum(Npi)],[sum(Nti)]]
     stats = [tf.concat(x, 0).numpy() for x in zip(*stats)]
     if len(stats) and stats[0].any(): # todo run this
-        # result per bbox&masks: [tp,fp,precision,recall,f1,ap,unique classes]
+        # Returns [tp,fp,precision,recall,f1,ap,unique classes]  per bbox&masks"
         results = ap_per_class_box_and_mask(*stats, plot=plots, save_dir=save_dir, names=names)
         metrics.update(results)
     nt = np.bincount(stats[4].astype(int), minlength=nc)  # list[nc], histogram of number of targets per class

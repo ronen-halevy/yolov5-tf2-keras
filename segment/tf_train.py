@@ -153,7 +153,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     if pretrained:
         keras_model.load_weights(weights)
 
-    # keras_model.trainable = False
+    # keras_model.trainable = False # freeze
     # Freeze
     # freeze = [f'model.{x}.' for x in (freeze if len(freeze) > 1 else range(freeze[0]))]  # layers to freeze
     # for k, v in model.named_parameters():
