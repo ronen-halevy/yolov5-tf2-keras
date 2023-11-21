@@ -245,7 +245,8 @@ class LoadImagesAndLabelsAndMasks:
 
         # segments= tf.RaggedTensor.from_tensor(segments)
         if segments.shape[0]:
-            masks = self.polygons2masks(segments, self.imgsz, self.downsample_ratio, is_ragged)
+            masks, sorted_index = self.polygons2masks(segments, self.imgsz, self.downsample_ratio, is_ragged)
+            labels = tf.gather(labels, sorted_index, axis=0)  # follow masks sorted order
         else:
             masks = tf.fill([img.shape[0]//self.downsample_ratio, img.shape[1]//self.downsample_ratio], 0).astype(tf.float32)# np.zeros(img_size, dtype=np.uint8)
 
@@ -517,29 +518,23 @@ class LoadImagesAndLabelsAndMasks:
     def polygons2masks(self, segments, size, downsample_ratio, is_ragged):
         color = 1  # default value 1 is later modifed to a color per mask
         segments = tf.cast(segments, tf.int32)
-        # polygons2mask done as loop for a seperatee mask per segment. Merge masks after size-sorting and coloring:
+        #run polygons2mask for all segments by tf.map_fn runs . py_function is needed to call cv2.fillpoly in graph mode
         masks = tf.map_fn(fn=lambda segment:
         tf.py_function(polygons2mask, [is_ragged, size, segment[None], color, downsample_ratio],
                        Tout=tf.float32), elems=segments,
                           fn_output_signature=tf.TensorSpec(shape=[640, 640], dtype=tf.float32 ));
-        # NOTE: fillPoly firstly then resize is trying the keep the same way
-        # of loss calculation when mask-ratio=1.
-
-        nh, nw = (size[0] // downsample_ratio, size[1] // downsample_ratio)
-        masks = tf.squeeze(tf.image.resize(masks[..., None], [nh, nw]), axis=3) # expand-mult-sqeuuze
-
-        # shape: [nmasks, 160, 160]
-        # masks = tf.concat([ms])
-        # sort masks in arreas descending order - larger first
-        areas = tf.math.reduce_sum(masks, axis=[1, 2])  # shape: [nmasks]
-        index = tf.argsort(areas, axis=-1, direction='DESCENDING', stable=False, name=None)  # shape: [nmasks]
-        masks = tf.gather(masks, index, axis=0)  # sort masks by areas shape: [nmasks]
-        # set value to masks pixels - increasing int from 1 to index, (=num of masks):
-        index = tf.sort(index, axis=-1, direction='ASCENDING', name=None)
-        index = index.astype(tf.float32) + 1.
-        masks = tf.math.multiply(masks, tf.reshape(index, [-1, 1, 1])) # mult by index to set value
-        masks = tf.reduce_max(masks, axis=0) # reduce to merge and keep smallest mask pixes if overlap
-        return masks
+        # Merge downsampled masks after sorting by mask size and coloring:
+        nh, nw = (size[0] // downsample_ratio, size[1] // downsample_ratio) # downsample masks by 4
+        masks = tf.squeeze(tf.image.resize(masks[..., None], [nh, nw]), axis=3) # masks shape: [nl, 160, 160]
+        # sort masks by area.  reason: to select smallest area mask if masks overlap
+        areas = tf.math.reduce_sum(masks, axis=[1, 2])  # shape: [nl]
+        sorted_index = tf.argsort(areas, axis=-1, direction='DESCENDING', stable=False, name=None) # shape: [nl]
+        masks = tf.gather(masks, sorted_index, axis=0)  # sort masks by areas shape: [nl]
+        # color masks by index, before merge: 1 for larger, nl to smallest. 0 remains no mask:
+        mask_colors = tf.range(1, len(sorted_index)+1, dtype=tf.float32)
+        masks = tf.math.multiply(masks, tf.reshape(mask_colors, [-1, 1, 1])) #  set color values to mask pixels
+        masks = tf.reduce_max(masks, axis=0) # merge, if overlap, keep max color value  (i.e. smallest area mask)
+        return masks, sorted_index
 
 
 def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
