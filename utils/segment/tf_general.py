@@ -40,15 +40,21 @@ def process_mask_upsample(protos, masks_in, bboxes, shape):
 
 def process_mask(protos, masks_in, bboxes, shape, upsample=False):
     """
-    Crop before upsample.
-    proto_out: [mask_dim, mask_h, mask_w]
-    out_masks: [n, mask_dim], n is number of masks after nms
-    bboxes: [n, 4], n is number of masks after nms
-    shape:input_image_size, (h, w)
-
-    return: h, w, n
+    Description: alc mask=mask@proto and crop to dounsampled by 4 predicted bbox bounderies. Then threshold mask pixels
+    by 0.5
+    :param protos: model's output of nm masks' protos, shape:[nm, h/4, w/4], whrere nm=32, w=h=640
+    :type protos: tf.float32
+    :param masks_in: predicted mask fields, shape: [Np, 32]
+    :type masks_in: tf.float32
+    :param bboxes: Predicted xyxy boxes, 0<=w,h<=640, shape: [Np,4]
+    :type bboxes: tf.float32
+    :param shape: target shape tuple (640,640). USed by upsample, currently N/A
+    :type shape: (int, int)
+    :param upsample: Indicates if to upsample mask to image's size. Currently: False
+    :type upsample: Bool
+    :return: predicted downsampled by 4 mask, shape: [Np, 160, 160]
+    :rtype: tf.float32
     """
-
     ch, mh, mw = protos.shape  # CHW
     ih, iw = shape # image shape
 
@@ -58,7 +64,6 @@ def process_mask(protos, masks_in, bboxes, shape, upsample=False):
     downsampled_bboxes = tf.concat([bboxes[:, 0:1]* mw / iw, bboxes[:, 1:2]* mh / ih,bboxes[:, 2:3]* mw / iw,bboxes[:, 3:4]* mh / ih], axis=-1)
     masks = crop_mask(masks, downsampled_bboxes)  # CHW
     if upsample:
-        # masks = F.interpolate(masks[None], shape, mode='bilinear', align_corners=False)[0]  # CHW
         masks = tf.image.resize(masks[...,tf.newaxis], size=shape )
     ret_val = tf.math.greater( # 0.5 min limit.
         masks, 0.5, name=None
