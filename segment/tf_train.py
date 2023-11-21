@@ -188,13 +188,9 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         for idx in range(dbg_entries):
             ds=dataset[idx]
 
-
-    train_loader, train_dataset = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp)
-    train_dataset_length = len(train_dataset)
-
-    labels = tf.concat(train_dataset.labels, 0)
+    train_loader, labels, nb = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp)
     val_path=train_path # todo debug need a chang2
-    val_loader, _  = create_dataloader(val_path, batch_size, imgsz, mask_ratio, mosaic=False, augment=False, hyp=hyp)
+    val_loader, _ ,_ = create_dataloader(val_path, batch_size, imgsz, mask_ratio, mosaic=False, augment=False, hyp=hyp)
 
     if not resume:
         if plots:
@@ -214,7 +210,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
     # train_dataset = train_dataset.batch(batch_size)
     t0 = time.time()
-    nb = math.ceil(train_dataset_length/batch_size)
     nw = max(round(hyp['warmup_epochs'] * nb), 100)  # number of lr warmup iterations, max(3 epochs, 100 iterations)
     warmup_bias_lr=hyp['warmup_bias_lr']
     optimizer = tf.keras.optimizers.Adam(learning_rate= LRSchedule( hyp['lr0'], hyp['lrf'], nb, nw, warmup_bias_lr, epochs,False),  weight_decay=hyp['weight_decay'])

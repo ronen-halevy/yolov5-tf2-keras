@@ -575,8 +575,9 @@ def create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment,
 
 
     dataset_loader=dataset_loader.batch(batch_size)
+    nb = math.ceil( len(dataset)/batch_size)
+    return dataset_loader, tf.concat(dataset.labels, 0), nb
 
-    return dataset_loader, dataset
 
 if __name__ == '__main__':
 
