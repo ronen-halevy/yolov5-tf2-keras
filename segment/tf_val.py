@@ -242,12 +242,12 @@ def run(
 
         # inference + profiler:
         with dt[0]:
-            # inference outputs 3 objects: 1. train_out is a list of 3 tensors per 3 output layers, preds is train_out
-            # packed to a single prediction tensor, while bbox and conf processed within. proto holds 32 proto masks.
-            # -train_out layers  shape:[b,gyi,gxi,na,xywh+conf+cls+masks] where b: batchsize,gyi,gxi=size/8,/16,/32,
-            # na:nof anchors per layer=3,masks:32 words
-            # -preds shapes:[b,Npi,xywh+conf+cls+masks] where Np: (na*sum(gyi*gxi)) i=1:3]
-            # proto shape: [b,32,size/4,size/4]
+            # inference outputs 3 objects:
+            # 1.train_out is a list of 3 tensors per 3 out layers. shape:[bsize,gyi,gxi,na,xywh+conf+nc+nm] where
+            # gyi,gxi=size/8,/16,/32 for i=0:2, na:nof anchors (=3), nc: nof classes
+            # 2. preds is a train_out but bbox and conf are post-processed and packed. shape:[b,Np,xywh+conf+cls+masks]
+            # where Np: (na*sum(gyi*gxi)) i=0:2]
+            # 3. proto holds 32 proto masks. shape: [b,32,size/4,size/4]
             preds, protos, train_out = model(batch_im)
 
 

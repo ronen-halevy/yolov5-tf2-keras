@@ -386,49 +386,32 @@ class TFDetect(keras.layers.Layer):
 
     # @tf.function
     def call(self, inputs):
+        """
+        Model's detection layaer. exeutes conv2d operator on 3 input layers, and then if Training, reshapes result and return.
+        process bbox and
+        :param inputs: list[3], shapes:[[bsize,nyi,nxi,128] for i=0:2] where ny0,nx0:80,80, ny1,nx1:40,40, ny2,nx2:20,20
+        :return: if Training, train_out[3] grid layers, shape[[b,na,nyi,nxi,no], for i=0:2], no=4+1+nc+nm
+        else: a tuple(2) of packed process output (ready for nms), shape: [b,25200,no], and train_out detailed above.
+        """
         z = []  # inference output
         x = []
         for i in range(self.nl):
-            x.append(self.m[i](inputs[i]))
+            x.append(self.m[i](inputs[i])) # shape: [bs,nyi,nxi,na*no] where ny,nx=[[80,80],[40,40],[20,20]], no=117
             ny, nx = self.imgsz[0] // self.stride[i], self.imgsz[1] // self.stride[i]
-            x[i] = x[i].reshape( [-1,ny, nx, self.na,  self.no]) # from [bs,ny,nx,na*no] to [bs,ny,nx,na,no]
-            if not self.training:  # inference: post process xywh values and pack all 3 out layers to a single array
-                y = x[i] # shape: [bs, ny,nx,na,xywh+conf+nc+nm]
-                # calulate bbox formulas:
+            x[i] = x[i].reshape( [-1,ny, nx, self.na,  self.no]) # from [bs,nyi,nxi,na*no] to [bs,nyi,nxi,na,no]
+            if not self.training:  # for inference & validation - process preds according to yolo spec,ready for nms:
+                y = x[i] # shape: [bs, ny,nx,na,no] where no=xywh+conf+nc+nm
+                # operate yolo adaptations on box:
                 xy = (tf.sigmoid(y[..., 0:2]) * 2 - 0.5 + self.grid[i]) / [nx, ny] # xy bbox formula, normalized  to 0-1
                 wh = (2*tf.sigmoid(y[..., 2:4])) ** 2 * self.anchor_grid[i]/[ny,ny] # fwh bbox formula. noremalized.
-                # cobcat modified values back together:
+                # concat modified values back together, operate yolo specified sigmoid on confs:
                 y = tf.concat([xy, wh, tf.sigmoid(y[..., 4:5 + self.nc]), y[..., 5 + self.nc:]], -1)
-                # from shape: [bs, ny,nx,na,xywh+conf+nc+nm] to  [bs,nx*ny*na,xy+wh+conf+nc,+nm]:
-                z.append(y.reshape([-1, self.na * ny * nx, self.no]))
+                z.append(y.reshape([-1, self.na * ny * nx, self.no])) # reshape [bs,ny,nx,na,no]->[bs,nxi*nyi*na,no]
             else: # train output a list of x[i] arrays , i=0:nl-1,  array shape:  [bs,na,ny,nx,no]
-                x[i] = x[i].transpose([0,3,1,2,4]) # from shape [bs,ny,nx,na, no] to [bs,na,ny,nx,no]
+                x[i] = x[i].transpose([0,3,1,2,4]) # from shape [bs,nyi,nxi,na, no] to [bs,na,nyi,nxi,no]
 
-        return  x if self.training else (tf.concat(z, axis=1), x) # if not training output both outputs
+        return  x if self.training else (tf.concat(z, axis=1), x) # x:[bs,nyi,nxi,na,no] for i=0:2], z: [b,25200,no]
 
-    # @staticmethod
-    # def _make_grid(nx=20, ny=20):
-    #     xv, yv = tf.meshgrid(tf.range(nx), tf.range(ny)) # shape of xv & yv: [ny,nx]
-    #     return tf.cast(tf.reshape(tf.stack([xv, yv], 2), [1, 1, ny, nx, 2]), dtype=tf.float32)
-
-    # # Solution for model saving error:
-    # def get_config(self):
-    #     config = super().get_config()
-    #     config.update({
-    #         'nc': self.nc,
-    #         'no': self.no,
-    #         'no': self.no,
-    #         'nl': self.nl,
-    #         'na': self.na,
-    #         'grid': self.grid,
-    #         'anchors': self.anchors,
-    #         'anchor_grid': self.anchor_grid,
-    #         'm': self.m,
-    #         'training': self.training,
-    #         'imgsz': self.imgsz,
-    #
-    #     })
-    #     return config
 
 class TFSegment(TFDetect):
     # YOLOv5 Segment head for segmentation models
@@ -442,24 +425,17 @@ class TFSegment(TFDetect):
         self.detect = TFDetect.call
 
     def call(self, x):
+        """
+        Module's segment layer: envokes proto to generate mask protos and  detection layer. Layer's output combines both
+        :param x: list[3] grid layers output. shape:[[bsize,80,80,128],[bsize,40,40,2],[bsize,20,20,128]],tf.float32
+        :return: detect output x if Training and x[0],x[1] otherwise - see detect layer, and mask proto,
+        shape:[b,32,160,160], tf.float32
+        """
         p = self.proto(x[0])
         # p = TFUpsample(None, scale_factor=4, mode='nearest')(self.proto(x[0]))  # (optional) full-size protos
         p = p.transpose( [0, 3, 1, 2])  # from shape(1,160,160,32) to shape(1,32,160,160)
         x = self.detect(self, x)
         return (x, p) if self.training else (x[0], p, x[1])
-
-    # # Solution for model saving error:
-    # def get_config(self):
-    #     config = super().get_config()
-    #     config.update({
-    #         'nm': self.nm,
-    #         'npr': self.npr,
-    #         'no': self.no,
-    #         'm': self.m,
-    #         'proto': self.proto,
-    #         'detect': self.detect,
-    #     })
-    #     return config
 
 
 class TFProto(keras.layers.Layer):
@@ -472,18 +448,12 @@ class TFProto(keras.layers.Layer):
         self.cv3 = TFConv(c_, c2, w=w.cv3 if w is not None else None)
 
     def call(self, inputs):
+        """
+        Produce mask prod tensor: Apply to conv stages on upsampled input, to produce prod with shape: [b,160,160,32]
+        :param inputs: module pred[0], i.e smallest stride (stride=8) layer. shape:[b,h/8,w/8,128], h=w=640, tf.float32
+        :return: prod shape[b160,160,32], tf.loaf32
+        """
         return self.cv3(self.cv2(self.upsample(self.cv1(inputs))))
-
-    # # Solution for model saving error:
-    # def get_config(self):
-    #     config = super().get_config()
-    #     config.update({
-    #         'cv1': self.cv1,
-    #         'upsample': self.upsample,
-    #         'cv2': self.cv2,
-    #         'cv3': self.cv3,
-    #     })
-    #     return config
 
 class TFUpsample(keras.layers.Layer):
     # TF version of torch.nn.Upsample()
@@ -501,14 +471,6 @@ class TFUpsample(keras.layers.Layer):
     def call(self, inputs):
         return self.upsample(inputs)
 
-    # # Solution for model saving error:
-    # def get_config(self):
-    #     config = super().get_config()
-    #     config.update({
-    #         'upsample': self.upsample,
-    #     })
-    #     return config
-
 class TFConcat(keras.layers.Layer):
     # TF version of torch.concat()
     def __init__(self, dimension=1, w=None):
@@ -518,14 +480,6 @@ class TFConcat(keras.layers.Layer):
 
     def call(self, inputs):
         return tf.concat(inputs, self.d)
-
-
-    # def get_config(self):
-    #     config = super().get_config()
-    #     config.update({
-    #         'd': self.d,
-    #     })
-    #     return config
 
 def parse_model(anchors, nc, gd, gw, mlist, ch, ref_model_seq, imgsz, training):  # model_dict, input_channels(3)
     LOGGER.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
