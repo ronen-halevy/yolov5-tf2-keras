@@ -123,11 +123,10 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     nc = 1 if single_cls else int(data_dict['nc'])  # number of classes
     names = {0: 'item'} if single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
     # is_coco = isinstance(val_path, str) and val_path.endswith('coco/val2017.txt')  # COCO dataset
-
     # Model
     dynamic = False
     tf_model = TFModel(cfg=cfg,
-                       ref_model_seq=None, nc=80, imgsz=imgsz, training=True)
+                       ref_model_seq=None, nc=nc, imgsz=imgsz, training=True)
     # im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else batch_size)
     im = keras.Input(shape=(None,None, 3), batch_size=None if dynamic else batch_size)
 
@@ -136,7 +135,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im), name='train')
 
     val_tf_model = TFModel(cfg=cfg,
-                       ref_model_seq=None, nc=80, imgsz=imgsz, training=False)
+                       ref_model_seq=None, nc=nc, imgsz=imgsz, training=False)
 
     val_keras_model = tf.keras.Model(inputs=im, outputs=val_tf_model.predict(im), name='validation')
 
@@ -204,7 +203,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     nl = anchors.shape[0] # number of layers (output grids)
     na = anchors.shape[1]  # number of anchors
 
-    compute_loss = ComputeLoss( na,nl,nc,nm, anchors, hyp['fl_gamma'], hyp['box'], hyp['obj'], hyp['cls'], hyp['anchor_t'], autobalance=False)  # init loss class
+    compute_loss = ComputeLoss(na,nl,nc,nm, stride, anchors, overlap, hyp['fl_gamma'], hyp['box'], hyp['obj'], hyp['cls'], hyp['anchor_t'], autobalance=False)  # init loss class
     stopper, stop = EarlyStopping(patience=opt.patience), False
 
     # train_dataset = train_dataset.batch(batch_size)
@@ -222,20 +221,19 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         mloss = tf.zeros([4], dtype=tf.float32)  # mean losses
         # train:
         for batch_idx, (bimages,  btargets, bmasks, paths, shapes) in enumerate(pbar):
-            ni = batch_idx + nb * epoch  # number integrated batches (since train start)
+            ni = batch_idx + nb * epoch  # number batches (since train start), used to scheduke debug plots and logs
 
-            # concat image index word to targets. result targets shape: [nt, 6] where nt total of target objectd
+            # Convert targets ragged tensor shape: [b, None,5] to rectangle tensor shape:[nt,imidx+cls+xywh] i.e. [nt,6]
             new_btargets = []
             for idx, targets in enumerate(btargets):
-                # print('targets.to_tensor().shape) batch_idx', idx, batch_idx, targets.to_tensor().shape)
-                if targets.shape[0]:
-                    bindex=tf.cast([idx], tf.float32)[None]
-                    bindex = tf.tile(bindex, [targets.shape[0],  1])
-                    new_btargets.extend(tf.concat([bindex, targets.to_tensor()[...,0:]], axis=-1)) # [bindex,cls, xywh]
-                else:
+                if targets.shape[0]: # if any target:
+                    im_idx=tf.cast([idx], tf.float32)[None]
+                    im_idx = tf.tile(im_idx, [targets.shape[0],  1])
+                    new_btargets.extend(tf.concat([im_idx, targets.to_tensor()[...,0:]], axis=-1)) # [im_idx,cls, xywh]
+                else: # if no targets, zeros([0,6]):
                     targets=tf.zeros([0,6], tf.float32)
                     new_btargets.extend( targets)
-            new_btargets=tf.stack(new_btargets, axis=0)
+            new_btargets=tf.stack(new_btargets, axis=0) # list[nt] of shape[6] to tensor shaoe[nt,6]
 
             with (tf.GradientTape() as tape):
                 # model forward, with training=True, outputs a tuple:2 - preds list:3 & proto. Details:
