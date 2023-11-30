@@ -1,23 +1,9 @@
 # YOLOv5 🚀 by Ultralytics, AGPL-3.0 license
 
 
-import math
 import os
-import platform
-import subprocess
-import time
 import warnings
-from contextlib import contextmanager
-from copy import deepcopy
-from pathlib import Path
-#
-# import torch
-# import torch.distributed as dist
-# import torch.nn as nn
-# import torch.nn.functional as F
-# from torch.nn.parallel import DistributedDataParallel as DDP
-
-from utils.general import LOGGER, check_version, colorstr, file_date, git_describe
+from utils.tf_general import LOGGER, check_version, colorstr
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
