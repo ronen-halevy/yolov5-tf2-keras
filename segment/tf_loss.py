@@ -102,11 +102,9 @@ class ComputeLoss:
 
         # Define criteria
         # BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['cls_pw']], device=device))
-        BCEobj = tf.losses.BinaryCrossentropy(from_logits=True)
+        # Non-probability values so logits=True:
+        BCEobj = tf.losses.BinaryCrossentropy(from_logits=True) # with SUM_OVER_BATCH_SIZE reduction: sum/(nof elements)
         BCEcls = tf.losses.BinaryCrossentropy(from_logits=True)
-
-        # BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['obj_pw']], device=device))
-        # BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['cls_pw']], device=device))
 
         # Class label smoothing https://arxiv.org/pdf/1902.04103.pdf eqn 3
         self.cp, self.cn = smooth_BCE(eps=label_smoothing)  # positive, negative BCE targets
@@ -130,75 +128,79 @@ class ComputeLoss:
     def __call__(self, preds, targets, masks):
         """
         Calc batch loss
-        :param preds: model output. 2 tupple: preds[0]: list[3] per grid layer,shape:[b,na,gs,gs,4+1+nc+nm], gs=80,40,20
+        :param preds: model output. 2 tupple: preds[0]: list[3] per grid layer,shape:[b,na,gy,gx,4+1+nc+nm], gs=80,40,20
         preds[1]: proto of masks, shape:[b,nm,h/4,w/4] where currently nm=32,w,h=640
-        :param targets: dataset labels. shape: [nt,6], where an entry consists of [imidx+cls+xywh]
-        :type targets: tf.float32
-        :param masks: masks labels, shape: [b,h/4,w/4]
-        :type masks: tf.float32
+        :param targets: dataset labels. shape: [nt,6], where an entry consists of [imidx+cls+xywh],tf.float32
+        :param masks: masks labels, shape: [b,h/4,w/4],tf.float32
         :return:
         1. loss sum: lbox+lobj+lcls+lseg
         2. concatenated loss: (lbox, lseg, lobj, lcls) shape: [b,4]
         """
-
+        # step 1: unpack preds:
         p, proto = preds
         bs, nm, mask_h, mask_w = proto.shape  # batch size, number of masks, mask height, mask width
-
+        # step 2: zero 3 loss accumulators:
         lcls = tf.zeros([1])  # class loss
         lbox = tf.zeros([1])  # box loss
         lobj = tf.zeros([1])  # object loss
         lseg = tf.zeros([1])  # segment loss
-        tcls, tbox, indices, anchors, tidxs, xywhn = self.build_targets(p, targets)  # targets entry, each is list[nl]
+        #step 3: build targetst as entries for loss computation in 3 layers. build_targets normally expands nt.
+        # tcls, tbox, indices, anchors, tidxs, xywhn are list[3] of tensor shape [Nti] where Nti is an expanded nof
+        # targets. `indices` is list[3] of tuple:4 entries each of shape: [Nti].
+        tcls, tbox, indices, anchors, tidxs, xywhn = self.build_targets(p, targets)  # each a list[nl], entry per layer
 
-        # Losses
-        for i, pi in enumerate(p):  # loop on preds' 3 layers, calc & accumulate 4 losses types per each
-            b, a, gj, gi = indices[i]  # image, anchor, gridy, gridx
-            tobj = tf.zeros(pi.shape[:4], dtype=pi.dtype)  # target obj
-
+        # step 4: loop on 3 layers, calc and accumulate losses:
+        for i, pi in enumerate(p):  # loop on 3 layer grids. accumulate 4 losses.
+            # step 4.1: take indices of targets, to fetch matching preds with:
+            b, a, gj, gi = indices[i] # an index consists of 4 tensors shape:[nti]: imgid, matched_anchor, grid location
+            tobj = tf.zeros(pi.shape[:4], dtype=pi.dtype)  # init target obj with all 0s shape:[b,na,gy,gx]
             n = b.shape[0]  # number of targets
             if n:
+                # step 4.2: fetch relקvant preds by targets indices. shapes: pxy,pwh:[Nti,2] pcls:[Nti,nc] pmask:[Nti,nm]
                 pxy, pwh, _, pcls, pmask = tf.split(pi[b.astype(tf.int32), a.astype(tf.int32), gj, gi], (2, 2, 1, self.nc, nm), 1)
-                # Box regression
-                pxy = tf.sigmoid(pxy) * 2 - 0.5
-                pwh = (tf.sigmoid(pwh) * 2) ** 2 * anchors[i]
+                # step 4.3: calc box loss as 1-mean(iou(pbox,tbox))
+                pxy = tf.sigmoid(pxy) * 2 - 0.5 # xy  coords adapted according to yolo's formulas
+                pwh = (tf.sigmoid(pwh) * 2) ** 2 * anchors[i] # wh coords  adapted according to yolo's formulas:
                 pbox = tf.concat((pxy, pwh), 1)  # predicted box
-                iou = tf.squeeze(bbox_iou(pbox, tbox[i], CIoU=True))  # iou(prediction, target)
-                lbox += (1.0 - iou).mean()  # iou loss
-                # Objectness
-                iou = tf.maximum(iou, 0).astype(tobj.dtype)
-                if self.sort_obj_iou:
+                iou = tf.squeeze(bbox_iou(pbox, tbox[i], CIoU=True))  # iou(prediction, target). shpe:[Nti]
+                lbox += (1.0 - iou).mean()  # lbox as a mean iou of all candidate layer's objects, shape:[]
+                # step 4.4: prepare tobj for lobj. tobj=max(iou) of all
+                iou = tf.maximum(iou, 0).astype(tobj.dtype) # clamp to min 0. (tbd: iou always positive)
+                if self.sort_obj_iou: # False by default
                     j = iou.argsort()
                     b, a, gj, gi, iou = b[j], a[j], gj[j], gi[j], iou[j]
-                if self.gr < 1:
+                if self.gr < 1: #default 1, otherwise, modify iou
                     iou = (1.0 - self.gr) + self.gr * iou
-                # tobj[b, a, gj, gi] = iou  # iou ratio
-                index = tf.transpose([b.astype(tf.int32), a.astype(tf.int32), gj, gi] )
-                tobj= tf.tensor_scatter_nd_update(tobj,index, iou)
+                index = tf.transpose([b.astype(tf.int32), a.astype(tf.int32), gj, gi] ) #tobj place idx. shape:[Nti,4]
+                tobj= tf.tensor_scatter_nd_update(tobj,index, iou) # scatter ious to tensor: tobj[b, a, gj, gi]=iou
 
-                # Classification
+                # step 4.5: calc class loss by Binary Cross Entropy. Only in multi class case.
                 if self.nc > 1:  # cls loss (only if multiple classes)
                     # create [nt, nc] one_hot class array:
                     t= tf.one_hot(indices=tcls[i].astype(tf.int32), depth=pcls.shape[1])
-                    lcls += self.BCEcls( t, pcls)  # BCE
+                    lcls += self.BCEcls( t, pcls)  # BCE, with SUM_OVER_BATCH_SIZE reduction: sum/(nof elements)
 
-                # Mask regression
-                if tuple(masks.shape[-2:]) != (mask_h, mask_w):  # downsample
+                # step 4.6: calc mask loss as a mean of objects lossess, which are mean of all mask pixels BCE loss:
+                if tuple(masks.shape[-2:]) != (mask_h, mask_w): # downsample mask by 4. Default: skip already d-sampled
                     masks = tf.image.resize(masks, (mask_h, mask_w), method='nearest')[0]
-                marea = tf.math.reduce_prod(xywhn[i][:, 2:], axis=1)  # mask width, height normalized
+                marea = tf.math.reduce_prod(xywhn[i][:, 2:], axis=1)  # normed target areas for mean calc. shape:[nti]
+                # convert xywhn->xyxy, downsampled by 4, for bbox. cropping. shape: [nt,4]:
                 mxyxy = xywh2xyxy(xywhn[i] * tf.constant([mask_w, mask_h, mask_w, mask_h]))
-                for bi in tf.unique(b)[0]:
-                    j = b == bi  # matching index
-                    if self.overlap:
-                        mask_gti = tf.where(masks[bi.astype(tf.int32)][None] == tf.reshape(tidxs[i][j], [-1, 1, 1]), 1.0, 0.0)
-
+                for bi in tf.unique(b)[0]: # loop on images and sum lseg. unique(b) reduces all image's common targets
+                    j = b == bi  # mask targets with current iteration's image index bi shape:[nti], bool
+                    # In overlap object's mask pixels are colored by a per image index, otherwise index is batch global
+                    if self.overlap: # Note: tidxs -1based targets indices in image (if overlap) or global
+                        # Convert image's single mask to nti targets masks. Modify pixel vals from object index to 1s:
+                        mask_gti = tf.where(masks[bi.astype(tf.int32)][None] == tf.reshape(tidxs[i][j], [-1, 1, 1]), 1.0, 0.0) # shape: [nti,160,160]
                     else:
+                        # Take current image's objects masks. (no overlap, already mask per object, not colored):
                         mask_gti = masks[tidxs[i]][j]
+                    # acc image's lseg:
                     lseg += self.single_mask_loss(mask_gti, pmask[j], proto[bi.astype(tf.int32)], mxyxy[j], marea[j])
-
-            obji = self.BCEobj(tobj, pi[..., 4])
-
-            lobj += obji * self.balance[i]  # obj loss
-            if self.autobalance:
+            # 4.7 obj loss calc:
+            obji = self.BCEobj(tobj, pi[..., 4]) # with SUM_OVER_BATCH_SIZE reduction: sum/(nof elements)
+            lobj += obji * self.balance[i]  # increment loss on larger layers (80*80 vs 40*40 vs 20*20)
+            if self.autobalance: # False by default (adjust lobj balance factor)
                 self.balance[i] = self.balance[i] * 0.9999 + 0.0001 / obji.detach().item()
 
         if self.autobalance:
@@ -207,27 +209,44 @@ class ComputeLoss:
         lbox *= self.box_lg
         lobj *= self.obj_lg
         lcls *= self.cls_lg
-        lseg *= self.box_lg / bs
+        lseg *= self.box_lg / bs # summed on batch images loop, but not yet averaged
         loss = lbox + lobj + lcls + lseg
         return loss * bs, tf.concat((lbox, lseg, lobj, lcls), axis=-1)
 
-    def single_mask_loss(self, gt_mask, pred, proto, xyxy, area):
-        pred_mask = tf.reshape(pred @ tf.reshape(proto, (self.nm, -1)),[ -1, *proto.shape[1:]])  # (n,32) @ (32,80,80) -> (n,80,80)
-        bse = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction='none')
-        loss=bse(gt_mask[...,None], pred_mask[...,None])
-
-        return tf.math.reduce_mean(tf.math.reduce_mean(crop_mask(loss, xyxy), axis=[1,2]) / area)
+    def single_mask_loss(self, gt_mask, pmask, proto, xyxy, area):
+        """ Description Calc mask loss as the mean of all input objects masks losses calculated separately.
+        Each object mask loss is the mean of its mask pixels losses  calculated by BinaryCrossentropy,
+        cropped by target bounding boxes.
+        :param gt_mask: nti tmasks, pixels 1 or 0, tf.float32 shape:[nti,h/4,w/4]
+        :param pmask: pred tensor's mask fields, tf.float32, shape: [nti,nm], where nm=32
+        :param proto: model's proto output.   tf.float32, shape: [nm, 160,160]
+        :param xyxy: bbox xyxy format, downsampled by 4, to math mask's scale. shape: [nti,4]
+        :param area: targets' bboxes areas (normalized).  tf.float32, shape: [nti]
+        :return: mask loss tf.float32, shape: []
+        """
+        # 1. produce pred mask as a product of pmask and proto:
+        # 1a. reshape proto: ->[nm,h/4*w/4]. 1b. mult: [nti,nm]@[nm,h/4*w/4]->[nti,h/4*w/4] 1c. reshape:[nti,160,160]
+        pred_mask = tf.reshape(pmask @ tf.reshape(proto, (self.nm, -1)),[ -1, *proto.shape[1:]])
+        # 2. Calc per pixels loss by BinaryCrossentropy:
+        bse = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction='none') # setup BinaryCrossentropy
+        loss=bse(gt_mask[...,None], pred_mask[...,None]) # pixels mask loss. shape: [nti,160,160]
+        # 3. Calc per object mask loss as a mean of object's pixels loss:
+        targets_mask_loss = tf.math.reduce_mean(crop_mask(loss, xyxy), axis=[1, 2]) # shape[nti]
+        # 4. Calc mask loss as a mean of objects' mask losses, each divided by its area to equalize effect on mean:
+        mask_loss =tf.math.reduce_mean(targets_mask_loss / area) # shape: []
+        return mask_loss
 
 
     def build_targets(self, p, targets):
         """
-        Description: Arrange target dataset as entries for loss computation
+        Description: Arrange target dataset as entries for loss computation. Note that nof targets ar enormally expanded
+        to match preds in neighbour grid squares, as explained.
         :param p: preds, (for batch and grid sizes only). list[3],shape:[b,na,gs,4+1+nc+nm],gs=[[80,80],[40,40],[20,20]]
         :param targets: dataset labels for rearrangemnt . tf.float32 tensor. shape:[nt,6], entry:imidx+cls+xywh
         :return:
         tcls: targets classes. list[3] per 3 grid layers. shapes: [[nt0], [nt1], [nt2]], nti: nof targets in layer i
         tbox: x,y,w,h where x,y are offset from grid square corner, for loss calc. list[3] per 3 grid layers. shapes: [[nt0,4],[nt1,4],[nt2,4]]
-        indices: grid indices of targets. list[3] per 3 grid layers.shapes: [[nt0,4],[nt1,4],[nt2,4]]
+        indices: indices targets entries  in [b,a,gyi,gxi] struct. entry is a list[3] of 4-tuple [([nti],[nti],[nti],[nti])i=0:2], nti:ntargets in layer i.
         anch: selected anchor pairs pre target. list[3] per 3 grid layers.shapes: [[nt0,2], [nt1,2], [nt2,2]]
         tidxs: runnig indices of target in image. list[3] per 3 grid layers.  shapes:  [[nt0], [nt1], [nt2]]
         xywhn: normalized targets bboxes. list[3] per 3 grid layers. shapes: [[nt0,4], [nt1,4], [nt2,4]]
