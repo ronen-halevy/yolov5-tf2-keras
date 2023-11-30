@@ -249,7 +249,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
             mloss = (mloss * batch_idx + loss_items) / (batch_idx + 1)  # update mean losses
 
-            LOGGER.info(('\n' + '%11s' * 7) % ('Epoch', 'box_loss', 'obj_loss', 'cls_loss', 'mask_loss','Instances', 'Size'))
+            LOGGER.info(('\n' + '%11s' * 7) % ('Epoch', 'box_loss', 'mask_loss', 'obj_loss','cls_loss','Instances', 'Size'))
 
             pbar.set_description(('%11s' * 2 + '%11.4g' * 5) %
                                  (f'{epoch}/{epochs - 1}',  *mloss.numpy(), new_btargets.shape[0], bimages.shape[1]))
@@ -363,11 +363,11 @@ def parse_opt(known=False):
     if shapes:
         parser.add_argument('--data', type=str, default=ROOT / 'data/shapes-seg.yaml', help='dataset.yaml path')
     else:
-        parser.add_argument('--data', type=str, default=ROOT / 'data/coco128-seg.yaml', help='dataset.yaml path')
+        parser.add_argument('--data', type=str, default=ROOT / 'data/coco128-seg-short.yaml', help='dataset.yaml path')
 
     parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.scratch-low.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=40, help='total training epochs')
-    parser.add_argument('--batch-size', type=int, default=2, help='total batch size for all GPUs, -1 for autobatch')
+    parser.add_argument('--batch-size', type=int, default=8, help='total batch size for all GPUs, -1 for autobatch')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='train, val image size (pixels)')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
