@@ -21,7 +21,7 @@ from PIL import Image, ImageDraw, ImageFont
 from scipy.ndimage.filters import gaussian_filter1d
 
 from utils import TryExcept, threaded
-from utils.general import (CONFIG_DIR, FONT, LOGGER, check_font, check_requirements, clip_boxes, increment_path,
+from utils.general import (CONFIG_DIR, FONT, LOGGER, check_font, clip_boxes, increment_path,
                            is_ascii, xywh2xyxy, xyxy2xywh)
 from utils.metrics import fitness
 from utils.segment.general import scale_image
@@ -64,7 +64,8 @@ def check_pil_font(font=FONT, size=10):
             check_font(font)
             return ImageFont.truetype(str(font), size)
         except TypeError:
-            check_requirements('Pillow>=8.4.0')  # known issue https://github.com/ultralytics/yolov5/issues/5374
+            pass
+            # check_requirements('Pillow>=8.4.0')  # known issue https://github.com/ultralytics/yolov5/issues/5374
         except URLError:  # not online
             return ImageFont.load_default()
 
@@ -89,7 +90,7 @@ class Annotator:
         if self.pil or not is_ascii(label):
             self.draw.rectangle(box, width=self.lw, outline=color)  # box
             if label:
-                w, h = self.font.getsize(label)  # text width, height (WARNING: deprecated) in 9.2.0
+                w, h = [20, 20] #self.font.getsize(label)  # text width, height (WARNING: deprecated) in 9.2.0
                 # _, _, w, h = self.font.getbbox(label)  # text width, height (New)
                 outside = box[1] - h >= 0  # label fits outside box
                 self.draw.rectangle(
@@ -227,7 +228,7 @@ def output_to_target(output, max_det=300):
     return torch.cat(targets, 0).numpy()
 
 
-@threaded
+#@threaded
 def plot_images(images, targets, paths=None, fname='images.jpg', names=None):
     # Plot image grid with labels
     if isinstance(images, torch.Tensor):
