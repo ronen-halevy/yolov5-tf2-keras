@@ -205,7 +205,7 @@ class ComputeLoss:
 
         if self.autobalance:
             self.balance = [x / self.balance[self.ssi] for x in self.balance]
-
+        # mul by loss gains:
         lbox *= self.box_lg
         lobj *= self.obj_lg
         lcls *= self.cls_lg
