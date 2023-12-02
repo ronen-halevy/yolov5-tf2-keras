@@ -18,13 +18,13 @@ import pandas as pd
 import seaborn as sn
 import tensorflow as tf
 from tensorflow.python.ops.numpy_ops import np_config
-np_config.enable_numpy_behavior() # allows running NumPy code, accelerated by TensorFlow
+np_config.enable_numpy_behavior()  # allows running NumPy code, accelerated by TensorFlow
 
 from PIL import Image, ImageDraw, ImageFont
 
 from utils import TryExcept, threaded
 from utils.tf_general import (FONT, LOGGER, check_font, check_requirements, clip_boxes, increment_path,
-                           is_ascii, xywh2xyxy, xyxy2xywh)
+                              is_ascii, xywh2xyxy, xyxy2xywh)
 from utils.tf_metrics import fitness
 from utils.segment.tf_general import scale_image
 
@@ -58,7 +58,7 @@ colors = Colors()  # create instance for 'from utils.plots import colors'
 def check_pil_font(font=FONT, size=10):
     # Return a PIL TrueType Font, downloading to CONFIG_DIR if necessary
     font = Path(font)
-    font = font # if font.exists() else (CONFIG_DIR / font.name)
+    font = font  # if font.exists() else (CONFIG_DIR / font.name)
     try:
         return ImageFont.truetype(str(font) if font.exists() else font.name, size)
     except Exception:  # download if missing
@@ -78,12 +78,17 @@ class Annotator:
         non_ascii = not is_ascii(example)  # non-latin labels, i.e. asian, arabic, cyrillic
         self.pil = pil or non_ascii
         if self.pil:  # use PIL
-            self.im  = tf.keras.utils.array_to_img(
+            self.im = tf.keras.utils.array_to_img(
                 im, data_format=None, scale=True, dtype=None
             )
             self.draw = ImageDraw.Draw(self.im)
-            self.font = check_pil_font(font='/usr/share/fonts/truetype/liberation/LiberationSansNarrow-Regular.ttf' if non_ascii else font,
-                                       size=font_size or max(round(sum(self.im.size) / 2 * 0.035), 12))
+            try:
+                self.font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSansNarrow-Regular.ttf",
+                                               font_size)
+            except IOError:
+                print("Font not found, using default font.")
+                self.font = ImageFont.load_default()
+
         else:  # use cv2
             self.im = im
         self.lw = line_width or max(round(sum(im.shape) / 2 * 0.003), 2)  # line width
@@ -94,7 +99,7 @@ class Annotator:
             self.draw.rectangle(box, width=self.lw, outline=color)  # box
             if label:
                 # w, h = self.font.getsize(label)  # text width, height (WARNING: deprecated) in 9.2.0
-                w, h=20,20 # todo check to fix!!!
+                w, h = 20, 20  # todo check to fix!!!
                 # _, _, w, h = self.font.getbbox(label)  # text width, height (New)
                 outside = box[1] - h >= 0  # label fits outside box
                 self.draw.rectangle(
@@ -133,7 +138,7 @@ class Annotator:
             # convert to numpy first
             self.im = np.asarray(self.im).copy()
 
-        colors = tf.constant(colors, dtype=tf.float32)/ 255.0
+        colors = tf.constant(colors, dtype=tf.float32) / 255.0
         colors = colors[:, tf.newaxis, tf.newaxis, :]  # shape(n,1,1,3)
         # masks = tf.expand_dims(masks, axis=-1) # (n,h,w,1)
         # a color per a mask:
@@ -144,7 +149,7 @@ class Annotator:
         # mcs is the final mask: sum all instances' masks, multipliy by inv_alph_masks to prevent saturation:
         mcs = tf.math.reduce_sum(masks_color * inv_alph_masks, axis=0) * 2  # mask color summand shape(n,h,w,3)
         # combine image and mask:
-        image = image *inv_alph_masks[-1] + mcs
+        image = image * inv_alph_masks[-1] + mcs
         im_mask = (image * 255).numpy()
         self.im = im_mask if retina_masks else scale_image(image.shape, im_mask, self.im.shape).numpy()
 
@@ -229,7 +234,7 @@ def output_to_target(output, max_det=300):
     for i, o in enumerate(output):
         box, conf, cls = tf.split(o[:max_det, :6], (4, 1, 1), axis=1)
         j = tf.fill((box.shape[0], 1), i).astype(tf.float32)
-        targets.append(tf.concat((j, cls, xyxy2xywh(box), conf), axis=1)) # [idx, cls,bbox, conf] shape: [N , 7]
+        targets.append(tf.concat((j, cls, xyxy2xywh(box), conf), axis=1))  # [idx, cls,bbox, conf] shape: [N , 7]
     return tf.concat(targets, axis=0).numpy()
 
 
@@ -420,11 +425,11 @@ def plot_labels(labels, names=(), save_dir=Path('')):
 
     # rectangles
     # labels[:, 1:3] = 0.5  # center
-    c_xy = tf.fill(labels[:,1:3].shape, 0.5)
-    xywh = tf.concat([c_xy,labels[:, 3:]], axis=1)
+    c_xy = tf.fill(labels[:, 1:3].shape, 0.5)
+    xywh = tf.concat([c_xy, labels[:, 3:]], axis=1)
     xyxy = xywh2xyxy(xywh) * 2000
 
-    labels = tf.concat([labels[:,0:1], xyxy], axis=1)
+    labels = tf.concat([labels[:, 0:1], xyxy], axis=1)
     img = Image.fromarray(np.ones((2000, 2000, 3), dtype=np.uint8) * 255)
     for cls, *box in labels[:1000]:
         ImageDraw.Draw(img).rectangle(box, width=1, outline=colors(cls))  # plot
