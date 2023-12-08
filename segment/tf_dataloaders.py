@@ -72,6 +72,7 @@ class LoadImagesAndLabelsAndMasks:
         self.labels = []
         self.segments = []
         for idx, (self.im_file, self.label_file) in enumerate(zip(self.im_files, self.label_files)):
+            # extract class, bbox and segment from label file entry:
             image_file, label, segment = self._create_entry(idx, self.im_file, self.label_file)
             self.image_files.append(image_file)
             self.labels.append(label)
@@ -104,6 +105,24 @@ class LoadImagesAndLabelsAndMasks:
             if rotation in [6, 8]:  # rotation 270 or 90
                 s = (s[1], s[0])
         return s
+    def read_label_from_file(self, fname):
+        """
+        Reads segments label file, retrun class and bbox.
+        Input File format-a row per object structured: class, sx1,sy1....sxn,syn
+        :param fname: labels file name, str. Fi
+        :return:
+        lb:  tensor of class,bbox. shape: [1,5], tf.float32
+        """
+        with open(fname) as f:
+            lb = [x.split() for x in f.read().strip().splitlines() if len(x)]
+            if any(len(x) > 6 for x in lb):  # is segment
+                classes = np.array([x[0] for x in lb], dtype=np.float32)
+                # img_index = tf.tile(tf.expand_dims(tf.constant([idx]), axis=-1), [classes.shape[0], 1])
+                segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lb]  # (cls, xy1...)
+                lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)),
+                                    1)  # (cls, xywh)
+            lb = np.array(lb, dtype=np.float32)
+        return lb
 
     def _create_entry(self, idx, im_file, lb_file, prefix=''):
         nm, nf, ne, nc, msg, segments = 0, 0, 0, 0, '', []  # number (missing, found, empty, corrupt), message, segments
@@ -122,16 +141,7 @@ class LoadImagesAndLabelsAndMasks:
 
         # verify labels
         if os.path.isfile(lb_file):
-            nf = 1  # label found
-            with open(lb_file) as f:
-                lb = [x.split() for x in f.read().strip().splitlines() if len(x)]
-                if any(len(x) > 6 for x in lb):  # is segment
-                    classes = np.array([x[0] for x in lb], dtype=np.float32)
-                    # img_index = tf.tile(tf.expand_dims(tf.constant([idx]), axis=-1), [classes.shape[0], 1])
-                    segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lb]  # (cls, xy1...)
-                    lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)),
-                                        1)  # (cls, xywh)
-                lb = np.array(lb, dtype=np.float32)
+            lb= self.read_label_from_file(lb_file)
             nl = len(lb)
             if nl:
                 assert lb.shape[1] == 5, f'labels require 5 columns, {lb.shape[1]} columns detected'
@@ -195,8 +205,8 @@ class LoadImagesAndLabelsAndMasks:
     '''
     def __getitem__(self, index):
         '''
-        Produces a dataset entry for a single sample pointed by index.
-        If mosaic, entry is produced by 3 more randomly selected samples.
+        This is the main method for dataset entries construction. It produces a dataset entry according to index
+        self.im_files list. if mosaic 4 config is true, the entry is constructed using 3 more randomly selected samples.
 
         :param index: index points to an image entry in self.im_files list
         :type index: int
@@ -209,21 +219,22 @@ class LoadImagesAndLabelsAndMasks:
          shapes:  [(h0,w0),(h1/w0,w1/w0),(padh,padw)], all zeros if mosaic. shape:[3,2],float
         '''
         mosaic = random.random() < self.mosaic # randmoly select mosaic mode, unless self.mosaic is 0 or 1.
-        # why is_ragged needed: in case of mosaic or augment true, all processed segments are interpolated to 1000
+        # why is_segment_ragged needed: in case of mosaic or augment true, all processed segments are interpolated to 1000
         # points. Otherwise, segment is a ragged tensor shape: [nt,(npolygons),2], where npolygons differs, that's why
         # ragged. However, before feeding to cv2.polly() polygon-by-polygon, must convert to tensor otherwise crash. So,
-        # is_ragged is used, as otherwise code can't tell if tensor is ragged and needs conversion to tensor.
+        # is_segment_ragged is used, as otherwise code can't tell if tensor is ragged and needs conversion to tensor.
 
-        is_ragged = False
+        is_segment_ragged = False # False if augment or mosaic where nof vertices interpolated and so is uniform to all.
+        # otherwise nof vertices in segments variessegments are padded to same nof vertices
         if self.augment and mosaic:
             img, labels, segments  =self.load_mosaic(index)
             shapes = tf.zeros([3,2], float) # for mAP rescaling. Dummy same shape (keep generator's spec) for mosaic
-            # is_ragged = False
         else:
             (img, (h0, w0),(h1, w1), pad)  = self.decode_resize(index, padding=True)
             shapes = tf.constant(((float(h0), float(w0)), (h1 / h0, w1 / w0), pad) ) # for mAP rescaling.
             segments= tf.ragged.constant( self.segments[index])
             padw, padh = pad[0], pad[1]
+            # map loops on all segments, scale normalized coordibnates to fit mage scaling:
             segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w1, h1, padw, padh), elems=segments,
                                  fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
                                                                          ragged_rank=1));
@@ -241,11 +252,11 @@ class LoadImagesAndLabelsAndMasks:
                                                                 border=[0,0]
                                                                 )  # border to remove
             else:
-                is_ragged = True
+                is_segment_ragged = True
 
         # segments= tf.RaggedTensor.from_tensor(segments)
         if segments.shape[0]:
-            masks, sorted_index = self.polygons2masks(segments, self.imgsz, self.downsample_ratio, is_ragged)
+            masks, sorted_index = self.polygons2masks(segments, self.imgsz, self.downsample_ratio, is_segment_ragged)
             labels = tf.gather(labels, sorted_index, axis=0)  # follow masks sorted order
         else:
             masks = tf.fill([img.shape[0]//self.downsample_ratio, img.shape[1]//self.downsample_ratio], 0).astype(tf.float32)# np.zeros(img_size, dtype=np.uint8)
@@ -276,11 +287,9 @@ class LoadImagesAndLabelsAndMasks:
         if padding:
             padh = int((self.imgsz[1] - img_resized.shape[0]) / 2)
             padw = int((self.imgsz[0] - img_resized.shape[1]) / 2)
-
-            img_resized = tf.image.pad_to_bounding_box(
-                img_resized, padh, padw, self.imgsz[1], self.imgsz[0]
-            )
-
+            # pad with grey color:
+            paddings = tf.constant([[padh, self.imgsz[1]-img_resized.shape[0]-padh ], [padw, self.imgsz[0]-img_resized.shape[1]-padw], [0,0]])
+            img_resized = tf.pad(img_resized, paddings, "CONSTANT", constant_values=114)
         return (
         img_resized, img0.shape[:2], resized_shape, (padw, padh))  # pad is 0 by def while aspect ratio not preserved
 
