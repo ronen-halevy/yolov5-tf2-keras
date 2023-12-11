@@ -1,10 +1,5 @@
 
 
-
-
-import glob
-from pathlib import Path
-
 # from core.load_tfrecords import parse_tfrecords
 # from core.create_dataset_from_files import create_dataset_from_files
 # from core.load_tfrecords import parse_tfrecords
@@ -123,8 +118,14 @@ class LoadImagesAndLabelsAndMasks:
                                     1)  # (cls, xywh)
             lb = np.array(lb, dtype=np.float32)
         return lb
+    def fix__corrupted_jpeg(self, im_file, warning_msg_prefix):
+        with open(im_file, 'rb') as f:
+            f.seek(-2, 2)
+            if f.read() != b'\xff\xd9':  # corrupt JPEG
+                ImageOps.exif_transpose(Image.open(im_file)).save(im_file, 'JPEG', subsampling=0, quality=100)
+                msg = f'{warning_msg_prefix}WARNING ⚠️ {im_file}: corrupt JPEG restored and saved'
 
-    def _create_entry(self, idx, im_file, lb_file, prefix=''):
+    def _create_entry(self, idx, im_file, lb_file, warning_msg_prefix=''):
         nm, nf, ne, nc, msg, segments = 0, 0, 0, 0, '', []  # number (missing, found, empty, corrupt), message, segments
         # verify images
         im = Image.open(im_file)
@@ -133,12 +134,7 @@ class LoadImagesAndLabelsAndMasks:
         assert (shape[0] > 9) & (shape[1] > 9), f'image size {shape} <10 pixels'
         assert im.format.lower() in IMG_FORMATS, f'invalid image format {im.format}'
         if im.format.lower() in ('jpg', 'jpeg'):
-            with open(im_file, 'rb') as f:
-                f.seek(-2, 2)
-                if f.read() != b'\xff\xd9':  # corrupt JPEG
-                    ImageOps.exif_transpose(Image.open(im_file)).save(im_file, 'JPEG', subsampling=0, quality=100)
-                    msg = f'{prefix}WARNING ⚠️ {im_file}: corrupt JPEG restored and saved'
-
+            self.fix__corrupted_jpeg(im_file, warning_msg_prefix)
         # verify labels
         if os.path.isfile(lb_file):
             lb= self.read_label_from_file(lb_file)
@@ -153,7 +149,7 @@ class LoadImagesAndLabelsAndMasks:
                     lb = lb[i]  # remove duplicates
                     if segments:
                         segments = [segments[x] for x in i]
-                    msg = f'{prefix}WARNING ⚠️ {im_file}: {nl - len(i)} duplicate labels removed'
+                    msg = f'{warning_msg_prefix}WARNING ⚠️ {im_file}: {nl - len(i)} duplicate labels removed'
             else:
                 ne = 1  # label empty
                 lb = np.zeros((0, 5), dtype=np.float32)
