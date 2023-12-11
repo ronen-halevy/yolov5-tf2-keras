@@ -117,7 +117,7 @@ class LoadImagesAndLabelsAndMasks:
                 lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)),
                                     1)  # (cls, xywh)
             lb = np.array(lb, dtype=np.float32)
-        return lb
+        return lb, segments
     def fix__corrupted_jpeg(self, im_file, warning_msg_prefix):
         with open(im_file, 'rb') as f:
             f.seek(-2, 2)
@@ -137,7 +137,7 @@ class LoadImagesAndLabelsAndMasks:
             self.fix__corrupted_jpeg(im_file, warning_msg_prefix)
         # verify labels
         if os.path.isfile(lb_file):
-            lb= self.read_label_from_file(lb_file)
+            lb, segments= self.read_label_from_file(lb_file)
             nl = len(lb)
             if nl:
                 assert lb.shape[1] == 5, f'labels require 5 columns, {lb.shape[1]} columns detected'
@@ -250,7 +250,6 @@ class LoadImagesAndLabelsAndMasks:
             else:
                 is_segment_ragged = True
 
-        # segments= tf.RaggedTensor.from_tensor(segments)
         if segments.shape[0]:
             masks, sorted_index = self.polygons2masks(segments, self.imgsz, self.downsample_ratio, is_segment_ragged)
             labels = tf.gather(labels, sorted_index, axis=0)  # follow masks sorted order
