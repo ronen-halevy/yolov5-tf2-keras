@@ -97,11 +97,12 @@ class TFConv(keras.layers.Layer):
             strides=s,
             padding='SAME' if s == 1 else 'VALID',
             use_bias=not hasattr(w, 'bn'),
-            kernel_initializer='zeros' if w is None else  keras.initializers.Constant(w.conv.weight.permute(2, 3, 1, 0).numpy()),
+            kernel_initializer=tf.keras.initializers.RandomNormal(stddev=0.01) if w is None else  keras.initializers.Constant(w.conv.weight.permute(2, 3, 1, 0).numpy()),
             bias_initializer='zeros' if w is None else 'zeros' if hasattr(w, 'bn') else keras.initializers.Constant(w.conv.bias.numpy()))
         self.conv = conv if s == 1 else keras.Sequential([TFPad(autopad(k, p)), conv])
         # If weights converted from pytorch, BN weights might be fused to adjacent Conv layer, excluding bn attribute
-        self.bn = TFBN(w.bn) if hasattr(w, 'bn') else tf.identity
+        self.bn = TFBN(w.bn ) if hasattr(w, 'bn') else keras.layers.BatchNormalization(
+            momentum=0.03) #tf.identity
         self.act = keras.activations.swish if  w is None else  activations(w.act) if act else tf.identity
 
     def call(self, inputs):
@@ -232,24 +233,25 @@ class TFConv2d(keras.layers.Layer):
         return self.conv(inputs)
 
 
-class TFBottleneckCSP(keras.layers.Layer):
-    # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
-    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5, w=None):
-        # ch_in, ch_out, number, shortcut, groups, expansion
-        super().__init__()
-        c_ = int(c2 * e)  # hidden channels
-        self.cv1 = TFConv(c1, c_, 1, 1, w=w.cv1)
-        self.cv2 = TFConv2d(c1, c_, 1, 1, bias=False, w=w.cv2)
-        self.cv3 = TFConv2d(c_, c_, 1, 1, bias=False, w=w.cv3)
-        self.cv4 = TFConv(2 * c_, c2, 1, 1, w=w.cv4)
-        self.bn = TFBN(w.bn)
-        self.act = lambda x: keras.activations.swish(x)
-        self.m = keras.Sequential([TFBottleneck(c_, c_, shortcut, g, e=1.0, w=w.m[j]) for j in range(n)])
 
-    def call(self, inputs):
-        y1 = self.cv3(self.m(self.cv1(inputs)))
-        y2 = self.cv2(inputs)
-        return self.cv4(self.act(self.bn(tf.concat((y1, y2), axis=3))))
+# class TFBottleneckCSP(keras.layers.Layer):
+#     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
+#     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5, w=None):
+#         # ch_in, ch_out, number, shortcut, groups, expansion
+#         super().__init__()
+#         c_ = int(c2 * e)  # hidden channels
+#         self.cv1 = TFConv(c1, c_, 1, 1, w=w.cv1)
+#         self.cv2 = TFConv2d(c1, c_, 1, 1, bias=False, w=w.cv2)
+#         self.cv3 = TFConv2d(c_, c_, 1, 1, bias=False, w=w.cv3)
+#         self.cv4 = TFConv(2 * c_, c2, 1, 1, w=w.cv4)
+#         self.bn = TFBN(w.bn)
+#         self.act = lambda x: keras.activations.swish(x)
+#         self.m = keras.Sequential([TFBottleneck(c_, c_, shortcut, g, e=1.0, w=w.m[j]) for j in range(n)])
+#
+#     def call(self, inputs):
+#         y1 = self.cv3(self.m(self.cv1(inputs)))
+#         y2 = self.cv2(inputs)
+#         return self.cv4(self.act(self.bn(tf.concat((y1, y2), axis=3))))
 
 
 class TFC3(keras.layers.Layer):
@@ -482,13 +484,28 @@ class TFConcat(keras.layers.Layer):
         return tf.concat(inputs, self.d)
 
 def parse_model(anchors, nc, gd, gw, mlist, ch, ref_model_seq, imgsz, training):  # model_dict, input_channels(3)
+    """
+    Constructs the model by parsing model layers' configuration
+    :param anchors: list[nl[na*2] of anchor sets per layer. int
+    :param nc: nof classes. Needed to determine no -nof outputs, which is used to check for last stage. int
+    :param gd: depth gain. A scaling factor. float
+    :param gw: width gain. A scaling factor. float
+    :param mlist: model layers list. A layer is a list[4] structured: [from,number dup, module name,args]
+    :param ch: list of nof in channels to layers. Initiated as [3], then an entry is appended each layers loop iteration
+    :param ref_model_seq: A trained ptorch ref model seq, used for offline torch to tensorflow format weights conversion
+    :param imgsz: Input img size, Typ [640,640], required by detection module to find grid size as (imgsz/strides). int
+    :param training: For detect layer. Bool. if False (inference & validation), output a processed tensor ready for nms.
+    :return:
+     model - tf.keras Sequential linear stack of layers.
+     savelist: indices list of  layers indices which output is a source to a next but not adjacent (i.e. not -1) layer.
+    """
     LOGGER.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
     # anchors, nc, gd, gw = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple']
     na = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors
     no = na * (nc + 5)  # number of outputs = anchors * (classes + 5)
 
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
-    for i, (f, n, m, args) in enumerate(mlist):  # from, number, module, args
+    for i, (f, n, m, args) in enumerate(mlist):  # mlist-list of layers configs. from, number, module, args
         m_str = m
         # m = eval(m) if isinstance(m, str) else m  # eval strings
         for j, a in enumerate(args):
@@ -501,10 +518,10 @@ def parse_model(anchors, nc, gd, gw, mlist, ch, ref_model_seq, imgsz, training):
         if m_str in [
                 'nn.Conv2d', 'Conv', 'DWConv', 'DWConvTranspose2d', 'Bottleneck', 'SPP', 'SPPF',  'Focus', 'CrossConv',
                 'BottleneckCSP', 'C3', 'C3x']:
-            c1, c2 = ch[f], args[0]
+            c1, c2 = ch[f], args[0] # c1: nof layer's in channels, c2: nof layer's out channels
             c2 = make_divisible(c2 * gw, 8) if c2 != no else c2
 
-            args = [c1, c2, *args[1:]]
+            args = [c1, c2, *args[1:]] # [nch_in, nch_o, args]
             if m_str in ['BottleneckCSP', 'C3', 'C3x']:
                 args.insert(2, n)
                 n = 1
