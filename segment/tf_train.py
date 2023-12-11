@@ -220,27 +220,27 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
         mloss = tf.zeros([4], dtype=tf.float32)  # mean losses
         # train:
-        for batch_idx, (bimages,  btargets, bmasks, paths, shapes) in enumerate(pbar):
+        for batch_idx, (b_images,  b_targets, b_masks, paths, shapes) in enumerate(pbar):
             ni = batch_idx + nb * epoch  # number batches (since train start), used to scheduke debug plots and logs
 
             # Convert targets ragged tensor shape: [b, None,5] to rectangle tensor shape:[nt,imidx+cls+xywh] i.e. [nt,6]
-            new_btargets = []
-            for idx, targets in enumerate(btargets):
-                if targets.shape[0]: # if any target:
+            targets = []
+            for idx, im_targets in enumerate(b_targets):
+                if im_targets.shape[0]: # if any target:
                     im_idx=tf.cast([idx], tf.float32)[None]
-                    im_idx = tf.tile(im_idx, [targets.shape[0],  1])
-                    new_btargets.extend(tf.concat([im_idx, targets.to_tensor()[...,0:]], axis=-1)) # [im_idx,cls, xywh]
+                    im_idx = tf.tile(im_idx, [im_targets.shape[0],  1])
+                    targets.extend(tf.concat([im_idx, im_targets.to_tensor()[...,0:]], axis=-1)) # [im_idx,cls, xywh]
                 else: # if no targets, zeros([0,6]):
-                    targets=tf.zeros([0,6], tf.float32)
-                    new_btargets.extend( targets)
-            new_btargets=tf.stack(new_btargets, axis=0) # list[nt] of shape[6] to tensor shaoe[nt,6]
+                    im_targets=tf.zeros([0,6], tf.float32)
+                    targets.extend( im_targets)
+            targets=tf.stack(targets, axis=0) # list[nt] of shape[6] to tensor shaoe[nt,6]
 
             with (tf.GradientTape() as tape):
                 # model forward, with training=True, outputs a tuple:2 - preds list:3 & proto. Details:
                 # preds shapes: [b,na,gyi,gxi,xywh+conf+cls+masks] where na=3,gy,gx[i=1:3]=size/8,/16,/32,masks:32 words
                 # proto shape: [b,32,size/4,size/4]
-                pred = keras_model(bimages)
-                loss, loss_items = compute_loss(pred, new_btargets, bmasks) # returns: sum(loss),  [lbox, lseg, lobj, lcls]
+                pred = keras_model(b_images)
+                loss, loss_items = compute_loss(pred, targets, b_masks) # returns: sum(loss),  [lbox, lseg, lobj, lcls]
                 #  lbox, lseg, lobj, lcls= tf.split(loss_items, num_or_size_splits=4, axis=-1)
 
             grads = tape.gradient(loss, keras_model.trainable_variables)
@@ -252,12 +252,12 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
             LOGGER.info(('\n' + '%11s' * 7) % ('Epoch', 'box_loss', 'mask_loss', 'obj_loss','cls_loss','Instances', 'Size'))
 
             pbar.set_description(('%11s' * 2 + '%11.4g' * 5) %
-                                 (f'{epoch}/{epochs - 1}',  *mloss.numpy(), new_btargets.shape[0], bimages.shape[1]))
+                                 (f'{epoch}/{epochs - 1}',  *mloss.numpy(), targets.shape[0], b_images.shape[1]))
             #
             # Mosaic plots
             if plots:
                 if ni < 3:
-                    plot_images_and_masks(bimages,  new_btargets, bmasks, paths, save_dir / f'train_batch{ni}.jpg')
+                    plot_images_and_masks(b_images,  targets, b_masks, paths, save_dir / f'train_batch{ni}.jpg')
                 if ni == 10:
                     files = sorted(save_dir.glob('train*.jpg'))
                     logger.log_images(files, 'Mosaics', epoch)
@@ -356,13 +356,16 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
 def parse_opt(known=False):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default=ROOT / 'utilities/keras_weights/yolov5s-seg.tf', help='initial weights path')
     parser.add_argument('--pretrained', action='store_true', help='load model from weights file')
     parser.add_argument('--cfg', type=str, default='../models/segment/yolov5s-seg.yaml', help='model.yaml path')
     shapes=True
     if shapes:
+        parser.add_argument('--weights', type=str, default=ROOT / '/home/ronen/Downloads/best.h5',
+                            help='initial weights path')
         parser.add_argument('--data', type=str, default=ROOT / 'data/shapes-seg.yaml', help='dataset.yaml path')
     else:
+        parser.add_argument('--weights', type=str, default=ROOT / 'utilities/keras_weights/yolov5s-seg.tf',
+                            help='initial weights path')
         parser.add_argument('--data', type=str, default=ROOT / 'data/coco128-seg-short.yaml', help='dataset.yaml path')
 
     parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.scratch-low.yaml', help='hyperparameters path')
