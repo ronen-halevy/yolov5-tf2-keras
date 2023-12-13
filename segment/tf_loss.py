@@ -163,7 +163,10 @@ class ComputeLoss:
                 pwh = (tf.sigmoid(pwh) * 2) ** 2 * anchors[i] # wh coords  adapted according to yolo's formulas:
                 pbox = tf.concat((pxy, pwh), 1)  # predicted box
                 iou = tf.squeeze(bbox_iou(pbox, tbox[i], CIoU=True))  # iou(prediction, target). shpe:[Nti]
+                # print('loss iou', iou)
                 lbox += (1.0 - iou).mean()  # lbox as a mean iou of all candidate layer's objects, shape:[]
+                # if tf.math.is_nan(lbox):
+                #     print("v is NaN")
                 # step 4.4: prepare tobj for lobj. tobj=max(iou) of all
                 iou = tf.maximum(iou, 0).astype(tobj.dtype) # clamp to min 0. (tbd: iou always positive)
                 if self.sort_obj_iou: # False by default
@@ -246,8 +249,9 @@ class ComputeLoss:
         :return:
         tcls: targets classes. list[3] per 3 grid layers. shapes: [[nt0], [nt1], [nt2]], nti: nof targets in layer i
         tbox: x,y,w,h where x,y are offset from grid square corner, for loss calc. list[3] per 3 grid layers. shapes: [[nt0,4],[nt1,4],[nt2,4]]
-        indices: indices targets entries  in [b,a,gyi,gxi] struct. entry is a list[3] of 4-tuple [([nti],[nti],[nti],[nti])i=0:2], nti:ntargets in layer i.
-        anch: selected anchor pairs pre target. list[3] per 3 grid layers.shapes: [[nt0,2], [nt1,2], [nt2,2]]
+        indices: per layer list[3] of 4-tuple entries, pointing to targets' attributes: [b,a,gyi,gxi], each a tensor,
+        shape [nti] nti:ntargets in layer i, b: image index in batch, a: matched anchor index, gyi,gxi: grid coords
+        anch: selected anchor pairs pre target. list[3] per 3 grid layers.shapes: [[nt0,2], [nt1,2], [nt2,2]], float
         tidxs: runnig indices of target in image. list[3] per 3 grid layers.  shapes:  [[nt0], [nt1], [nt2]]
         xywhn: normalized targets bboxes. list[3] per 3 grid layers. shapes: [[nt0,4], [nt1,4], [nt2,4]]
         :rtype:

@@ -58,7 +58,25 @@ for orientation in ExifTags.TAGS.keys():
 # Note: rect, not implemented
 # class LoadTrainData:
 class LoadImagesAndLabelsAndMasks:
+    """
+    Creates dataset entries, consist of images, labels and masks.
+    Main method is __getitem__ which is normally envoked by genetator itterations to produce a dataset entry__
+
+    """
     def __init__(self, path, imgsz, mask_ratio, mosaic,augment, hyp, debug=False):
+        """
+        Produces 3 main lists:
+        image_files - a bi size list of inout file paths, where bi nof input images
+        labels: a bi size image labels arrays, shape [nti, 5], nti nof targets, entry struct: [cls, nxywh]
+        segments: a bi list of nti lists, each holds array segments with shapes: [nsi,2], nsi: nof polygon's vertices
+        :param path: path in files, Images expected at path/images and labels at path/labels, same names but .txt ext
+        :param imgsz: size of model's input. list:2 ints. in yolo5: [640,640]
+        :param mask_ratio: downsample_ratio of mask size wrt input image. default: 4, giving mask size [160,160], int
+        :param mosaic: set mosaic-4 on data. Requires True augment, bool
+        :param augment: set augmentation on data, bool
+        :param hyp: config params for augmentation attributes
+        :param debug: used to select static  mosaic selection for debug only, bool
+        """
         self.im_files = self._make_file(path, IMG_FORMATS)
 
         self.label_files = self._img2label_paths(self.im_files)  # labels
@@ -560,7 +578,26 @@ def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
     return mask # shape: [img_size]
 
 def create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp):
-    dataset =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mask_ratio, mosaic, augment, hyp)
+    """
+    Creates generator dataset.
+    :param data_path:
+    :type data_path:
+    :param batch_size:
+    :type batch_size:
+    :param imgsz:
+    :type imgsz:
+    :param mask_ratio:
+    :type mask_ratio:
+    :param mosaic:
+    :type mosaic:
+    :param augment:
+    :type augment:
+    :param hyp:
+    :type hyp:
+    :return:
+    :rtype:
+    """
+    dataset =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mask_ratio, mosaic, augment, hyp) #iterate by __getitem__
     dataset_loader = tf.data.Dataset.from_generator(dataset.iter,
                                              output_signature=(
                                                  tf.TensorSpec(shape=[imgsz[0], imgsz[1], 3], dtype=tf.float32, ),
@@ -573,9 +610,9 @@ def create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment,
                                              )
 
 
-    dataset_loader=dataset_loader.batch(batch_size)
-    nb = math.ceil( len(dataset)/batch_size)
-    return dataset_loader, tf.concat(dataset.labels, 0), nb
+    dataset_loader=dataset_loader.batch(batch_size) # batch dataset
+    nb = math.ceil( len(dataset)/batch_size) # returns nof batch separately
+    return dataset_loader, tf.concat(dataset.labels, 0), nb # labels tensor - returned for debug
 
 
 if __name__ == '__main__':
