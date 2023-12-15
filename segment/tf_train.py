@@ -210,7 +210,10 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     t0 = time.time()
     nw = max(round(hyp['warmup_epochs'] * nb), 100)  # number of lr warmup iterations, max(3 epochs, 100 iterations)
     warmup_bias_lr=hyp['warmup_bias_lr']
-    optimizer = tf.keras.optimizers.SGD(learning_rate= LRSchedule( hyp['lr0'], hyp['lrf'], nb, nw, warmup_bias_lr, epochs,False), ema_momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
+    optimizer = tf.keras.optimizers.Adam(learning_rate= LRSchedule( hyp['lr0'], hyp['lrf'], nb, nw, warmup_bias_lr, epochs,False),  weight_decay=hyp['weight_decay'])
+
+
+
     for epoch in range(epochs):
         # pbar = enumerate(train_dataset)
         pbar = tqdm(train_loader, total=nb, bar_format=TQDM_BAR_FORMAT)  # progress bar
@@ -232,7 +235,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                     targets.extend( im_targets)
             targets=tf.stack(targets, axis=0) # list[nt] of shape[6] to tensor shaoe[nt,6]
 
-            with tf.GradientTape() as tape:
+            with (tf.GradientTape() as tape):
                 # model forward, with training=True, outputs a tuple:2 - preds list:3 & proto. Details:
                 # preds shapes: [b,na,gyi,gxi,xywh+conf+cls+masks] where na=3,gy,gx[i=1:3]=size/8,/16,/32,masks:32 words
                 # proto shape: [b,32,size/4,size/4]

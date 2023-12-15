@@ -175,7 +175,7 @@ class ComputeLoss:
                 if self.gr < 1: #default 1, otherwise, modify iou
                     iou = (1.0 - self.gr) + self.gr * iou
                 index = tf.transpose([b.astype(tf.int32), a.astype(tf.int32), gj, gi] ) #tobj place idx. shape:[Nti,4]
-                tobj = tf.tensor_scatter_nd_update(tobj,index, iou) # scatter ious: tobj[b,a,gy,gx]=ioui, index shape:[Nt,4], iou shape: [Nt]
+                tobj= tf.tensor_scatter_nd_update(tobj,index, iou) # scatter ious to tensor: tobj[b, a, gj, gi]=iou
 
                 # step 4.5: calc class loss by Binary Cross Entropy. Only in multi class case.
                 if self.nc > 1:  # cls loss (only if multiple classes)
@@ -244,7 +244,7 @@ class ComputeLoss:
         """
         Description: Arrange target dataset as entries for loss computation. Note that nof targets ar enormally expanded
         to match preds in neighbour grid squares, as explained.
-        :param p: preds, for batch & grid sizes vals. list[3],shape:[b,na,gs,4+1+nc+nm],gs=[[80,80],[40,40],[20,20]]
+        :param p: preds, (for batch and grid sizes only). list[3],shape:[b,na,gs,4+1+nc+nm],gs=[[80,80],[40,40],[20,20]]
         :param targets: dataset labels for rearrangemnt . tf.float32 tensor. shape:[nt,6], entry:imidx+cls+xywh
         :return:
         tcls: targets classes. list[3] per 3 grid layers. shapes: [[nt0], [nt1], [nt2]], nti: nof targets in layer i
