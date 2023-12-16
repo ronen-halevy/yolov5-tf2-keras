@@ -409,6 +409,7 @@ class TFDetect(keras.layers.Layer):
                 # concat modified values back together, operate yolo specified sigmoid on confs:
                 y = tf.concat([xy, wh, tf.sigmoid(y[..., 4:5 + self.nc]), y[..., 5 + self.nc:]], -1)
                 z.append(y.reshape([-1, self.na * ny * nx, self.no])) # reshape [bs,ny,nx,na,no]->[bs,nxi*nyi*na,no]
+                x[i] = x[i].transpose([0, 3, 1, 2, 4])
             else: # train output a list of x[i] arrays , i=0:nl-1,  array shape:  [bs,na,ny,nx,no]
                 x[i] = x[i].transpose([0,3,1,2,4]) # from shape [bs,nyi,nxi,na, no] to [bs,na,nyi,nxi,no]
 
