@@ -78,7 +78,7 @@ class ComputeLoss:
     # box_lg, obj_lg, cls_lg - box, obj and class loss gain
     # anchor_t - anchor multiple thresh
 
-    def __init__(self, na,nl,nc,nm,stride,anchors, overlap,fl_gamma, box_lg, obj_lg, cls_lg, anchor_t, autobalance=False, label_smoothing=0.0):
+    def __init__(self, na,nl,nc,nm,stride, grids, anchors, overlap,fl_gamma, box_lg, obj_lg, cls_lg, anchor_t, autobalance=False, label_smoothing=0.0):
         """
         :param na: number of anchors, 3, int
         :param nl: number of grid layers, 3, int
@@ -124,7 +124,9 @@ class ComputeLoss:
         self.obj_lg=obj_lg # obj loss gain
         self.cls_lg=cls_lg # class loss gain
         self.anchor_t=anchor_t
+        self.grids = grids # tf.constant([[80,80], [40,40], [20,20]]) # todo fix this
 
+    # @tf.function
     def __call__(self, preds, targets, masks):
         """
         Calc batch loss
@@ -147,7 +149,8 @@ class ComputeLoss:
         #step 3: build targetst as entries for loss computation in 3 layers. build_targets normally expands nt.
         # tcls, tbox, indices, anchors, tidxs, xywhn are list[3] of tensor shape [Nti] where Nti is an expanded nof
         # targets. `indices` is list[3] of tuple:4 entries each of shape: [Nti].
-        tcls, tbox, indices, anchors, tidxs, xywhn = self.build_targets(p, targets)  # each a list[nl], entry per layer
+        bsize = p[0].shape[0]
+        tcls, tbox, indices, anchors, tidxs, xywhn = self.build_targets(targets, bsize, self.grids)  # each a list[nl], entry per layer
 
         # step 4: loop on 3 layers, calc and accumulate losses:
         for i, pi in enumerate(p):  # loop on 3 layer grids. accumulate 4 losses.
@@ -239,13 +242,15 @@ class ComputeLoss:
         mask_loss =tf.math.reduce_mean(targets_mask_loss / area) # shape: []
         return mask_loss
 
-
-    def build_targets(self, p, targets):
+    # @tf.function
+    def build_targets(self, targets, batch_size, grids):
         """
         Description: Arrange target dataset as entries for loss computation. Note that nof targets ar enormally expanded
         to match preds in neighbour grid squares, as explained.
-        :param p: preds, for batch & grid sizes vals. list[3],shape:[b,na,gs,4+1+nc+nm],gs=[[80,80],[40,40],[20,20]]
         :param targets: dataset labels for rearrangemnt . tf.float32 tensor. shape:[nt,6], entry:imidx+cls+xywh
+        :param batch_size: num of samples in batch. Output is structured accordingly
+        :param grids: sizes of layers grids, calculated as iimage_size/strides, giving [[80,80],[40,40],[20,20]]
+
         :return:
         tcls: targets classes. list[3] per 3 grid layers. shapes: [[nt0], [nt1], [nt2]], nti: nof targets in layer i
         tbox: x,y,w,h where x,y are offset from grid square corner, for loss calc. list[3] per 3 grid layers. shapes: [[nt0,4],[nt1,4],[nt2,4]]
@@ -260,7 +265,6 @@ class ComputeLoss:
         na, nt = self.na, targets.shape[0]  # nof anchors, nof targets in batch
         tcls, tbox, indices, anch, tidxs, xywhn = [], [], [], [], [], [] # init result lists
 
-        gain = tf.ones([8]) # gain scales box coords to grid space coords. shape [8] values: [1,1,gs,gs,gs,gs,1,1]
         # 1a. prepare ai, anchor indices for target in batch. shape:[na,nt], a row per anchor index
         ai = tf.tile(tf.reshape(tf.range(na, dtype= tf.float32),(na, 1)),[1,nt])
 
@@ -268,7 +272,7 @@ class ComputeLoss:
         # objects. ti=[[1,2,1,2,3],[1,2,1,2,3],[1,2,1,2,3]] if overlap, [[1,2,3,4,5],[1,2,3,4,5],[1,2,3,4,5]] otherwise
         if self.overlap:
             ti = [] # target list of np entries. each holds na dups of range(nti), nti: nof objs in ith sample. shape: [na,nti]
-            for idx in range( p[0].shape[0]):# loop on preds in batch,
+            for idx in range( batch_size):# loop on preds in batch,
                 num =tf.math.reduce_sum ( (targets[:, 0:1] == idx).astype(tf.float32)) # nof all targets in image idx
                 ti.append(tf.tile(tf.range(num, dtype=tf.float32 )[None], [na,1]) + 1) #entry shape:(na, nti), +1 for 1 based entries
             #  # concat list.
@@ -294,9 +298,10 @@ class ComputeLoss:
         for i in range(self.nl):
             # 2.a match targets to anchors: scale box to grid scale, then drop targets if box wh to anchor ratio (or its
             # inverse) is above threshold, current thresh is 4.
-            anchors, shape = self.anchors[i], p[i].shape # anchors scale i, p[i].shape:[b,na,gy[i],gx[i],cls+xywh+nc+nm]
+            anchors, shape = self.anchors[i], grids[i] # anchors scale i, p[i].shape:[b,na,gy[i],gx[i],cls+xywh+nc+nm]
             # update gain columns 2,3,4,5 by grid dims gsx[i],gsy[i] where gs are [[80,80],[40,40],[20,20]] for i=0:2
-            gain = tf.tensor_scatter_nd_update(gain, [[2],[3],[4],[5]], tf.constant(shape)[[3, 2, 3, 2]].astype(tf.float32))
+            gain = tf.concat([tf.ones([2]), shape[[1, 0, 1, 0]].astype(tf.float32), tf.ones([2])], axis=0) # [1,1,gy,gx,gy,gx,1,1]
+            # gain = tf.tensor_scatter_nd_update(gain, [[2],[3],[4],[5]], tf.constant(shape)[[1, 0, 1, 0]].astype(tf.float32))
             # scale targets normalized bbox to grid dimensions, to math pred scales:
             t = tf.math.multiply(targets, gain)  # scale targets coordinates to grid scale. shape(3,nt,8)
             if nt:
@@ -325,7 +330,7 @@ class ComputeLoss:
             bc, gxy, gwh, ati = tf.split(t, 4, axis=-1)  # (image, class), grid xy, grid wh, anchors
             (a,tidx), (b, c) =  tf.transpose(ati), tf.transpose(bc)  # anchors, image, class
             gij = (gxy - offsets).astype(tf.int32) # gij=gxy-offs giving left corner of grid square
-            gij = tf.clip_by_value(gij,[0,0], [shape[2] - 1,shape[3] - 1] )
+            gij = tf.clip_by_value(gij,[0,0], [shape[0] - 1,shape[1] - 1] )
             gi, gj = gij.T  # grid indices
             indices.append((b, a, gj, gi)) #  gj,gi target indices to grid squares
             # tbox entry, [xc,yc,w,h] where xc,yc are offsets from grid squares corner:

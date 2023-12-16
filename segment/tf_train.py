@@ -203,7 +203,8 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     nl = anchors.shape[0] # number of layers (output grids)
     na = anchors.shape[1]  # number of anchors
 
-    compute_loss = ComputeLoss(na,nl,nc,nm, stride, anchors, overlap, hyp['fl_gamma'], hyp['box'], hyp['obj'], hyp['cls'], hyp['anchor_t'], autobalance=False)  # init loss class
+    grids = tf.concat([imgsz[0]/tf.constant(stride)[...,None], imgsz[1]/tf.constant(stride)[...,None]], axis=-1)#shape:[3,2]
+    compute_loss = ComputeLoss(na,nl,nc,nm, stride, grids, anchors, overlap, hyp['fl_gamma'], hyp['box'], hyp['obj'], hyp['cls'], hyp['anchor_t'], autobalance=False)  # init loss class
     stopper, stop = EarlyStopping(patience=opt.patience), False
 
     # train_dataset = train_dataset.batch(batch_size)
