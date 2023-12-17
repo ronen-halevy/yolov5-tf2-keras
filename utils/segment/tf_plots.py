@@ -94,7 +94,7 @@ def plot_images_and_masks(images, targets, masks, paths=None, fname='images.jpg'
                     image_masks = np.repeat(image_masks, nl, axis=0)
                     image_masks = np.where(image_masks == index, 1.0, 0.0)
                 else: # either a single object or non-overlapping masks.
-                    image_masks = masks[idx] # take current sample's single mask
+                    image_masks = masks[[idx]] # take current sample's single mask
 
                 im = np.asarray(annotator.im).copy()
                 for j, box in enumerate(boxes.T.tolist()):
