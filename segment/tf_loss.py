@@ -9,7 +9,6 @@ Loss functions
 
 if __name__ == '__main__':
     import os
-    import platform
     import sys
     from pathlib import Path
     FILE = Path(__file__).resolve()
@@ -77,7 +76,6 @@ class ComputeLoss:
     # fl_gamma - focal loss gamma
     # box_lg, obj_lg, cls_lg - box, obj and class loss gain
     # anchor_t - anchor multiple thresh
-
     def __init__(self, na,nl,nc,nm,stride, grids, anchors, overlap,fl_gamma, box_lg, obj_lg, cls_lg, anchor_t, autobalance=False, label_smoothing=0.0):
         """
         :param na: number of anchors, 3, int
@@ -315,7 +313,8 @@ class ComputeLoss:
                 # then add offset to duplicated entries to place those in adjacent grid squares.
                 gxy = t[:, 2:4]  # take bbox centers to determine entry duplication. shape: [nt,2]
                 # dup to left/up if x/y in left/up half & gxy>1 i.e. a none left/up edge with adjacent squares.
-                j, k = ((gxy % 1 < g) & (gxy > 1)).T # bool, shape: j:[nt], k:[nt]
+                j, k = ((tf.math.less(tf.math.floormod(gxy, tf.constant(1.0)) ,tf.constant(g)))
+                        & (tf.math.less(gxy, tf.constant( 1.)))).T # bool, shape: j:[nt], k:[nt]
                 gxi = gain[[2, 3]] - gxy  # inverse: offsets from box center to square's right/down ends. shape: [nt,2]
                 # dup to right/bottom if x/y in r/bottom half & gxi>1 i.e a none r/bottom edge with adjacent squares:
                 l, m = ((gxi % 1 < g) & (gxi > 1)).T # bool, shape: l:[nt], m:[nt]
@@ -363,7 +362,9 @@ def main():
     stride=[8,16,32]
     anchors = (anchors / tf.reshape(stride, (-1, 1, 1))).astype(tf.float32)
     fl_gamma=0
-    loss = ComputeLoss( na,nl,nc,nm,anchors, fl_gamma, box_lg, obj_lg, cls_lg, anchor_t,  autobalance=False)
+    grids = tf.constant([[80,80], [40,40], [20,20]])
+    overlap=True
+    loss = ComputeLoss( na,nl,nc,nm,stride, grids, anchors,overlap, fl_gamma, box_lg, obj_lg, cls_lg, anchor_t,  autobalance=False)
 
     b=2 # batch
 
