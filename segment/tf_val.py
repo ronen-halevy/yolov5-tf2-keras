@@ -69,7 +69,7 @@ def save_one_txt(predn, save_conf, shape, file):
 
 def save_one_json(predn, jdict, path, class_map, pred_masks):
     # Save one JSON result {"image_id": 42, "category_id": 18, "bbox": [258.15, 41.29, 348.26, 243.78], "score": 0.236}
-    # from pycocotools.mask import encode
+    from pycocotools.mask import encode
 
     def single_encode(x):
         rle = encode(np.asarray(x[:, :, None], order="F", dtype="uint8"))[0]
@@ -105,6 +105,7 @@ def process_batch(detections, labels, iouv, pred_masks=None, gt_masks=None, over
         pred_masks: shape: A mask map per each of the N predictions  1-object pixel 0-background, shape:[Np,h/4, w/4]
         gt_masks: shape: [1,h/4, w/4], mask target pixels marked 1:Nt or 0 if pixel is not of a target object
         masks: bool, if True calculate tp_m else tp_box
+        overlap:
 
     Returns:
         correct (array[N, 10]), for 10 IoU levels
@@ -428,33 +429,33 @@ def run(
     mp_bbox, mr_bbox, map50_bbox, map_bbox, mp_mask, mr_mask, map50_mask, map_mask = metrics.mean_results()
 
     # Save JSON
-    if save_json and len(jdict):
-
-        w = Path(weights[0] if isinstance(weights, list) else weights).stem if weights is not None else ''  # weights
-        anno_json = str(Path('../datasets/coco/annotations/instances_val2017.json'))  # annotations
-        pred_json = f'{save_dir}/{w}_predictions.json'  # predictions
-        pred_json=str(ROOT / f'{pred_json}')
-        LOGGER.info(f'\nEvaluating pycocotools mAP... saving {pred_json}...')
-        with open(pred_json, 'w') as f:
-            json.dump(jdict, f)
-
-        try:  # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
-            from pycocotools.coco import COCO
-            from pycocotools.cocoeval import COCOeval
-
-            anno = COCO(anno_json)  # init annotations api
-            pred = anno.loadRes(pred_json)  # init predictions api
-            results = []
-            for eval in COCOeval(anno, pred, 'bbox'), COCOeval(anno, pred, 'segm'):
-                if is_coco:
-                    eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.im_files]  # img ID to evaluate
-                eval.evaluate()
-                eval.accumulate()
-                eval.summarize()
-                results.extend(eval.stats[:2])  # update results (mAP@0.5:0.95, mAP@0.5)
-            map_bbox, map50_bbox, map_mask, map50_mask = results
-        except Exception as e:
-            LOGGER.info(f'pycocotools unable to run: {e}')
+    # if save_json and len(jdict):
+    #
+    #     w = Path(weights[0] if isinstance(weights, list) else weights).stem if weights is not None else ''  # weights
+    #     anno_json = str(Path('../datasets/coco/annotations/instances_val2017.json'))  # annotations
+    #     pred_json = f'{save_dir}/{w}_predictions.json'  # predictions
+    #     pred_json=str(ROOT / f'{pred_json}')
+    #     LOGGER.info(f'\nEvaluating pycocotools mAP... saving {pred_json}...')
+    #     with open(pred_json, 'w') as f:
+    #         json.dump(jdict, f)
+    #
+    #     try:  # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
+    #         from pycocotools.coco import COCO
+    #         from pycocotools.cocoeval import COCOeval
+    #
+    #         anno = COCO(anno_json)  # init annotations api
+    #         pred = anno.loadRes(pred_json)  # init predictions api
+    #         results = []
+    #         for eval in COCOeval(anno, pred, 'bbox'), COCOeval(anno, pred, 'segm'):
+    #             if is_coco:
+    #                 eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.im_files]  # img ID to evaluate
+    #             eval.evaluate()
+    #             eval.accumulate()
+    #             eval.summarize()
+    #             results.extend(eval.stats[:2])  # update results (mAP@0.5:0.95, mAP@0.5)
+    #         map_bbox, map50_bbox, map_mask, map50_mask = results
+    #     except Exception as e:
+    #         LOGGER.info(f'pycocotools unable to run: {e}')
 
     # Return results
     # model.float()  # for training
@@ -534,8 +535,8 @@ def main(opt):
 
 
 if __name__ == "__main__":
-    opt = parse_opt()
-    main(opt)
+    opt_ = parse_opt()
+    main(opt_)
 
 
 

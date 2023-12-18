@@ -222,7 +222,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         for batch_idx, (b_images,  b_targets, b_masks, paths, shapes) in enumerate(pbar):
             ni = batch_idx + nb * epoch  # number batches (since train start), used to scheduke debug plots and logs
 
-            # Convert targets ragged tensor shape: [b, None,5] to rectangle tensor shape:[nt,imidx+cls+xywh] i.e. [nt,6]
+            # Convert targets ragged tensor shape: [b, nti,5] to rectangle by flattaning batch to shape:[nt,imidx+cls+xywh] i.e. [nt,6]
             targets = []
             for idx, im_targets in enumerate(b_targets):
                 if im_targets.shape[0]: # if any target:
@@ -334,7 +334,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # end epoch ----------------------------------------------------------------------------------------------------
     # end training -----------------------------------------------------------------------------------------------------
     # if RANK in {-1, 0}:
-    LOGGER.info(f'\n{epoch - start_epoch + 1} epochs completed in {(time.time() - t0) / 3600:.3f} hours.')
+    LOGGER.info(f'\n{epochs - start_epoch + 1} epochs completed in {(time.time() - t0) / 3600:.3f} hours.')
     val_keras_model.load_weights(best)
     results, _, _ = validate.run(val_loader,
                                     data_dict,
