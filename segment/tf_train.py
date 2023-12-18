@@ -128,7 +128,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     tf_model = TFModel(cfg=cfg,
                        ref_model_seq=None, nc=nc, imgsz=imgsz, training=True)
     # im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else batch_size)
-    im = keras.Input(shape=(None,None, 3), batch_size=None if dynamic else batch_size)
+    im = keras.Input(shape=(640,640, 3), batch_size=None if dynamic else batch_size)
 
     ch=3
 
@@ -136,8 +136,9 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
     val_tf_model = TFModel(cfg=cfg,
                        ref_model_seq=None, nc=nc, imgsz=imgsz, training=False)
+    im_val = keras.Input(shape=(640,640, 3), batch_size=None if dynamic else batch_size)
 
-    val_keras_model = tf.keras.Model(inputs=im, outputs=val_tf_model.predict(im), name='validation')
+    val_keras_model = tf.keras.Model(inputs=im_val, outputs=val_tf_model.predict(im), name='validation')
 
     # extract stride to adjust anchors:
     stride =[imgsz[0] / x.shape[2] for x in keras_model.predict(tf.zeros([1,*imgsz, ch]))[0]]
