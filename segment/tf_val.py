@@ -235,7 +235,15 @@ def run(
                 bindex = tf.cast([idx], tf.float32)[None]
                 bindex = tf.tile(bindex, [targets.shape[0], 1]) # shape: [nt,1] , nt num of example's targets
                 targets_tensor = targets.to_tensor(shape=[None, 5]) # ragged to tensor
-                entry = tf.concat([bindex, targets_tensor], axis=-1)
+                assert targets_tensor.shape[0]== bindex.shape[0], f"Error Message: Assertion failed. {targets_tensor.shape[1]} {bindex.shape[1]}" # debug!!!
+                try:
+                    entry = tf.concat([bindex, targets_tensor], axis=1)
+                except Exception as e:
+                    print('caugt!!!!', e, bindex.shape, targets_tensor.shape)
+                    entry = tf.concat([bindex, targets_tensor], axis=1)
+                    print(entry.shape)
+                    exit(1)
+
                 new_targets.extend(entry)  #[bindex,cls, xywh] shape: [nt,6]
 
         # list size Nt: [bidx, class, bbox4]-> tensor[Nt, 6]
