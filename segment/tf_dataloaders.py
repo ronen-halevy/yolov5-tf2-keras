@@ -89,7 +89,7 @@ class LoadImagesAndLabelsAndMasks:
             image_file, label, segment = self._create_entry(idx, self.im_file, self.label_file)
             self.image_files.append(image_file)
             self.labels.append(label)
-            self.segments.append(segment)
+            self.segments.append(segment) # list[nlabels], entries (not rectangular):list[nti] of [n_v_ij,2], where nti: nobjects in imagei, n_v_ij,2:nvertices in objecrtj of imagei
 
         self.indices =  range(len(self.image_files))
         self.mosaic=mosaic
@@ -247,7 +247,7 @@ class LoadImagesAndLabelsAndMasks:
         else:
             (img, (h0, w0),(h1, w1), pad)  = self.decode_resize(index, padding=True)
             shapes = tf.constant(((float(h0), float(w0)), (h1 / h0, w1 / w0), pad) ) # for mAP rescaling.
-            segments= tf.ragged.constant( self.segments[index])
+            segments= tf.ragged.constant( self.segments[index]) # image_i segments ragged tensor: "shape": [nti,v_ij,2], vij:vertices in obj_j
             padw, padh = pad[0], pad[1]
             # map loops on all segments, scale normalized coordibnates to fit mage scaling:
             segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w1, h1, padw, padh), elems=segments,
@@ -369,7 +369,7 @@ class LoadImagesAndLabelsAndMasks:
         return img
 
     def resample_segments(self, ninterp, seg_coords):
-        seg_coords = seg_coords.to_tensor()
+        seg_coords = seg_coords.to_tensor()[...,0:]
         seg_coords = tf.concat([seg_coords, seg_coords[0:1, :]], axis=0)  # close polygon's loop before interpolation
         x_ref_max = seg_coords.shape[0] - 1 # x max
         x = tf.linspace(0., x_ref_max, ninterp).astype(tf.float32)  # n interpolation points. n points array
@@ -573,7 +573,7 @@ def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
     mask = np.zeros(img_size, dtype=np.uint8)
 
     if is_ragged:
-        polygon=polygon.to_tensor()
+        polygon=polygon.to_tensor()[...,0:]
 
     cv2.fillPoly(mask, np.asarray(polygon), color=1)
     return mask # shape: [img_size]
