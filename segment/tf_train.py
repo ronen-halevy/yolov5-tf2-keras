@@ -265,7 +265,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                     try:
                         plot_images_and_masks(b_images,  targets, b_masks, paths, save_dir / f'train_batch{ni}.jpg')
                     except Exception as e:
-                        print('val caught plot_images_and_masks:', idx, batch_targets)
+                        print('val caught plot_images_and_masks:', idx, b_masks.shape, b_targets.shape)
                         exit(1)
                 if ni == 10:
                     files = sorted(save_dir.glob('train*.jpg'))

@@ -54,8 +54,8 @@ def parse_opt():
     parser.add_argument('--save-period', type=int, default=-1, help='Save checkpoint every x epochs (disabled if < 1)')
     parser.add_argument('--seed', type=int, default=0, help='Global training seed')
     parser.add_argument('--local_rank', type=int, default=-1, help='Automatic DDP Multi-GPU argument, do not modify')
-    parser.add_argument('--augment', action='store_false', help='enable training dataset augmentation')
-    parser.add_argument('--mosaic', action='store_false', help='enable training mosaic dataset. mosaic requires augment enabled (tbd-change that?)')
+    parser.add_argument('--augment', action='store_true', help='enable training dataset augmentation')
+    parser.add_argument('--mosaic', action='store_true', help='enable training mosaic dataset. mosaic requires augment enabled (tbd-change that?)')
 
     # Instance Segmentation Args
     parser.add_argument('--mask-ratio', type=int, default=4, help='Downsample the truth masks to saving memory')

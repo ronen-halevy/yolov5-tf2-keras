@@ -257,7 +257,7 @@ def run(
             try:
                 loss += compute_loss((train_out, protos), batch_targets, batch_masks)[1]  # [lbox, lseg, lobj, lcls]
             except Exception as e:
-                print('val caught:',  idx, batch_targets)
+                print('val caught compute_loss: ',  idx, batch_targets.shape, batch_masks.shape)
                 exit(1)
 
         # NMS

@@ -276,9 +276,9 @@ class ComputeLoss:
                 except Exception as e:
                     # debug todo
                     # print('\nDebug!!!', e, 'targets',targets, 'idx',idx)
-                    msg=f'\nDebug!!!, {e}, targets, {targets}, idx, {idx}'
+                    msg=f'\nDebug!!!, {e}, targets, {targets.shape}, idx, {idx}'
                     print({msg})
-                    print('Exiting!!!!!!!')
+                    # print('Exiting!!!!!!!')
                     raise Exception(e)
 
                 ti.append(tf.tile(tf.range(num, dtype=tf.float32 )[None], [na,1]) + 1) #entry shape:(na, nti), +1 for 1 based entries
