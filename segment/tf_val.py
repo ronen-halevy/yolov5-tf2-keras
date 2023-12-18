@@ -353,8 +353,20 @@ def run(
             if len(plot_masks):
                 plot_masks = tf.concat(plot_masks, axis=0) # concat batch preds' top 15 masks. shape:[Np*15, h/4,w/4]
             plot_images_and_masks(batch_im, batch_targets, batch_masks, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names) # targets
-            plot_images_and_masks(batch_im, arrange_pred, plot_masks, paths,
+            try:
+                plot_images_and_masks(batch_im, batch_targets, batch_masks, paths,
+                                      save_dir / f'val_batch{batch_i}_labels.jpg', names)  # targets
+            except Exception as e:
+                print('val caught: targets')
+                exit(1)
+
+            try:
+                plot_images_and_masks(batch_im, arrange_pred, plot_masks, paths,
                                   save_dir / f'val_batch{batch_i}_pred.jpg', names)  # pred
+
+            except Exception as e:
+                print('val caught: preds')
+                exit(1)
     # end dataset batches loop
     # callbacks.run('on_val_batch_end')
     # Compute metrics.

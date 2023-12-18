@@ -97,8 +97,9 @@ def plot_images_and_masks(images, targets, masks, paths=None, fname='images.jpg'
                     try:
                         image_masks = masks[idx] # take current sample's single mask
                     except Exception as e:
-                        print('\nDebug~~~masks!!!!', e, masks, 'idx', idx, 'exiting!!!')
-                        exit(1)
+                        msg= f'\nDebug~~~masks!!!!, {e}, {masks}, {masks.shape} idx, {idx}, exiting!!!'
+                        print(msg)
+                        raise(e)
 
                 im = np.asarray(annotator.im).copy()
                 for j, box in enumerate(boxes.T.tolist()):

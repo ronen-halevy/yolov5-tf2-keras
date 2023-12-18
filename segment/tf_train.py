@@ -243,7 +243,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                     loss, loss_items = compute_loss(pred, targets,
                                                     b_masks)  # returns: sum(loss),  [lbox, lseg, lobj, lcls]
                 except Exception as e:
-                    print('val caught:', idx, targets)
+                    print('val caught:', batch_idx, b_masks)
                     exit(1)
 
                 #  lbox, lseg, lobj, lcls= tf.split(loss_items, num_or_size_splits=4, axis=-1)
@@ -262,7 +262,11 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
             # Mosaic plots
             if plots:
                 if ni < 3:
-                    plot_images_and_masks(b_images,  targets, b_masks, paths, save_dir / f'train_batch{ni}.jpg')
+                    try:
+                        plot_images_and_masks(b_images,  targets, b_masks, paths, save_dir / f'train_batch{ni}.jpg')
+                    except Exception as e:
+                        print('val caught plot_images_and_masks:', idx, batch_targets)
+                        exit(1)
                 if ni == 10:
                     files = sorted(save_dir.glob('train*.jpg'))
                     logger.log_images(files, 'Mosaics', epoch)
