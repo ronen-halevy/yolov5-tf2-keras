@@ -253,7 +253,12 @@ def run(
 
         with dt[1]:
             # Loss:
-            loss += compute_loss((train_out, protos), batch_targets, batch_masks)[1]  # [lbox, lseg, lobj, lcls]
+            # debug todo
+            try:
+                loss += compute_loss((train_out, protos), batch_targets, batch_masks)[1]  # [lbox, lseg, lobj, lcls]
+            except Exception as e:
+                print('val caught:',  idx, batch_targets)
+                exit(1)
 
         # NMS
         tbboxes = batch_targets[:, 2:] * (width, height, width, height) # scale tbbox

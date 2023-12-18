@@ -274,9 +274,13 @@ class ComputeLoss:
                 try:
                     num =tf.math.reduce_sum ( (targets[:, 0:1] == idx).astype(tf.float32)) # nof all targets in image idx
                 except Exception as e:
-                    print('\nDebug!!!', e, 'targets',targets, 'idx',idx)
+                    # debug todo
+                    # print('\nDebug!!!', e, 'targets',targets, 'idx',idx)
+                    msg=f'\nDebug!!!, {e}, targets, {targets}, idx, {idx}'
+                    print({msg})
                     print('Exiting!!!!!!!')
-                    exit(1)
+                    raise Exception(e)
+
                 ti.append(tf.tile(tf.range(num, dtype=tf.float32 )[None], [na,1]) + 1) #entry shape:(na, nti), +1 for 1 based entries
             #  # concat list.
             ti = tf.concat(ti, axis=1) # shape:(na, nt), nt nof all batch targets.
