@@ -274,7 +274,7 @@ class LoadImagesAndLabelsAndMasks:
             labels = tf.gather(labels, sorted_index, axis=0)  # follow masks sorted order
         else:
             masks = tf.fill([img.shape[0]//self.downsample_ratio, img.shape[1]//self.downsample_ratio], 0).astype(tf.float32)# np.zeros(img_size, dtype=np.uint8)
-
+        masks = tf.reshape(masks, [160,160]) # debug!!!!
         labels = xyxy2xywhn(labels, w=640, h=640, clip=True, eps=1e-3)  # return xywh normalized
         if self.augment:
             img, labels, masks = self.augmentation(img, labels, masks)
