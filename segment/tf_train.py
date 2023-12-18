@@ -41,7 +41,7 @@ from utils.tf_general import (LOGGER, TQDM_BAR_FORMAT,  check_file,
 
 from segment.tb import GenericLogger
 from utils.tf_plots import plot_evolve, plot_labels
-from tf_dataloaders import create_dataloader,LoadImagesAndLabelsAndMasks
+from tf_dataloaders import create_dataloader,LoadImagesAndLabelsAndMasks, create_dataloader_val
 from tf_loss import ComputeLoss
 from utils.segment.tf_metrics import KEYS, fitness
 from utils.segment.tf_plots import plot_images_and_masks, plot_results_with_masks
@@ -142,7 +142,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # extract stride to adjust anchors:
     stride =[imgsz[0] / x.shape[2] for x in keras_model.predict(tf.zeros([1,*imgsz, ch]))[0]]
     # keras_model.compile()
-    print(keras_model.summary())
+    print(val_keras_model.summary())
     # tf_model.run_eagerly = True
     # pred = keras_model(im)  # forward
     best_fitness, start_epoch = 0.0, 0
@@ -188,7 +188,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
     train_loader, labels, nb = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp)
     val_path=train_path # todo debug need a chang2
-    val_loader, _ ,_ = create_dataloader(val_path, batch_size, imgsz, mask_ratio, mosaic=False, augment=False, hyp=hyp)
+    val_loader, _ ,_ = create_dataloader_val(val_path, batch_size, imgsz, mask_ratio, mosaic=False, augment=False, hyp=hyp)
 
     if not resume:
         if plots:

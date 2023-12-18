@@ -176,6 +176,7 @@ class LoadImagesAndLabelsAndMasks:
             lb = np.zeros((0, 5), dtype=np.float32)
         return im_file, lb, segments
 
+
     def _img2label_paths(self, img_paths):
         # Define label paths as a function of image paths
         sa, sb = f'{os.sep}images{os.sep}', f'{os.sep}labels{os.sep}'  # /images/, /labels/ substrings
@@ -308,8 +309,8 @@ class LoadImagesAndLabelsAndMasks:
 
     def scatter_img_to_mosaic(self, dst_img, src_img, dst_xy):
         """
+        Place a n image in the mosaic-4 tensor
         :param dst_img: 2w*2h*3ch 4mosaic dst img
-        :type dst_img:
         :param src_img:
         :type src_img:
         :param dst_xy:
@@ -578,6 +579,44 @@ def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
     return mask # shape: [img_size]
 
 def create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp):
+    """
+    Creates generator dataset.
+    :param data_path:
+    :type data_path:
+    :param batch_size:
+    :type batch_size:
+    :param imgsz:
+    :type imgsz:
+    :param mask_ratio:
+    :type mask_ratio:
+    :param mosaic:
+    :type mosaic:
+    :param augment:
+    :type augment:
+    :param hyp:
+    :type hyp:
+    :return:
+    :rtype:
+    """
+    dataset =  LoadImagesAndLabelsAndMasks(data_path, imgsz, mask_ratio, mosaic, augment, hyp) #iterate by __getitem__
+    dataset_loader = tf.data.Dataset.from_generator(dataset.iter,
+                                             output_signature=(
+                                                 tf.TensorSpec(shape=[imgsz[0], imgsz[1], 3], dtype=tf.float32, ),
+                                                 tf.RaggedTensorSpec(shape=[None, 5], dtype=tf.float32,
+                                                                     ragged_rank=1),
+                                                 tf.TensorSpec(shape=[160, 160], dtype=tf.float32),
+                                                 tf.TensorSpec(shape=(), dtype=tf.string),
+                                                               tf.TensorSpec(shape=[3,2], dtype=tf.float32)
+                                             )
+                                             )
+
+
+    dataset_loader=dataset_loader.batch(batch_size) # batch dataset
+    nb = math.ceil( len(dataset)/batch_size) # returns nof batch separately
+    return dataset_loader, tf.concat(dataset.labels, 0), nb # labels tensor - returned for debug
+
+
+def create_dataloader_val(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp):
     """
     Creates generator dataset.
     :param data_path:
