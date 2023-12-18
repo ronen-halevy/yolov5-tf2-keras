@@ -227,14 +227,14 @@ def run(
     # batch loop on gt dataloader entries. batch size: b
     # shape: batch_targets, shape:[Nt,6], batch_masks, shape:[b,h/4,w/4], paths of img src, shape:[b]
     # shapes: shape0, shape old/shape new, pad:[b,3,2]
-    for batch_i, (batch_im, batch_targets,  batch_masks, paths, shapes) in enumerate(pbar):# dataset batch by batch loop
+    for batch_i, (batch_im, batch_targets,  batch_masks, paths, shapes) in enumerate(dataloader):# dataset batch by batch loop
         # next loop concats bidx to targets: ragged [b,nt,5] -> list size Nt of: [bidx, class, bbox4]
         new_targets = []
         for idx, targets in enumerate(batch_targets): # loop on targets' batch
             if targets.shape[0]: # escape empty targets
                 bindex = tf.cast([idx], tf.float32)[None]
                 bindex = tf.tile(bindex, [targets.shape[0], 1]) # shape: [nt,1] , nt num of example's targets
-                targets_tensor = targets.to_tensor() # ragged to tensor
+                targets_tensor = targets.to_tensor(shape=[None, 5]) # ragged to tensor
                 entry = tf.concat([bindex, targets_tensor], axis=-1)
                 new_targets.extend(entry)  #[bindex,cls, xywh] shape: [nt,6]
 
