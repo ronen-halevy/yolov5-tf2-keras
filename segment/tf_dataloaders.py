@@ -1,51 +1,19 @@
-
-
-# from core.load_tfrecords import parse_tfrecords
-# from core.create_dataset_from_files import create_dataset_from_files
-# from core.load_tfrecords import parse_tfrecords
-
 from utils.tf_general import segments2boxes
-import os
-from PIL import ExifTags, Image, ImageOps
-import contextlib
-import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
-
-
-import contextlib
 import glob
-import hashlib
-import json
 import math
 import os
 import random
-import shutil
-import time
-from itertools import repeat
-from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
-from threading import Thread
-from urllib.parse import urlparse
-
 import numpy as np
-import psutil
-
 import yaml
 from PIL import ExifTags, Image, ImageOps
 import cv2
-from tensorflow.python.ops.numpy_ops import np_config
-np_config.enable_numpy_behavior() # allows running NumPy code, accelerated by TensorFlow
+import contextlib
 
-from tqdm import tqdm
-# from utils.general import LOGGER, colorstr
-
-# from tensorflow.python.ops.numpy_ops import np_config
-#
-# np_config.enable_numpy_behavior()
-from utils.tf_general import segment2box, xyxy2xywhn, segments2boxes_exclude_outbound_points
+from utils.tf_general import xyxy2xywhn, segments2boxes_exclude_outbound_points
 from utils.tf_augmentations import box_candidates
-
 from utils.segment.tf_augmentations import Augmentation
 
 
@@ -84,9 +52,9 @@ class LoadImagesAndLabelsAndMasks:
         self.image_files = []
         self.labels = []
         self.segments = []
-        for idx, (self.im_file, self.label_file) in enumerate(zip(self.im_files, self.label_files)):
+        for idx, (im_file, label_file) in enumerate(zip(self.im_files, self.label_files)):
             # extract class, bbox and segment from label file entry:
-            image_file, label, segment = self._create_entry(idx, self.im_file, self.label_file)
+            image_file, label, segment = self._create_entry(idx, im_file, label_file)
             self.image_files.append(image_file)
             self.labels.append(label)
             self.segments.append(segment) # list[nlabels], entries (not rectangular):list[nti] of [n_v_ij,2], where nti: nobjects in imagei, n_v_ij,2:nvertices in objecrtj of imagei
@@ -108,7 +76,7 @@ class LoadImagesAndLabelsAndMasks:
 
     @property
     def __len__(self):
-        return len(self.image_file)
+        return len(self.image_files)
 
     def exif_size(self, img):
         # Returns exif-corrected PIL size
@@ -118,6 +86,31 @@ class LoadImagesAndLabelsAndMasks:
             if rotation in [6, 8]:  # rotation 270 or 90
                 s = (s[1], s[0])
         return s
+
+    def exif_transpose(image):
+        """
+        Transpose a PIL image accordingly if it has an EXIF Orientation tag.
+        Inplace version of https://github.com/python-pillow/Pillow/blob/master/src/PIL/ImageOps.py exif_transpose()
+
+        :param image: The image to transpose.
+        :return: An image.
+        """
+        exif = image.getexif()
+        orientation = exif.get(0x0112, 1)  # default 1
+        if orientation > 1:
+            method = {
+                2: Image.FLIP_LEFT_RIGHT,
+                3: Image.ROTATE_180,
+                4: Image.FLIP_TOP_BOTTOM,
+                5: Image.TRANSPOSE,
+                6: Image.ROTATE_270,
+                7: Image.TRANSVERSE,
+                8: Image.ROTATE_90}.get(orientation)
+            if method is not None:
+                image = image.transpose(method)
+                del exif[0x0112]
+                image.info['exif'] = exif.tobytes()
+        return image
     def read_label_from_file(self, fname):
         """
         Reads segments label file, retrun class and bbox.
@@ -219,7 +212,7 @@ class LoadImagesAndLabelsAndMasks:
      tf.constant(self.im_files[index]), shapes)
     '''
     def __getitem__(self, index):
-        '''
+        """
         This is the main method for dataset entries construction. It produces a dataset entry according to index
         self.im_files list. if mosaic 4 config is true, the entry is constructed using 3 more randomly selected samples.
 
@@ -232,7 +225,7 @@ class LoadImagesAndLabelsAndMasks:
          masks: shape: [h/4,w/4], pixels' val in ranges 1:numof masks, takes smallest idx if overlap. 0 if non mask.
          files: self.im_files[index] i.e src file path (in mosaic too-only 1 src returned). Tensor, str.
          shapes:  [(h0,w0),(h1/w0,w1/w0),(padh,padw)], all zeros if mosaic. shape:[3,2],float
-        '''
+         """
         mosaic = random.random() < self.mosaic # randmoly select mosaic mode, unless self.mosaic is 0 or 1.
         # why is_segment_ragged needed: in case of mosaic or augment true, all processed segments are interpolated to 1000
         # points. Otherwise, segment is a ragged tensor shape: [nt,(npolygons),2], where npolygons differs, that's why
@@ -252,7 +245,7 @@ class LoadImagesAndLabelsAndMasks:
             # map loops on all segments, scale normalized coordibnates to fit mage scaling:
             segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w1, h1, padw, padh), elems=segments,
                                  fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
-                                                                         ragged_rank=1));
+                                                                         ragged_rank=1))
             labels = self.xywhn2xyxy(self.labels[index], w1, h1, padw, padh)
 
             if self.augment:
@@ -279,8 +272,8 @@ class LoadImagesAndLabelsAndMasks:
         if self.augment:
             img, labels, masks = self.augmentation(img, labels, masks)
             img = img.astype(tf.float32)/255
-        labels= tf.RaggedTensor.from_tensor(labels)
-        return (img, labels,  masks, tf.constant(self.im_files[index]), shapes)
+        labels= tf.RaggedTensor.from_tensor(labels) #[nt,5], nt: nof objects in current image
+        return img, labels,  masks, tf.constant(self.im_files[index]), shapes
 
     def iter(self):
         for i in self.indices :
@@ -353,8 +346,8 @@ class LoadImagesAndLabelsAndMasks:
     def xyn2xy(self, x, w, h, padw=0, padh=0):
         # Convert normalized segments into pixel segments, shape (n,2)
 
-        xcoord = tf.math.multiply(float(w), x[:, 0:1]) + float(padw)  # top left x
-        ycoord = tf.math.multiply(float(h), x[:, 1:2]) + float(padh)  # top left y
+        xcoord = tf.math.multiply(float(w), x[:, 0:1]) + float(padw)  # vertices x coords
+        ycoord = tf.math.multiply(float(h), x[:, 1:2]) + float(padh)  # vertices y coords
         y = tf.concat(
             [xcoord, ycoord], axis=-1, name='stack'
         )
@@ -445,7 +438,7 @@ class LoadImagesAndLabelsAndMasks:
             # Note: before resample, segments are ragged (variable npoints per segment), accordingly tf.map_fn required:
             segments = tf.map_fn(fn=lambda segment: self.resample_segments(ninterp, segment), elems=segments,
                                  fn_output_signature=tf.TensorSpec(shape=[1000, 3], dtype=tf.float32,
-                                                                   ));
+                                                                   ))
             segments = tf.matmul(segments, tf.transpose(M).astype(tf.float32))  # affine transform
             segments = tf.gather(segments, [0, 1], axis=-1)
 
@@ -500,6 +493,8 @@ class LoadImagesAndLabelsAndMasks:
                 x1a, y1a, x2a, y2a = xc, yc, tf.math.minimum(xc + w, w * 2), tf.math.minimum(w * 2, yc + h)  #
                 x1b, y1b, x2b, y2b = 0, 0, tf.math.minimum(w, x2a - x1a), tf.math.minimum(y2a - y1a,
                                                                                           h)  # src image fraction
+            else:
+                raise Exception('Too many images assigned for Mosaic-4')
 
             img4 = self.scatter_img_to_mosaic(dst_img=img4, src_img=img[y1b:y2b, x1b:x2b], dst_xy=(x1a, x2a, y1a, y2a))
             padw = x1a - x1b  # shift of src scattered image from mosaic left end. Used for bbox and segment alignment.
@@ -511,10 +506,10 @@ class LoadImagesAndLabelsAndMasks:
             segments= tf.ragged.constant( self.segments[index])
             y_s = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=segments,
                             fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
-                                                                    ragged_rank=1));
+                                                                    ragged_rank=1))
             # concat 4 mosaic elements together. idx=0 is the first concat element:
             labels4=tf.cond(tf.equal(idx, 0), true_fn= lambda:  y_l, false_fn=lambda : tf.concat([labels4, y_l], axis=0))
-            segments4=tf.cond( segments4==None, true_fn= lambda:  y_s, false_fn=lambda : tf.concat([segments4, y_s], axis=0))
+            segments4=tf.cond( segments4 is None, true_fn= lambda:  y_s, false_fn=lambda : tf.concat([segments4, y_s], axis=0))
 
 
         clipped_bboxes = tf.clip_by_value(
@@ -545,7 +540,7 @@ class LoadImagesAndLabelsAndMasks:
         masks = tf.map_fn(fn=lambda segment:
         tf.py_function(polygons2mask, [is_ragged, size, segment[None], color, downsample_ratio],
                        Tout=tf.float32), elems=segments,
-                          fn_output_signature=tf.TensorSpec(shape=[640, 640], dtype=tf.float32 ));
+                          fn_output_signature=tf.TensorSpec(shape=[640, 640], dtype=tf.float32 ))
         # Merge downsampled masks after sorting by mask size and coloring:
         nh, nw = (size[0] // downsample_ratio, size[1] // downsample_ratio) # downsample masks by 4
         masks = tf.squeeze(tf.image.resize(masks[..., None], [nh, nw]), axis=3) # masks shape: [nl, 160, 160]
@@ -563,9 +558,11 @@ class LoadImagesAndLabelsAndMasks:
 def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
     """
     Args:
-        is_ragged:
-        img_size (tuple): The image size.
-        polygons: [1, npoints, 2]
+        :is_ragged:
+        :img_size (tuple): The image size.
+        :polygon [1, npoints, 2]
+        :color:
+        :downsample_ratio
     """
 
     # polygon = tf.cond(is_ragged, true_fn=lambda:polygon, false_fn=lambda: polygon)
@@ -574,9 +571,11 @@ def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
 
     if is_ragged:
         polygon=polygon.to_tensor()[...,0:]
+    polygon=np.array(polygon)
+    cv2.fillPoly(mask, polygon, color=1)
 
-    cv2.fillPoly(mask, np.asarray(polygon), color=1)
     return mask # shape: [img_size]
+
 
 def create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp):
     """
@@ -612,6 +611,7 @@ def create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment,
 
 
     dataset_loader=dataset_loader.batch(batch_size) # batch dataset
+
     nb = math.ceil( len(dataset)/batch_size) # returns nof batch separately
     return dataset_loader, tf.concat(dataset.labels, 0), nb # labels tensor - returned for debug
 
@@ -656,23 +656,24 @@ def create_dataloader_val(data_path, batch_size, imgsz, mask_ratio, mosaic, augm
 
 if __name__ == '__main__':
 
-    data_path = '/home/ronen/devel/PycharmProjects/shapes-dataset/dataset/train'
-    imgsz = [640, 640]
-    mosaic = True
-    hyp = '../data/hyps/hyp.scratch-low.yaml'
-    with open(hyp, errors='ignore') as f:
-        hyp = yaml.safe_load(f)  # load hyps dict
+    data_path_ = '/home/ronen/devel/PycharmProjects/shapes-dataset/dataset/train'
+    imgsz_ = [640, 640]
+    mosaic_ = True
+    hyp_ = '../data/hyps/hyp.scratch-low.yaml'
+    with open(hyp_, errors='ignore') as f_:
+        hyp__ = yaml.safe_load(f_)  # load hyps dict
 
-    degrees, translate, scale, shear, perspective = hyp['degrees'],hyp['translate'],hyp['scale'],hyp['shear'],hyp['perspective']
-    hgain, sgain, vgain, flipud, fliplr =hyp['hsv_h'],hyp['hsv_s'],hyp['hsv_v'],hyp['flipud'],hyp['fliplr']
-    augment=False
-    batch_size=2
-    mask_ratio = 4
-    dataset_loader = create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, degrees, translate, hyp)
+    degrees_, translate_, scale_, shear_, perspective_ = hyp__['degrees'],hyp__['translate'],hyp__['scale'],hyp__['shear'],hyp__['perspective']
+    hgain, sgain, vgain, flipud, fliplr =hyp__['hsv_h'],hyp__['hsv_s'],hyp__['hsv_v'],hyp__['flipud'],hyp__['fliplr']
+    augment_=False
+    batch_size_=2
+    mask_ratio_ = 4
+    # dataset_loader = create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, degrees, translate, hyp)
+    dataset_loader_ = create_dataloader(data_path_, batch_size_, imgsz_, mask_ratio_, mosaic_, augment_, hyp_)
 
 
-    for img, labels, mask in dataset_loader:
-        pass
+    # for img, labels, mask in dataset_loader:
+    #     pass
 
 
     pass
