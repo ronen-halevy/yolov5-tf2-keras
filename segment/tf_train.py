@@ -239,13 +239,9 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                 # preds shapes: [b,na,gyi,gxi,xywh+conf+cls+masks] where na=3,gy,gx[i=1:3]=size/8,/16,/32,masks:32 words
                 # proto shape: [b,32,size/4,size/4]
                 pred = keras_model(b_images)
-                # debug todo
-                try:
-                    loss, loss_items = compute_loss(pred, targets,
+
+                loss, loss_items = compute_loss(pred, targets,
                                                     b_masks)  # returns: sum(loss),  [lbox, lseg, lobj, lcls]
-                except Exception as e:
-                    print('val caught:', batch_idx, b_masks)
-                    exit(1)
 
                 #  lbox, lseg, lobj, lcls= tf.split(loss_items, num_or_size_splits=4, axis=-1)
 
@@ -263,11 +259,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
             # Mosaic plots
             if plots:
                 if ni < 3:
-                    try:
-                        plot_images_and_masks(b_images,  targets, b_masks, paths, save_dir / f'train_batch{ni}.jpg')
-                    except Exception as e:
-                        print('val caught plot_images_and_masks:', idx, b_masks.shape, b_targets.shape)
-                        exit(1)
+                    plot_images_and_masks(b_images,  targets, b_masks, paths, save_dir / f'train_batch{ni}.jpg')
                 if ni == 10:
                     files = sorted(save_dir.glob('train*.jpg'))
                     logger.log_images(files, 'Mosaics', epoch)

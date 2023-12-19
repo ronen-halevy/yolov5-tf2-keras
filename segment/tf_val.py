@@ -230,23 +230,6 @@ def run(
     # shapes: shape0, shape old/shape new, pad:[b,3,2]
     for batch_i, (batch_im, batch_targets,  batch_masks, paths, shapes) in enumerate(pbar):# dataset batch by batch loop
         # next loop concats bidx to targets: ragged [b,nt,5] -> list size Nt of: [bidx, class, bbox4]
-        new_targets = []
-        # for idx, im_targets in enumerate(batch_targets): # loop on targets' batch
-        #     if targets.shape[0]: # escape empty targets
-        #         bindex = tf.cast([idx], tf.float32)[None]
-        #         bindex = tf.tile(bindex, [targets.shape[0], 1]) # shape: [nt,1] , nt num of example's targets
-        #         targets_tensor = targets.to_tensor(shape=[None, 5]) # ragged to tensor
-        #         assert targets_tensor.shape[0]== bindex.shape[0], f"Error Message: Assertion failed. {targets_tensor.shape[1]} {bindex.shape[1]}" # debug!!!
-        #         try:
-        #             entry = tf.concat([bindex, targets_tensor], axis=1)
-        #         except Exception as e:
-        #             print('caugt!!!!', e, bindex.shape, targets_tensor.shape)
-        #             entry = tf.concat([bindex, targets_tensor], axis=1)
-        #             print(entry.shape)
-        #             exit(1)
-        #
-        #         new_targets.extend(entry)  #[bindex,cls, xywh] shape: [nt,6]
-
 
         targets = []
         for idx, im_targets in enumerate(batch_targets):
@@ -257,10 +240,10 @@ def run(
             else: # if no targets, zeros([0,6]):
                 im_targets=tf.zeros([0,6], tf.float32)
                 targets.extend( im_targets)
-        new_targets=tf.stack(targets, axis=0) # list[nt] of shape[6] to tensor shaoe[nt,6]
+        targets=tf.stack(targets, axis=0) # list[nt] of shape[6] to tensor shaoe[nt,6]
 
         # list size Nt: [bidx, class, bbox4]-> tensor[Nt, 6]
-        batch_targets = tf.stack(new_targets, axis=0) # stack all targets. shape:[Nt,6], Nt sum of all batches targets
+        batch_targets = tf.stack(targets, axis=0) # stack all targets. shape:[Nt,6], Nt sum of all batches targets
 
         nb, height, width, _ = batch_im.shape  # batch size, channels, height, width
 
@@ -277,12 +260,7 @@ def run(
 
         with dt[1]:
             # Loss:
-            # debug todo
-            try:
-                loss += compute_loss((train_out, protos), batch_targets, batch_masks)[1]  # [lbox, lseg, lobj, lcls]
-            except Exception as e:
-                print('val caught compute_loss: ',  idx, batch_targets.shape, batch_masks.shape)
-                exit(1)
+            loss += compute_loss((train_out, protos), batch_targets, batch_masks)[1]  # [lbox, lseg, lobj, lcls]
 
         # NMS
         tbboxes = batch_targets[:, 2:] * (width, height, width, height) # scale tbbox
@@ -377,20 +355,13 @@ def run(
             if len(plot_masks):
                 plot_masks = tf.concat(plot_masks, axis=0) # concat batch preds' top 15 masks. shape:[Np*15, h/4,w/4]
             plot_images_and_masks(batch_im, batch_targets, batch_masks, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names) # targets
-            try:
-                plot_images_and_masks(batch_im, batch_targets, batch_masks, paths,
+            plot_images_and_masks(batch_im, batch_targets, batch_masks, paths,
                                       save_dir / f'val_batch{batch_i}_labels.jpg', names)  # targets
-            except Exception as e:
-                print('val caught: targets')
-                exit(1)
 
-            try:
-                plot_images_and_masks(batch_im, arrange_pred, plot_masks, paths,
+
+            plot_images_and_masks(batch_im, arrange_pred, plot_masks, paths,
                                   save_dir / f'val_batch{batch_i}_pred.jpg', names)  # pred
 
-            except Exception as e:
-                print('val caught: preds')
-                exit(1)
     # end dataset batches loop
     # callbacks.run('on_val_batch_end')
     # Compute metrics.

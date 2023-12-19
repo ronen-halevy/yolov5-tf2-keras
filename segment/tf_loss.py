@@ -271,16 +271,7 @@ class ComputeLoss:
         if self.overlap:
             ti = [] # target list of np entries. each holds na dups of range(nti), nti: nof objs in ith sample. shape: [na,nti]
             for idx in range( batch_size):# loop on preds in batch,
-                try:
-                    num =tf.math.reduce_sum ( (targets[:, 0:1] == idx).astype(tf.float32)) # nof all targets in image idx
-                except Exception as e:
-                    # debug todo
-                    # print('\nDebug!!!', e, 'targets',targets, 'idx',idx)
-                    msg=f'\nDebug!!!, {e}, targets, {targets.shape}, idx, {idx}'
-                    print({msg})
-                    # print('Exiting!!!!!!!')
-                    raise Exception(e)
-
+                num =tf.math.reduce_sum ( (targets[:, 0:1] == idx).astype(tf.float32)) # nof all targets in image idx
                 ti.append(tf.tile(tf.range(num, dtype=tf.float32 )[None], [na,1]) + 1) #entry shape:(na, nti), +1 for 1 based entries
             #  # concat list.
             ti = tf.concat(ti, axis=1) # shape:(na, nt), nt nof all batch targets.
