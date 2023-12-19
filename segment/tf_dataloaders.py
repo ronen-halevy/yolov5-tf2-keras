@@ -533,12 +533,33 @@ class LoadImagesAndLabelsAndMasks:
 
         return img4, labels4, segments4
 
+    def polygons2mask(self, is_ragged, img_size, polygon, color=1, downsample_ratio=1):
+        """
+        Args:
+            :is_ragged:
+            :img_size (tuple): The image size.
+            :polygon [1, npoints, 2]
+            :color:
+            :downsample_ratio
+        """
+
+        # polygon = tf.cond(is_ragged, true_fn=lambda:polygon, false_fn=lambda: polygon)
+        # init allzeros mask
+        mask = np.zeros(img_size, dtype=np.uint8)
+
+        if is_ragged:
+            polygon = polygon.to_tensor()[..., 0:]
+        polygon = np.array(polygon)
+        cv2.fillPoly(mask, polygon, color=1)
+
+        return mask  # shape: [img_size]
+
     def polygons2masks(self, segments, size, downsample_ratio, is_ragged):
         color = 1  # default value 1 is later modifed to a color per mask
         segments = tf.cast(segments, tf.int32)
         #run polygons2mask for all segments by tf.map_fn runs . py_function is needed to call cv2.fillpoly in graph mode
         masks = tf.map_fn(fn=lambda segment:
-        tf.py_function(polygons2mask, [is_ragged, size, segment[None], color, downsample_ratio],
+        tf.py_function(self.polygons2mask, [is_ragged, size, segment[None], color, downsample_ratio],
                        Tout=tf.float32), elems=segments,
                           fn_output_signature=tf.TensorSpec(shape=[640, 640], dtype=tf.float32 ))
         # Merge downsampled masks after sorting by mask size and coloring:
@@ -555,26 +576,7 @@ class LoadImagesAndLabelsAndMasks:
         return masks, sorted_index
 
 
-def polygons2mask(is_ragged, img_size, polygon, color=1, downsample_ratio=1):
-    """
-    Args:
-        :is_ragged:
-        :img_size (tuple): The image size.
-        :polygon [1, npoints, 2]
-        :color:
-        :downsample_ratio
-    """
 
-    # polygon = tf.cond(is_ragged, true_fn=lambda:polygon, false_fn=lambda: polygon)
-    # init allzeros mask
-    mask = np.zeros(img_size, dtype=np.uint8)
-
-    if is_ragged:
-        polygon=polygon.to_tensor()[...,0:]
-    polygon=np.array(polygon)
-    cv2.fillPoly(mask, polygon, color=1)
-
-    return mask # shape: [img_size]
 
 
 def create_dataloader(data_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp):
@@ -676,4 +678,3 @@ if __name__ == '__main__':
     #     pass
 
 
-    pass
