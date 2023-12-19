@@ -128,15 +128,14 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     tf_model = TFModel(cfg=cfg,
                        ref_model_seq=None, nc=nc, imgsz=imgsz, training=True)
     # im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else batch_size)
-    im = keras.Input(shape=(640,640, 3), batch_size=None if dynamic else batch_size)
-
     ch=3
+    im = keras.Input(shape=(imgsz[0],imgsz[1], ch), batch_size=None if dynamic else batch_size)
 
     keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im), name='train')
 
     val_tf_model = TFModel(cfg=cfg,
                        ref_model_seq=None, nc=nc, imgsz=imgsz, training=False)
-    im_val = keras.Input(shape=(640,640, 3), batch_size=None if dynamic else batch_size)
+    im_val = keras.Input(shape=(imgsz[0],imgsz[1], ch), batch_size=None if dynamic else batch_size)
 
     val_keras_model = tf.keras.Model(inputs=im_val, outputs=val_tf_model.predict(im_val), name='validation')
 
@@ -239,7 +238,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                 # preds shapes: [b,na,gyi,gxi,xywh+conf+cls+masks] where na=3,gy,gx[i=1:3]=size/8,/16,/32,masks:32 words
                 # proto shape: [b,32,size/4,size/4]
                 pred = keras_model(b_images)
-
                 loss, loss_items = compute_loss(pred, targets,
                                                     b_masks)  # returns: sum(loss),  [lbox, lseg, lobj, lcls]
 
