@@ -41,7 +41,7 @@ from utils.tf_general import (LOGGER, TQDM_BAR_FORMAT,  check_file,
 
 from segment.tb import GenericLogger
 from utils.tf_plots import plot_evolve, plot_labels
-from tf_dataloaders import create_dataloader, create_dataloader_val
+from tf_dataloaders import DataLoader
 from tf_data_reader import LoadImagesAndLabelsAndMasks
 
 from tf_loss import ComputeLoss
@@ -187,9 +187,10 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         dbg_entries=len(dataset)
         for idx in range(dbg_entries):
             ds=dataset[idx]
-
+    create_dataloader=DataLoader()
     train_loader, labels, nb = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp)
     val_path=train_path # todo debug need a chang2
+    create_dataloader_val=DataLoader()
     val_loader, _ ,_ = create_dataloader_val(val_path, batch_size, imgsz, mask_ratio, mosaic=False, augment=False, hyp=hyp)
 
     if not resume:
