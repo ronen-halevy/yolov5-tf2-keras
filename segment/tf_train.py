@@ -41,7 +41,9 @@ from utils.tf_general import (LOGGER, TQDM_BAR_FORMAT,  check_file,
 
 from segment.tb import GenericLogger
 from utils.tf_plots import plot_evolve, plot_labels
-from tf_dataloaders import create_dataloader,LoadImagesAndLabelsAndMasks, create_dataloader_val
+from tf_dataloaders import create_dataloader, create_dataloader_val
+from tf_data_reader import LoadImagesAndLabelsAndMasks
+
 from tf_loss import ComputeLoss
 from utils.segment.tf_metrics import KEYS, fitness
 from utils.segment.tf_plots import plot_images_and_masks, plot_results_with_masks
