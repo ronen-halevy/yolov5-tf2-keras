@@ -138,6 +138,8 @@ class ComputeLoss:
         """
         # step 1: unpack preds:
         p, proto = preds
+        # p = [preds[0], preds[1], preds[2]]
+        # proto = preds[3]
         bs, nm, mask_h, mask_w = proto.shape  # batch size, number of masks, mask height, mask width
         # step 2: zero 3 loss accumulators:
         lcls = tf.zeros([1])  # class loss
@@ -296,7 +298,7 @@ class ComputeLoss:
         for i in range(self.nl):
             # 2.a match targets to anchors: scale box to grid scale, then drop targets if box wh to anchor ratio (or its
             # inverse) is above threshold, current thresh is 4.
-            anchors, shape = self.anchors[i], grids[i] # anchors scale i, p[i].shape:[b,na,gy[i],gx[i],cls+xywh+nc+nm]
+            anchors, shape = self.anchors[i], grids[i] # anchors scale, shape: [na,2], grids[i]: [gy[i],gx[i]], shape[2]
             # update gain columns 2,3,4,5 by grid dims gsx[i],gsy[i] where gs are [[80,80],[40,40],[20,20]] for i=0:2
             gain = tf.concat([tf.ones([2]), shape[[1, 0, 1, 0]].astype(tf.float32), tf.ones([2])], axis=0) # [1,1,gy,gx,gy,gx,1,1]
             # gain = tf.tensor_scatter_nd_update(gain, [[2],[3],[4],[5]], tf.constant(shape)[[1, 0, 1, 0]].astype(tf.float32))

@@ -141,8 +141,10 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
     val_keras_model = tf.keras.Model(inputs=im_val, outputs=val_tf_model.predict(im_val), name='validation')
 
-    # extract stride to adjust anchors:
-    stride =[imgsz[0] / x.shape[2] for x in keras_model.predict(tf.zeros([1,*imgsz, ch]))[0]]
+    # extract 3 layers grid shapes strides:
+    grids =[ [x.shape[2], x.shape[2] ]for x in keras_model.predict(tf.zeros([1,*imgsz, ch]))[0]]
+    stride = [imgsz[0]/grid[0] for grid in grids]
+    grids = tf.constant(grids)
     # keras_model.compile()
     print(val_keras_model.summary())
     # tf_model.run_eagerly = True
@@ -206,7 +208,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     nl = anchors.shape[0] # number of layers (output grids)
     na = anchors.shape[1]  # number of anchors
 
-    grids = tf.concat([imgsz[0]/tf.constant(stride)[...,None], imgsz[1]/tf.constant(stride)[...,None]], axis=-1)
+    # grids = tf.concat([imgsz[0]/tf.constant(stride)[...,None], imgsz[1]/tf.constant(stride)[...,None]], axis=-1)
     compute_loss = ComputeLoss(na,nl,nc,nm, stride, grids, anchors, overlap, hyp['fl_gamma'], hyp['box'], hyp['obj'], hyp['cls'], hyp['anchor_t'], autobalance=False)  # init loss class
     stopper, stop = EarlyStopping(patience=opt.patience), False
 

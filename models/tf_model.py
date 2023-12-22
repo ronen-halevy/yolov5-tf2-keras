@@ -392,8 +392,11 @@ class TFDetect(keras.layers.Layer):
         Model's detection layaer. exeutes conv2d operator on 3 input layers, and then if Training, reshapes result and return.
         process bbox and
         :param inputs: list[3], shapes:[[bsize,nyi,nxi,128] for i=0:2] where ny0,nx0:80,80, ny1,nx1:40,40, ny2,nx2:20,20
-        :return: if Training, train_out[3] grid layers, shape[[b,na,nyi,nxi,no], for i=0:2], no=4+1+nc+nm
-        else: a tuple(2) of packed process output (ready for nms), shape: [b,25200,no], and train_out detailed above.
+        :return:
+        if Training:
+        list[3] grid layers, with shapes: [[b,na,nyi,nxi,no], for i=0:2], no=4+1+nc+nm
+        else:
+        tuple(2), z: packed output for nms, shape: [b,25200,no], x: list[3] grid layers, with shape detailed above
         """
         z = []  # inference output
         x = []
@@ -430,8 +433,23 @@ class TFSegment(TFDetect):
     def call(self, x):
         """
         Module's segment layer: envokes proto to generate mask protos and  detection layer. Layer's output combines both
-        :param x: list[3] grid layers output. shape:[[bsize,80,80,128],[bsize,40,40,2],[bsize,20,20,128]],tf.float32
-        :return: detect output x if Training and x[0],x[1] otherwise - see detect layer, and mask proto,
+        :param x: list[3], shapes:[[bsize,nyi,nxi,128] for i=0:2] where ny0,nx0:80,80, ny1,nx1:40,40, ny2,nx2:20,20
+        :return:
+        Detect output, with proto addition:
+        if Training:
+            list[3] grid layers, with shapes: [[b,na,nyi,nxi,no], for i=0:2], no=4+1+nc+nm
+            proto, shape: [b,32,160,160], tf.float32
+        else: (validation & inference)
+            tuple(3):
+            x[0]: packed output for nms, shape: [b,25200,no],
+            proto, shape: [b,32,160,160], tf.float32
+            x[1]: list[3] grid layers, with shape detailed above
+
+
+
+        x: detect output.  list[3] grid layers output. shape:[[bsize,80,80,128],[bsize,40,40,2],[bsize,20,20,128]],tf.float32
+        p: mask protos proto. shape: [b,32,160,160]
+        detect output x if Training and x[0],x[1] otherwise - see detect layer, and mask proto,
         shape:[b,32,160,160], tf.float32
         """
         p = self.proto(x[0])
@@ -439,6 +457,8 @@ class TFSegment(TFDetect):
         p = p.transpose( [0, 3, 1, 2])  # from shape(1,160,160,32) to shape(1,32,160,160)
         x = self.detect(self, x)
         return (x, p) if self.training else (x[0], p, x[1])
+
+        # return [x[0], x[1], x[2], p] if self.training else (x[0], p, x[1])
 
 
 class TFProto(keras.layers.Layer):
