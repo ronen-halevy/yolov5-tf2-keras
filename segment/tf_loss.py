@@ -242,7 +242,7 @@ class ComputeLoss:
         mask_loss =tf.math.reduce_mean(targets_mask_loss / area) # shape: []
         return mask_loss
 
-    # @tf.function
+     # @tf.function
     def build_targets(self, targets, batch_size, grids):
         """
         Description: Arrange target dataset as entries for loss computation. Note that nof targets ar enormally expanded
@@ -261,14 +261,14 @@ class ComputeLoss:
         xywhn: normalized targets bboxes. list[3] per 3 grid layers. shapes: [[nt0,4], [nt1,4], [nt2,4]]
         :rtype:
         """
-        # step 1: dup targets na times, needed for loss per anchor. concat targets with ai anchor idx & ti target idx
+        # step 1: dup targets na times, needed for loss per anchor. concat targets with ai (anchor idx) & ti (target idx)
         na, nt = self.na, targets.shape[0]  # nof anchors, nof targets in batch
-        tcls, tbox, indices, anch, tidxs, xywhn = [], [], [], [], [], [] # init result lists
+        # tcls, tbox, indices, anch, tidxs, xywhn = [], [], [], [], [], [] # init result lists
 
-        # 1a. prepare ai, anchor indices for target in batch. shape:[na,nt], a row per anchor index
+        # 1a. prepare ai- anchor indices of target in batch. shape:[na,nt], a row per anchor index
         ai = tf.tile(tf.reshape(tf.range(na, dtype= tf.float32),(na, 1)),[1,nt])
 
-        # 1.b prepare ti: if mask overlap mode, ti runs per image, otherwise, ti is global. Example: 2 images,2 & 3
+        # 1.b prepare ti-target index within image(s): in mask overlap mode, ti runs per image, otherwise, index is global. Example: 2 images,2 & 3
         # objects. ti=[[1,2,1,2,3],[1,2,1,2,3],[1,2,1,2,3]] if overlap, [[1,2,3,4,5],[1,2,3,4,5],[1,2,3,4,5]] otherwise
         if self.overlap:
             ti = [] # target list of np entries. each holds na dups of range(nti), nti: nof objs in ith sample. shape: [na,nti]
@@ -281,7 +281,11 @@ class ComputeLoss:
             ti = tf.tile(tf.range(nt, dtype=tf.float32)[None], [na, 1])#
         # 1.c duplicate targets na times:
         ttpa = tf.tile(targets[None], (na, 1,1)) # tile targets per anchors. shape: [na, nt, 6]
-        targets = tf.concat((ttpa, ai[..., None], ti[..., None]), 2) # concat targets, ai and ti idx. shape:[na, nt,8]
+        # 1.d  concat targets, ai and ti. shape:[na, nt,8]
+        targets = tf.concat((ttpa, ai[..., None], ti[..., None]), 2) #shape:[na, nt, imidx+cls+xywh+ai+ti]
+
+        tcls, tbox, indices, anchors_indices, tidxs, xywhn = [], [], [], [], [], [] # init result lists
+
         g = 0.5  # max pred bbox center bias due to yolo operator-explaination follows
         # offsets to related neighbours:
         off = tf.constant(
@@ -293,20 +297,20 @@ class ComputeLoss:
                 [0, -1],  # j,k,l,m
             ], dtype=tf.float32
            ) * g  # offsets
-        # step 2: loop on layers, append layer's target to lists
 
+        # step 2: loop on layers, append layer's target to lists
         for i in range(self.nl):
             # 2.a match targets to anchors: scale box to grid scale, then drop targets if box wh to anchor ratio (or its
             # inverse) is above threshold, current thresh is 4.
-            anchors, shape = self.anchors[i], grids[i] # anchors scale, shape: [na,2], grids[i]: [gy[i],gx[i]], shape[2]
+            shape = grids[i] # anchors scale, shape: [na,2], grids[i]: [gy[i],gx[i]], shape[2]
             # update gain columns 2,3,4,5 by grid dims gsx[i],gsy[i] where gs are [[80,80],[40,40],[20,20]] for i=0:2
             gain = tf.concat([tf.ones([2]), shape[[1, 0, 1, 0]].astype(tf.float32), tf.ones([2])], axis=0) # [1,1,gy,gx,gy,gx,1,1]
             # gain = tf.tensor_scatter_nd_update(gain, [[2],[3],[4],[5]], tf.constant(shape)[[1, 0, 1, 0]].astype(tf.float32))
             # scale targets normalized bbox to grid dimensions, to math pred scales:
-            t = tf.math.multiply(targets, gain)  # scale targets coordinates to grid scale. shape(3,nt,8)
-            if nt:
+            t = tf.math.multiply(targets, gain)  # scale targets bbox coords to grid scale. shape(3,nt,8)
+            if True: # todo!! nt:
                 #  match targets to anchors by Limit ratio between wh to anchor by to max thresh:
-                r = (t[..., 4:6]/  anchors[:,None,:].astype(tf.float32) )# wh/anchors ratio. shape: [na, nt,2]
+                r = (t[..., 4:6]/   self.anchors[i][:,None,:].astype(tf.float32) )# wh/anchors ratio. shape: [na, nt,2]
                 j = tf.math.reduce_max(tf.math.maximum(r, 1 / r), axis=-1) < self.anchor_t  # compare, bool shape: [na, nt]
                 t = t[j]  # filter out unmatched to anchors targets. shape:  [nt, 8] where nt changed to nt_filtered
                 # 2.b duplicate targets to adjacent grid squares. reason: xy preds transformed to px,y=sigmoid()*2-0.5,
@@ -315,32 +319,67 @@ class ComputeLoss:
                 # then add offset to duplicated entries to place those in adjacent grid squares.
                 gxy = t[:, 2:4]  # take bbox centers to determine entry duplication. shape: [nt,2]
                 # dup to left/up if x/y in left/up half & gxy>1 i.e. a none left/up edge with adjacent squares.
-                j, k = ((tf.math.less(tf.math.floormod(gxy, tf.constant(1.0)) ,tf.constant(g)))
-                        & (tf.math.less(gxy, tf.constant( 1.)))).T # bool, shape: j:[nt], k:[nt]
+
+
+                # left/up cpprds: ((gxy % 1 < g) & (gxy > 1)).T:
+                lu_coords = ((tf.math.less(tf.math.floormod(gxy, tf.constant(1.0)), tf.constant(g)))
+                        & (tf.math.less(gxy, tf.constant(1.)))).T  # bool, shape: j:[nt], k:[nt]
+                j, k = tf.split(
+                    lu_coords, 2, axis=0, num=None, name='split'
+                )
+
                 gxi = gain[[2, 3]] - gxy  # inverse: offsets from box center to square's right/down ends. shape: [nt,2]
-                # dup to right/bottom if x/y in r/bottom half & gxi>1 i.e a none r/bottom edge with adjacent squares:
-                l, m = ((gxi % 1 < g) & (gxi > 1)).T # bool, shape: l:[nt], m:[nt]
+                # right/bottom coords: ((gxi % 1 < g) & (gxi > 1)).T, gxi>1 means none edge, i.e. has neighbors:
+                lu_coords = tf.transpose((gxi % 1 < g) & (gxi > 1)) # bool, shape: l:[nt], m:[nt]
+                l, m = tf.split(
+                    lu_coords, 2, axis=0, num=None, name='split'
+                )
                 # entries dup indications: center (always 1),4 adjacents if true:
-                j = tf.stack((tf.ones_like(j), j, k, l, m)) # shape:[5,nt]
+                j = tf.concat((tf.ones_like(j), j, k, l, m), axis=0) # shape:[5,nt]
                 t = tf.tile(t[None], (5, 1, 1))[j] # tile by 5 and filter valid. shape: [valid dup nt, 8]
                 offsets = (tf.zeros_like(gxy)[None] + off[:, None])[j] # offsets wrt orig square. shpe:[valid dup nt, 2]
             else:
                 t = targets[0] # take a single dummy target entry
                 offsets = 0
 
-            bc, gxy, gwh, ati = tf.split(t, 4, axis=-1)  # (image, class), grid xy, grid wh, anchors
-            (a,tidx), (b, c) =  tf.transpose(ati), tf.transpose(bc)  # anchors, image, class
+            bc, gxy, gwh, ati = tf.split(t, 4, axis=-1)  # split 8 words: (image, class), (grid_xy), (grid_wh), (anch_idx, ti_idx)
+            atidx =  tf.transpose(ati) # anchors, image, class
+            a, tidx=tf.split(
+                atidx, 2, axis=0, num=None, name='split'
+            )
+
+            a = tf.squeeze(a, axis=0)
+            tidx = tf.squeeze(tidx, axis=0)
+
+            bc =  tf.transpose(bc)  # anchors, image, class
+            b,c = tf.split(
+                bc, 2, axis=0, num=None, name='split'
+            )
+            b = tf.squeeze(b, axis=0)
+            c = tf.squeeze(c, axis=0)
+
             gij = (gxy - offsets).astype(tf.int32) # gij=gxy-offs giving left corner of grid square
             gij = tf.clip_by_value(gij,[0,0], [shape[0] - 1,shape[1] - 1] )
-            gi, gj = gij.T  # grid indices
-            indices.append((b, a, gj, gi)) #  gj,gi target indices to grid squares
-            # tbox entry, [xc,yc,w,h] where xc,yc are offsets from grid squares corner:
+            gigj = gij.T  # grid indices
+
+            gi, gj = tf.split(
+                gigj, 2, axis=0, num=None, name='split'
+            )
+            gi = tf.squeeze(gi, axis=0)
+            gj = tf.squeeze(gj, axis=0)
+            indices.append((b, a, gj, gi))
+
             tbox.append(tf.concat((gxy - gij.astype(tf.float32), gwh), 1)) # [x,y,w,h] x,y offsets from  squares corner
-            anch.append(anchors[a.astype(tf.int32)])   # anchor indices. list.size: 3. shape: [nt]
+            anchors_indices.append( self.anchors[i][a.astype(tf.int32)])   # anchor indices. list.size: 3. shape: [nt]
             tcls.append(c)  # class. list size: [nt]
             tidxs.append(tidx) # target indices, i.e. running count of target in image shape: [nt]
             xywhn.append(tf.concat((gxy, gwh), 1) / gain[2:6])  # xywh normalized shape: [nt, 4]
-        return tcls, tbox, indices, anch, tidxs, xywhn # arranged target values, each a list[nl]
+
+
+        return tcls, tbox, indices, anchors_indices, tidxs, xywhn # arranged target values, each a list[nl]
+
+
+    # @tf.function
 
 
 # if __name__ == '__main__':
