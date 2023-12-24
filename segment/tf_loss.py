@@ -155,11 +155,13 @@ class ComputeLoss:
         # step 4: loop on 3 layers, calc and accumulate losses:
         for i, pi in enumerate(p):  # loop on 3 layer grids. accumulate 4 losses.
             # step 4.1: take indices of targets, to fetch matching preds with:
-            b, a, gj, gi = indices[i] # an index consists of 4 tensors shape:[nti]: imgid, matched_anchor, grid location
+            b, a, gj, gi = tf.unstack(indices[i], 4, axis=1) # an index consists of 4 tensors shape:[nti]: imgid, matched_anchor, grid location
+            # ff = tf.split(indices[i], 4)
             tobj = tf.zeros(pi.shape[:4], dtype=pi.dtype)  # init target obj with all 0s shape:[b,na,gy,gx]
             n = b.shape[0]  # number of targets
             if n:
-                # step 4.2: fetch relקvant preds by targets indices. shapes: pxy,pwh:[Nti,2] pcls:[Nti,nc] pmask:[Nti,nm]
+                # step 4.2: extract relקvant preds by targets indices. shapes: pxy,pwh:[Nti,2] pcls:[Nti,nc] pmask:[Nti,nm]
+
                 pxy, pwh, _, pcls, pmask = tf.split(pi[b.astype(tf.int32), a.astype(tf.int32), gj, gi], (2, 2, 1, self.nc, nm), 1)
                 # step 4.3: calc box loss as 1-mean(iou(pbox,tbox))
                 pxy = tf.sigmoid(pxy) * 2 - 0.5 # xy  coords adapted according to yolo's formulas
@@ -284,7 +286,7 @@ class ComputeLoss:
         # 1.d  concat targets, ai and ti. shape:[na, nt,8]
         targets = tf.concat((ttpa, ai[..., None], ti[..., None]), 2) #shape:[na, nt, imidx+cls+xywh+ai+ti]
 
-        tcls, tbox, indices, anchors_indices, tidxs, xywhn = [], [], [], [], [], [] # init result lists
+        tcls, tbox, indices, anchors, tidxs, xywhn = [], [], [], [], [], [] # init result lists
 
         g = 0.5  # max pred bbox center bias due to yolo operator-explaination follows
         # offsets to related neighbours:
@@ -336,47 +338,29 @@ class ComputeLoss:
                 )
                 # entries dup indications: center (always 1),4 adjacents if true:
                 j = tf.concat((tf.ones_like(j), j, k, l, m), axis=0) # shape:[5,nt]
-                t = tf.tile(t[None], (5, 1, 1))[j] # tile by 5 and filter valid. shape: [valid dup nt, 8]
-                offsets = (tf.zeros_like(gxy)[None] + off[:, None])[j] # offsets wrt orig square. shpe:[valid dup nt, 2]
+                t = tf.tile(t[None], (5, 1, 1))# tile by 5 - max duplication of each entry. shape: [5,nt, 8]
+                t = t[j] # filter valid entries' duplicates . shape: [valid dup nt, 8]
+                offsets = tf.zeros_like(gxy)[None] + off[:, None] # broadcast add 5 offsets to square. shape:[5,nt.2]
+                offsets = offsets[j] # filter valid offsets . shape: [valid dup nt, 8]
+
             else:
                 t = targets[0] # take a single dummy target entry
                 offsets = 0
 
-            bc, gxy, gwh, ati = tf.split(t, 4, axis=-1)  # split 8 words: (image, class), (grid_xy), (grid_wh), (anch_idx, ti_idx)
-            atidx =  tf.transpose(ati) # anchors, image, class
-            a, tidx=tf.split(
-                atidx, 2, axis=0, num=None, name='split'
-            )
+            bi, cls, gxy, gwh, ai, tidx = tf.split(t, [1,1,2,2,1,1], axis=-1)  # split 8 words: (image, class), (grid_xy), (grid_wh), (anch_idx, ti_idx)
 
-            a = tf.squeeze(a, axis=0)
-            tidx = tf.squeeze(tidx, axis=0)
-
-            bc =  tf.transpose(bc)  # anchors, image, class
-            b,c = tf.split(
-                bc, 2, axis=0, num=None, name='split'
-            )
-            b = tf.squeeze(b, axis=0)
-            c = tf.squeeze(c, axis=0)
-
-            gij = (gxy - offsets).astype(tf.int32) # gij=gxy-offs giving left corner of grid square
-            gij = tf.clip_by_value(gij,[0,0], [shape[0] - 1,shape[1] - 1] )
-            gigj = gij.T  # grid indices
-
-            gi, gj = tf.split(
-                gigj, 2, axis=0, num=None, name='split'
-            )
-            gi = tf.squeeze(gi, axis=0)
-            gj = tf.squeeze(gj, axis=0)
-            indices.append((b, a, gj, gi))
-
+            gij = (gxy - offsets).astype(tf.int32) # grid's square left cornet gij=gxy-offs giving left corner of grid square
+            gij = tf.clip_by_value(gij,[0,0], [shape[0] - 1,shape[1] - 1] ) # clip grid indices to grid bounderies
+            ind = tf.concat([bi.astype(tf.int32),ai.astype(tf.int32), gij], axis=1)
+            indices.append(ind)
             tbox.append(tf.concat((gxy - gij.astype(tf.float32), gwh), 1)) # [x,y,w,h] x,y offsets from  squares corner
-            anchors_indices.append( self.anchors[i][a.astype(tf.int32)])   # anchor indices. list.size: 3. shape: [nt]
-            tcls.append(c)  # class. list size: [nt]
+            anchors.append( self.anchors[i][tf.squeeze(ai).astype(tf.int32)])   # anchor indices. list.size: 3. shape: [nt]
+            tcls.append(tf.squeeze(cls, axis=1))  # class. list size: [nt]
             tidxs.append(tidx) # target indices, i.e. running count of target in image shape: [nt]
             xywhn.append(tf.concat((gxy, gwh), 1) / gain[2:6])  # xywh normalized shape: [nt, 4]
 
 
-        return tcls, tbox, indices, anchors_indices, tidxs, xywhn # arranged target values, each a list[nl]
+        return tcls, tbox, indices, anchors, tidxs, xywhn # arranged target values, each a list[nl]
 
 
     # @tf.function
