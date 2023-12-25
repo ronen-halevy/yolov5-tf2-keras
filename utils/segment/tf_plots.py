@@ -58,8 +58,8 @@ def plot_images_and_masks(images, targets, masks, paths=None, fname='images.jpg'
             annotator.text((x + 5, y + 5), text=Path(str(paths[i])).name[:40], txt_color=(220, 220, 220))  # filenames
         if targets.shape[0]:
             # targets[:,0] indicates bs id:
-            idx = targets[:, 0] == i# mask targets which belong to current image i. shape: [Nt]
-            ti = targets[idx]  # image targets
+            idx = targets[:, 0] == i# mask targets which belong to image i. shape: [Nt]
+            ti = targets[idx]  # current image's targets
 
             boxes = tf.transpose(xywh2xyxy(ti[:, 2:6]))# shape: [4, nboxes]
             classes = ti[:, 1].astype('int')
@@ -87,14 +87,15 @@ def plot_images_and_masks(images, targets, masks, paths=None, fname='images.jpg'
 
             # Plot masks
             if len(masks):
-                if masks.max() > 1.0:  # mean that masks are overlap, where masks are marked by 1:nt
-                    image_masks = masks[[i]]  # (1, 640, 640) # TODO - check this and rest
-                    nl = len(ti)
-                    index = np.arange(nl).reshape(nl, 1, 1) + 1
-                    image_masks = np.repeat(image_masks, nl, axis=0)
-                    image_masks = np.where(image_masks == index, 1.0, 0.0)
-                else: # either a single object or non-overlapping masks.
-                    image_masks = masks[idx] # take current sample's single mask
+                if masks[i].max() > 1.0:  # masks overlap & more than 1 masks: separate image i mask to mask per target
+                    image_masks = masks[[i]]  # (1, 640, 640)
+                    nl = len(ti) # nof labels
+                    index = np.arange(nl).reshape(nl, 1, 1) + 1 # shape: [nl,1,1]
+                    image_masks = np.repeat(image_masks, nl, axis=0) # dup masks per nof labels, shape: [nl,160,160]
+                    image_masks = np.where(image_masks == index, 1.0, 0.0) # Each mask dup holds a single target mask
+                else: # in non-overlapping mode uses a mask per target, select all image i masks by idx (bool kuat):
+                    image_masks = masks[idx]
+
 
                 im = np.asarray(annotator.im).copy()
                 for j, box in enumerate(boxes.T.tolist()):
