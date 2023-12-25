@@ -9,6 +9,8 @@ import numpy as np
 from PIL import ExifTags, Image, ImageOps
 import cv2
 import contextlib
+import math
+
 
 from utils.tf_general import xyxy2xywhn, segments2boxes_exclude_outbound_points
 from utils.tf_augmentations import box_candidates
