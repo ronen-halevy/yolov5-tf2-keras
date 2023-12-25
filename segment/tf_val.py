@@ -354,9 +354,11 @@ def run(
             arrange_pred = tf.concat(list_preds, axis=0) if list_preds else tf.constant([]) # flattened preds arry (preds indexed by si_tag).shape: [Np,7]
             if len(plot_masks):
                 plot_masks = tf.concat(plot_masks, axis=0) # concat batch preds' top 15 masks. shape:[Np*15, h/4,w/4]
+            # plot targets
             plot_images_and_masks(batch_im, batch_targets, batch_masks, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names) # targets
+            # plot preds
             plot_images_and_masks(batch_im, arrange_pred, plot_masks, paths,
-                                  save_dir / f'val_batch{batch_i}_pred.jpg', names)  # pred
+                                  save_dir / f'val_batch{batch_i}_pred.jpg', names)
 
     # end dataset batches loop
     # callbacks.run('on_val_batch_end')
