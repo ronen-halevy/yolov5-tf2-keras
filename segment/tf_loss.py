@@ -168,10 +168,8 @@ class ComputeLoss:
                 pwh = (tf.sigmoid(pwh) * 2) ** 2 * anchors[i] # wh coords  adapted according to yolo's formulas:
                 pbox = tf.concat((pxy, pwh), 1)  # predicted box
                 iou = tf.squeeze(bbox_iou(pbox, tbox[i], CIoU=True))  # iou(prediction, target). shpe:[Nti]
-                # print('loss iou', iou)
                 lbox += (1.0 - iou).mean()  # lbox as a mean iou of all candidate layer's objects, shape:[]
-                # if tf.math.is_nan(lbox):
-                #     print("v is NaN")
+
                 # step 4.4: prepare tobj for lobj. tobj=max(iou) of all
                 iou = tf.maximum(iou, 0).astype(tobj.dtype) # clamp to min 0. (tbd: iou always positive)
                 if self.sort_obj_iou: # False by default
@@ -249,7 +247,7 @@ class ComputeLoss:
         """
         Description: Arrange target dataset as entries for loss computation. Note that nof targets ar enormally expanded
         to match preds in neighbour grid squares, as explained.
-        :param targets: dataset labels for rearrangemnt . tf.float32 tensor. shape:[nt,6], entry:imidx+cls+xywh
+        :param targets: batch dataset labels. tf.float32 tensor. shape:[nt,6], entry:imidx+cls+xywh
         :param batch_size: num of samples in batch. Output is structured accordingly
         :param grids: sizes of layers grids, calculated as iimage_size/strides, giving [[80,80],[40,40],[20,20]]
 
@@ -310,7 +308,7 @@ class ComputeLoss:
             # gain = tf.tensor_scatter_nd_update(gain, [[2],[3],[4],[5]], tf.constant(shape)[[1, 0, 1, 0]].astype(tf.float32))
             # scale targets normalized bbox to grid dimensions, to math pred scales:
             t = tf.math.multiply(targets, gain)  # scale targets bbox coords to grid scale. shape(3,nt,8)
-            if True: # todo!! nt:
+            if nt:
                 #  match targets to anchors by Limit ratio between wh to anchor by to max thresh:
                 r = (t[..., 4:6]/   self.anchors[i][:,None,:].astype(tf.float32) )# wh/anchors ratio. shape: [na, nt,2]
                 j = tf.math.reduce_max(tf.math.maximum(r, 1 / r), axis=-1) < self.anchor_t  # compare, bool shape: [na, nt]
@@ -326,16 +324,12 @@ class ComputeLoss:
                 # left/up cpprds: ((gxy % 1 < g) & (gxy > 1)).T:
                 lu_coords = ((tf.math.less(tf.math.floormod(gxy, tf.constant(1.0)), tf.constant(g)))
                         & (tf.math.less(gxy, tf.constant(1.)))).T  # bool, shape: j:[nt], k:[nt]
-                j, k = tf.split(
-                    lu_coords, 2, axis=0, num=None, name='split'
-                )
+                j, k = tf.split( lu_coords, 2, axis=0, num=None, name='split')# bool, shape: j:[nt], k:[nt]
 
                 gxi = gain[[2, 3]] - gxy  # inverse: offsets from box center to square's right/down ends. shape: [nt,2]
                 # right/bottom coords: ((gxi % 1 < g) & (gxi > 1)).T, gxi>1 means none edge, i.e. has neighbors:
-                lu_coords = tf.transpose((gxi % 1 < g) & (gxi > 1)) # bool, shape: l:[nt], m:[nt]
-                l, m = tf.split(
-                    lu_coords, 2, axis=0, num=None, name='split'
-                )
+                lu_coords = tf.transpose((gxi % 1 < g) & (gxi > 1))
+                l, m = tf.split(lu_coords, 2, axis=0, num=None, name='split') # bool, shape: l:[nt], m:[nt]
                 # entries dup indications: center (always 1),4 adjacents if true:
                 j = tf.concat((tf.ones_like(j), j, k, l, m), axis=0) # shape:[5,nt]
                 t = tf.tile(t[None], (5, 1, 1))# tile by 5 - max duplication of each entry. shape: [5,nt, 8]
