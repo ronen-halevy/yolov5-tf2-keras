@@ -5,7 +5,7 @@ np_config.enable_numpy_behavior() # allows running NumPy code, accelerated by Te
 
 from utils.tf_general import (xywh2xyxy)
 
-
+@tf.function
 def non_max_suppression(pred, conf_thres,iou_thres,classes=None,agnostic=False, multi_label=False,labels=(), max_det=300, nm = 32):
     nm = 32  # number of masks
     len_xywh = 4 # bbox entry length
