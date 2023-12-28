@@ -229,8 +229,13 @@ def run(
     # shape: batch_targets, shape:[Nt,6], batch_masks, shape:[b,h/4,w/4], paths of img src, shape:[b]
     # shapes: shape0, shape old/shape new, pad:[b,3,2]
     for batch_i, (batch_im, batch_targets,  batch_masks, paths, shapes) in enumerate(pbar):# dataset batch by batch loop
-        # next loop concats bidx to targets: ragged [b,nt,5] -> list size Nt of: [bidx, class, bbox4]
-
+        # if non-overlap=mask per target, tensor is ragged, shape:[b,None,160,160], otherwise shape is [b, 160,160]
+        if not overlap: # convert ragged shape [b,nti,160,160] to tensor [b*nti,160,160]
+            masks = []
+            for idx, im_masks in enumerate(batch_masks):
+                masks.extend(im_masks.to_tensor())
+            batch_masks = tf.stack(masks, axis=0)
+        # Flatten batched targets ragged tensor shape: [b, nti,5] to tensor & concat im_idx, to shape:[nt,imidx+cls+xywh] i.e. [nt,6]
         targets = []
         for idx, im_targets in enumerate(batch_targets):
             if im_targets.shape[0]: # if any target:

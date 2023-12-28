@@ -87,15 +87,15 @@ def plot_images_and_masks(images, targets, masks, paths=None, fname='images.jpg'
 
             # Plot masks
             if len(masks):
-                if masks[i].max() > 1.0:  # masks overlap & more than 1 masks: separate image i mask to mask per target
+                # if overlap multi targets, separate to nti masks. if non-overlap or max 1 target, pick image i masks
+                if tf.reduce_max(masks) > 1.0:  # if masks overlap. if overlap but l.e. 1 masks,  & more than 1 masks: separate image i mask to mask per target
                     image_masks = masks[[i]]  # (1, 640, 640)
-                    nl = len(ti) # nof labels
-                    index = np.arange(nl).reshape(nl, 1, 1) + 1 # shape: [nl,1,1]
-                    image_masks = np.repeat(image_masks, nl, axis=0) # dup masks per nof labels, shape: [nl,160,160]
+                    nti = len(ti) # nof targets in image i
+                    index = np.arange(nti).reshape(nti, 1, 1) + 1 # shape: [nl,1,1]
+                    image_masks = np.repeat(image_masks, nti, axis=0) # dup masks per nof labels, shape: [nl,160,160]
                     image_masks = np.where(image_masks == index, 1.0, 0.0) # Each mask dup holds a single target mask
                 else: # in non-overlapping mode uses a mask per target, select all image i masks by idx (bool kuat):
                     image_masks = masks[idx]
-
 
                 im = np.asarray(annotator.im).copy()
                 for j, box in enumerate(boxes.T.tolist()):

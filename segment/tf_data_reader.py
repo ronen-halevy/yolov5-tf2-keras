@@ -32,7 +32,7 @@ class LoadImagesAndLabelsAndMasks:
 
     """
 
-    def __init__(self, path, imgsz, mask_ratio, mosaic, augment, hyp, debug=False):
+    def __init__(self, path, imgsz, mask_ratio, mosaic, augment, hyp, overlap, debug=False):
         """
         Produces 3 main lists:
         image_files - a bi size list of inout file paths, where bi nof input images
@@ -65,6 +65,7 @@ class LoadImagesAndLabelsAndMasks:
         self.mosaic = mosaic
         self.debug = debug
         self.hyp = hyp
+        self.overlap=overlap
 
         self.mosaic_border = [-imgsz[0] // 2,
                               -imgsz[1] // 2]  # mosaic center placed randimly at [-border, 2 * imgsz + border]
@@ -269,16 +270,20 @@ class LoadImagesAndLabelsAndMasks:
                 is_segment_ragged = True
 
         if segments.shape[0]:
-            masks, sorted_index = self.polygons2masks(segments, self.imgsz, self.downsample_ratio, is_segment_ragged)
-            labels = tf.gather(labels, sorted_index, axis=0)  # follow masks sorted order
-        else:
+            if self.overlap:# produce a single mask per image, with a color per target's mask:
+                masks, sorted_index = self.polygons2masks_overlap(segments, self.imgsz, self.downsample_ratio, is_segment_ragged)
+                labels = tf.gather(labels, sorted_index, axis=0)  # follow masks sorted order
+            else:# produce a mask per each target, mask pixels always 1.
+                masks = self.polygons2masks_non_overlap(segments, self.imgsz, color=1, downsample_ratio=self.downsample_ratio, is_ragged=is_segment_ragged)
+        else: # create zeros mask with shape image.shape/4
             masks = tf.fill([img.shape[0] // self.downsample_ratio, img.shape[1] // self.downsample_ratio], 0).astype(
                 tf.float32)  # np.zeros(img_size, dtype=np.uint8)
-        masks = tf.reshape(masks, [160, 160])  # debug!!!!
+
         labels = xyxy2xywhn(labels, w=640, h=640, clip=True, eps=1e-3)  # return xywh normalized
         if self.augment:
             img, labels, masks = self.augmentation(img, labels, masks)
             img = img.astype(tf.float32) / 255
+        # set ragged labels tensor - support different nof labels per image:
         labels = tf.RaggedTensor.from_tensor(labels)  # [nt,5], nt: nof objects in current image
         return img, labels, masks, tf.constant(self.im_files[index]), shapes
 
@@ -544,7 +549,16 @@ class LoadImagesAndLabelsAndMasks:
 
         return img4, labels4, segments4
 
-    def polygons2mask(self, is_ragged, img_size, polygon, color=1, downsample_ratio=1):
+    def polygons2mask(self, is_ragged, img_size, polygon):
+        """
+        Converts a single polygon to a masks.
+        :param is_ragged: indicates if input segments is a ragged tensor, bool
+        :param img_size: The image size used to produce the mask image.  noramlly (640,640), tuple(2), int
+        :param polygon: input polygon, shape: [1, N_vertices,2], either a ragged tensor or a tensor
+        :return: mask, shape
+
+        :rtype:
+        """
         """
         Args:
             :is_ragged:
@@ -563,15 +577,43 @@ class LoadImagesAndLabelsAndMasks:
         polygon = np.array(polygon)
         cv2.fillPoly(mask, polygon, color=1)
 
-        return mask  # shape: [img_size]
+        return mask  # nparray, uint8, shape: [img_size] typically [640,640]
 
-    def polygons2masks(self, segments, size, downsample_ratio, is_ragged):
+    def polygons2masks_non_overlap(self, segments, img_size, color, downsample_ratio=1, is_ragged=False):
+        """
+        Converts input polygon segments to masks. Produces a mask image per each segment, mask pixels set to '1'.
+        :param segments: either a ragged tensor, shape: [b,None,2], or a tensor [b,ns,2], Latter if images' segments iterpolated to a common size,
+        :param img_size: The image size, used to produce mask image. Normally 640*640, tuple(2), int
+        :param color:
+        :param downsample_ratio: Downsampled masks pattern wrt image. Normally 4, int
+        :param is_ragged: indicates if input segments is a ragged tensor, bool
+        :return: masks: a mask per input segment, ragged tensor of size: [nt, 160,160],  float
+        """
+        segments = tf.cast(segments, tf.int32)
+        masks = tf.map_fn(fn=lambda segment: tf.py_function(self.polygons2mask, [is_ragged, img_size, segment[None]],
+                                                                Tout=tf.float32), elems=segments,
+                              fn_output_signature=tf.TensorSpec(shape=[640, 640], dtype=tf.float32))
+
+        nh, nw = (img_size[0] // downsample_ratio, img_size[1] // downsample_ratio)  # downsample masks by 4
+        masks = tf.squeeze(tf.image.resize(masks[..., None], [nh, nw]), axis=3)  # masks shape: [nl, 160, 160]
+        return tf.RaggedTensor.from_tensor(masks) # ragged!!! fro no overlap!!
+
+    def polygons2masks_overlap(self, segments, size, downsample_ratio, is_ragged):
+        """
+        Converts input polygon segments to masks. Produces a common mask image per all segments, assigning different
+        pixel colors accordingly. Overlapped pixels are assigned to the smallest area mask.
+
+        :param segments: either a ragged tensor, shape: [b,None,2], or a tensor [b,ns,2], Latter if images' segments iterpolated to a common size,
+        :param size: The image size, used to produce mask image. Normally 640*640, tuple(2), int
+        :param downsample_ratio: Downsampled masks pattern wrt image. Normally 4, int
+        :param is_ragged: indicates if input segments is a ragged tensor, bool
+        :return: masks: a single mask image, common to all input segments, segregated by pixel colors. float
+        """
         color = 1  # default value 1 is later modifed to a color per mask
         segments = tf.cast(segments, tf.int32)
         # run polygons2mask for all segments by tf.map_fn runs . py_function is needed to call cv2.fillpoly in graph mode
-        masks = tf.map_fn(fn=lambda segment:
-        tf.py_function(self.polygons2mask, [is_ragged, size, segment[None], color, downsample_ratio],
-                       Tout=tf.float32), elems=segments,
+        masks = tf.map_fn(fn=lambda segment: tf.py_function(self.polygons2mask, [is_ragged, size, segment[None]],
+                                                            Tout=tf.float32), elems=segments,
                           fn_output_signature=tf.TensorSpec(shape=[640, 640], dtype=tf.float32))
         # Merge downsampled masks after sorting by mask size and coloring:
         nh, nw = (size[0] // downsample_ratio, size[1] // downsample_ratio)  # downsample masks by 4
@@ -583,7 +625,5 @@ class LoadImagesAndLabelsAndMasks:
         # color masks by index, before merge: 1 for larger, nl to smallest. 0 remains no mask:
         mask_colors = tf.range(1, len(sorted_index) + 1, dtype=tf.float32)
         masks = tf.math.multiply(masks, tf.reshape(mask_colors, [-1, 1, 1]))  # set color values to mask pixels
-        masks = tf.reduce_max(masks, axis=0)  # merge, if overlap, keep max color value  (i.e. smallest area mask)
+        masks = tf.reduce_max(masks, axis=0)  # merge overlaps: keep max color value  (i.e. smallest area mask)
         return masks, sorted_index
-
-

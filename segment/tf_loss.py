@@ -197,10 +197,18 @@ class ComputeLoss:
                     # In overlap object's mask pixels are colored by a per image index, otherwise index is batch global
                     if self.overlap: # Note: tidxs -1based targets indices in image (if overlap) or global
                         # Convert image's single mask to nti targets masks. Modify pixel vals from object index to 1s:
-                        mask_gti = tf.where(masks[bi.astype(tf.int32)][None] == tf.reshape(tidxs[i][j], [-1, 1, 1]), 1.0, 0.0) # shape: [nti,160,160]
+                        ltidxs = tidxs[i] # current layer tidxs, shape [nt_layer,1]
+                        imtixds = ltidxs[j] # current image tidxs shape [ntcurrent,1], values: 0:ntcurrent
+                        imtixds = tf.reshape(imtixds, [-1, 1, 1]) # shape:  [ntcurrent, 1,1]
+                        immask=masks[bi.astype(tf.int32)][None] # image mask. pix vals: 0:ntcurrent  shape: [1,160,160]
+                        mask_gti = tf.where(immask == imtixds, 1.0, 0.0) # shape: [ntcurrent,160,160]
                     else:
                         # Take current image's objects masks. (no overlap, already mask per object, not colored):
-                        mask_gti = masks[tidxs[i]][j]
+                        # masks=tf.reshape(masks,[-1, masks.shape[2]/4, masks.shape[2]/4])
+                        masks=tf.reshape(masks,[-1, 160,160])
+                        ltidxs = tidxs[i] # current layer tidxs, shape [nt_layer,1]
+                        lmasks = tf.gather(masks, ltidxs.astype(tf.int32))
+                        mask_gti = lmasks[j]
                     # acc image's lseg:
                     lseg += self.single_mask_loss(mask_gti, pmask[j], proto[bi.astype(tf.int32)], mxyxy[j], marea[j])
             # 4.7 obj loss calc:
@@ -350,10 +358,8 @@ class ComputeLoss:
             tbox.append(tf.concat((gxy - gij.astype(tf.float32), gwh), 1)) # [x,y,w,h] x,y offsets from  squares corner
             anchors.append( self.anchors[i][tf.squeeze(ai).astype(tf.int32)])   # anchor indices. list.size: 3. shape: [nt]
             tcls.append(tf.squeeze(cls, axis=1))  # class. list size: [nt]
-            tidxs.append(tidx) # target indices, i.e. running count of target in image shape: [nt]
+            tidxs.append(tf.squeeze(tidx, axis=1)) # target indices - target index in image, shape: [nt,1]=>[nt]
             xywhn.append(tf.concat((gxy, gwh), 1) / gain[2:6])  # xywh normalized shape: [nt, 4]
-
-
         return tcls, tbox, indices, anchors, tidxs, xywhn # arranged target values, each a list[nl]
 
 

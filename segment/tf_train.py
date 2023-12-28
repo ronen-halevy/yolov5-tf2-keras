@@ -113,7 +113,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
     # Config
     plots = not evolve and not opt.noplots  # create plots
-    overlap = not opt.no_overlap
+    overlap =  opt.overlap
     # cuda = device.type != 'cpu'
     # init_seeds(opt.seed + 1 + RANK, deterministic=True)
     # with torch_distributed_zero_first(LOCAL_RANK):
@@ -183,17 +183,17 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # ema = tf.train.ExponentialMovingAverage(decay=0.9999) # todo check ema
     # Resume - TBD todo
     # nc = tf_model.nc  # number of classes
-    debug = False # use for dataloaders step-by-set debug
+    debug = True # use for dataloaders step-by-set debug
     if debug:
-        dataset = LoadImagesAndLabelsAndMasks(train_path, imgsz, mask_ratio, mosaic, augment, hyp)
+        dataset = LoadImagesAndLabelsAndMasks(train_path, imgsz, mask_ratio, mosaic, augment, hyp, overlap)
         dbg_entries=len(dataset)
         for idx in range(dbg_entries):
             ds=dataset[idx]
     create_dataloader=DataLoader()
-    train_loader, labels, nb = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp)
+    train_loader, labels, nb = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp, overlap)
     val_path=train_path # todo debug need a chang2
     create_dataloader_val=DataLoader()
-    val_loader, _ ,_ = create_dataloader_val(val_path, batch_size, imgsz, mask_ratio, mosaic=False, augment=False, hyp=hyp)
+    val_loader, _ ,_ = create_dataloader_val(val_path, batch_size, imgsz, mask_ratio, mosaic=False, augment=False, hyp=hyp, overlap=overlap)
 
     if not resume:
         if plots:
@@ -225,8 +225,14 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         # train:
         for batch_idx, (b_images,  b_targets, b_masks, paths, shapes) in enumerate(pbar):
             ni = batch_idx + nb * epoch  # number batches (since train start), used to scheduke debug plots and logs
+            # if non-overlap=mask per target, tensor is ragged, shape:[b,None,160,160], otherwise shape is [b, 160,160]
+            if not overlap:  # convert ragged shape [b,nti,160,160] to tensor [b*nti,160,160]
+                masks = []
+                for idx,im_masks in enumerate(b_masks):
+                    masks.extend(im_masks.to_tensor())
+                b_masks=tf.stack(masks, axis=0)
 
-            # Convert targets ragged tensor shape: [b, nti,5] to rectangle by flattaning batch to shape:[nt,imidx+cls+xywh] i.e. [nt,6]
+            # Flatten batched targets ragged tensor shape: [b, nti,5] to tensor & concat im_idx, to shape:[nt,imidx+cls+xywh] i.e. [nt,6]
             targets = []
             for idx, im_targets in enumerate(b_targets):
                 if im_targets.shape[0]: # if any target:
