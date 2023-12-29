@@ -154,6 +154,9 @@ def process_batch(detections, labels, iouv, pred_masks=None, gt_masks=None, over
             correct[matches[:, 1].astype(int), i] = True # set correct[Np,10] True in entries pointed by matched preds
     return tf.convert_to_tensor(correct, dtype=tf.bool) # correct[Np,10] tf.bool is True for matching pred entries
 
+def generate_tidx(target, idx):
+    tidx=tf.fill([target.shape[0]] , idx)
+    return tidx
 
 # @smart_inference_mode()
 def run(
@@ -228,30 +231,22 @@ def run(
     # batch loop on gt dataloader entries. batch size: b
     # shape: batch_targets, shape:[Nt,6], batch_masks, shape:[b,h/4,w/4], paths of img src, shape:[b]
     # shapes: shape0, shape old/shape new, pad:[b,3,2]
-    for batch_i, (batch_im, batch_targets,  batch_masks, paths, shapes) in enumerate(pbar):# dataset batch by batch loop
+    for batch_i, (batch_im, b_targets,  batch_masks, paths, shapes) in enumerate(pbar):# dataset batch by batch loop
         # if non-overlap=mask per target, tensor is ragged, shape:[b,None,160,160], otherwise shape is [b, 160,160]
         if not overlap: # convert ragged shape [b,nti,160,160] to tensor [b*nti,160,160]
-            masks = []
-            for idx, im_masks in enumerate(batch_masks):
-                masks.extend(im_masks.to_tensor())
-            batch_masks = tf.stack(masks, axis=0)
+            b_masks = tf.reshape(b_masks.flat_values, [-1, 160, 160])  # flatten ragged tensor shape: [bnt, 160,160]
         # Flatten batched targets ragged tensor shape: [b, nti,5] to tensor & concat im_idx, to shape:[nt,imidx+cls+xywh] i.e. [nt,6]
-        targets = []
-        for idx, im_targets in enumerate(batch_targets):
-            if im_targets.shape[0]: # if any target:
-                im_idx=tf.cast([idx], tf.float32)[None]
-                im_idx = tf.tile(im_idx, [im_targets.shape[0],  1])
-                targets.extend(tf.concat([im_idx, im_targets.to_tensor()[...,0:]], axis=-1)) # [im_idx,cls, xywh]
-            else: # if no targets, zeros([0,6]):
-                im_targets=tf.zeros([0,6], tf.float32)
-                targets.extend( im_targets)
-        targets=tf.stack(targets, axis=0) # list[nt] of shape[6] to tensor shaoe[nt,6]
-
-        # list size Nt: [bidx, class, bbox4]-> tensor[Nt, 6]
-        batch_targets = tf.stack(targets, axis=0) # stack all targets. shape:[Nt,6], Nt sum of all batches targets
+        targets = tf.reshape(b_targets.flat_values, [-1, 5])  # flatten ragged tensor shape: [bnt,5]
+        # generate idx - target indices of related image:
+        idx = tf.range(tf.shape(b_targets)[0])[..., None]  # image indices. shape: [b]
+        # generate tidxs - image index for each target. a ragged tensor, shape: [bi, None], int32
+        tidxs = tf.map_fn(fn=lambda t: generate_tidx(t[0], t[1]), elems=(b_targets, idx),
+                          fn_output_signature=tf.RaggedTensorSpec(shape=[None], dtype=tf.int32))
+        tidxs = tidxs.flat_values# flatten indices. shape [bnt], i.e. nof targets in batch
+        # concat tidxs to target. result shape: [Nt, 6]
+        batch_targets = tf.concat([tidxs[..., None].astype(tf.float32), targets], axis=1)
 
         nb, height, width, _ = batch_im.shape  # batch size, channels, height, width
-
         # inference + profiler:
         with dt[0]:
             # inference outputs 3 objects:

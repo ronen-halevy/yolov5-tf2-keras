@@ -72,6 +72,9 @@ WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 #         l[:, 0] = i  # add target image index for build_targets()
 #     return torch.stack(img, 0), torch.cat(label, 0), path, shapes, batched_masks
 
+def generate_tidx(target, idx):
+    tidx=tf.fill([target.shape[0]] , idx)
+    return tidx
 
 
 def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
@@ -227,22 +230,19 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
             ni = batch_idx + nb * epoch  # number batches (since train start), used to scheduke debug plots and logs
             # if non-overlap=mask per target, tensor is ragged, shape:[b,None,160,160], otherwise shape is [b, 160,160]
             if not overlap:  # convert ragged shape [b,nti,160,160] to tensor [b*nti,160,160]
-                masks = []
-                for idx,im_masks in enumerate(b_masks):
-                    masks.extend(im_masks.to_tensor())
-                b_masks=tf.stack(masks, axis=0)
+                b_masks = tf.reshape(b_masks.flat_values, [-1, 160,160]) # flatten ragged tensor shape: [b, 160,160]
 
             # Flatten batched targets ragged tensor shape: [b, nti,5] to tensor & concat im_idx, to shape:[nt,imidx+cls+xywh] i.e. [nt,6]
-            targets = []
-            for idx, im_targets in enumerate(b_targets):
-                if im_targets.shape[0]: # if any target:
-                    im_idx=tf.cast([idx], tf.float32)[None]
-                    im_idx = tf.tile(im_idx, [im_targets.shape[0],  1])
-                    targets.extend(tf.concat([im_idx, im_targets.to_tensor()[...,0:]], axis=-1)) # [im_idx,cls, xywh]
-                else: # if no targets, zeros([0,6]):
-                    im_targets=tf.zeros([0,6], tf.float32)
-                    targets.extend( im_targets)
-            targets=tf.stack(targets, axis=0) # list[nt] of shape[6] to tensor shaoe[nt,6]
+            targets = tf.reshape(b_targets.flat_values, [-1, 5]) # flatten ragged tensor shape: [bnt,5]
+            # generate idx - target indices of related image:
+            idx = tf.range(tf.shape(b_targets)[0])[..., None] # image indices. shape: [b]
+            # generate tidxs - image index for each target. a ragged tensor, shape: [bi, None], int32
+            tidxs = tf.map_fn(fn=lambda t: generate_tidx(t[0], t[1]), elems=(b_targets, idx),
+                                 fn_output_signature=tf.RaggedTensorSpec(shape=[None], dtype=tf.int32))
+            # flatten indices. shape [bnt], i.e. nof targets in batch
+            tidxs= tidxs.flat_values
+            # concat tidxs to target. result shape: [bnt, 6]
+            targets = tf.concat([tidxs[...,None].astype(tf.float32), targets], axis=1)
 
             with tf.GradientTape() as tape:
                 # model forward, with training=True, outputs a tuple:2 - preds list:3 & proto. Details:
