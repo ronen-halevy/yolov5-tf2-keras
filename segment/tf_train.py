@@ -58,23 +58,11 @@ import segment.tf_val as validate  # for end-of-epoch mAP
 from optimizer import LRSchedule
 
 from tf_config import parse_opt
+from tf_train_utils import flatten_btargets
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
 WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
-
-
-
-# def collate_fn(img,  y_lables, y_segments):
-#     img, label, path, shapes, masks = zip(*batch)  # transposed
-#     batched_masks = torch.cat(masks, 0)
-#     for i, l in enumerate(label):
-#         l[:, 0] = i  # add target image index for build_targets()
-#     return torch.stack(img, 0), torch.cat(label, 0), path, shapes, batched_masks
-
-def generate_tidx(target, idx):
-    tidx=tf.fill([target.shape[0]] , idx)
-    return tidx
 
 
 def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
@@ -233,16 +221,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                 b_masks = tf.reshape(b_masks.flat_values, [-1, 160,160]) # flatten ragged tensor shape: [b, 160,160]
 
             # Flatten batched targets ragged tensor shape: [b, nti,5] to tensor & concat im_idx, to shape:[nt,imidx+cls+xywh] i.e. [nt,6]
-            targets = tf.reshape(b_targets.flat_values, [-1, 5]) # flatten ragged tensor shape: [bnt,5]
-            # generate idx - target indices of related image:
-            idx = tf.range(tf.shape(b_targets)[0])[..., None] # image indices. shape: [b]
-            # generate tidxs - image index for each target. a ragged tensor, shape: [bi, None], int32
-            tidxs = tf.map_fn(fn=lambda t: generate_tidx(t[0], t[1]), elems=(b_targets, idx),
-                                 fn_output_signature=tf.RaggedTensorSpec(shape=[None], dtype=tf.int32))
-            # flatten indices. shape [bnt], i.e. nof targets in batch
-            tidxs= tidxs.flat_values
-            # concat tidxs to target. result shape: [bnt, 6]
-            targets = tf.concat([tidxs[...,None].astype(tf.float32), targets], axis=1)
+            targets = flatten_btargets(b_targets)
 
             with tf.GradientTape() as tape:
                 # model forward, with training=True, outputs a tuple:2 - preds list:3 & proto. Details:

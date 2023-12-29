@@ -55,6 +55,7 @@ from utils.segment.tf_metrics import Metrics, ap_per_class_box_and_mask
 from utils.segment.tf_plots import plot_images_and_masks
 # from utils.torch_utils import de_parallel, select_device, smart_inference_mode
 from .nms import non_max_suppression
+from tf_train_utils import flatten_btargets
 
 
 def save_one_txt(predn, save_conf, shape, file):
@@ -154,9 +155,6 @@ def process_batch(detections, labels, iouv, pred_masks=None, gt_masks=None, over
             correct[matches[:, 1].astype(int), i] = True # set correct[Np,10] True in entries pointed by matched preds
     return tf.convert_to_tensor(correct, dtype=tf.bool) # correct[Np,10] tf.bool is True for matching pred entries
 
-def generate_tidx(target, idx):
-    tidx=tf.fill([target.shape[0]] , idx)
-    return tidx
 
 # @smart_inference_mode()
 def run(
@@ -236,15 +234,7 @@ def run(
         if not overlap: # convert ragged shape [b,nti,160,160] to tensor [b*nti,160,160]
             b_masks = tf.reshape(b_masks.flat_values, [-1, 160, 160])  # flatten ragged tensor shape: [bnt, 160,160]
         # Flatten batched targets ragged tensor shape: [b, nti,5] to tensor & concat im_idx, to shape:[nt,imidx+cls+xywh] i.e. [nt,6]
-        targets = tf.reshape(b_targets.flat_values, [-1, 5])  # flatten ragged tensor shape: [bnt,5]
-        # generate idx - target indices of related image:
-        idx = tf.range(tf.shape(b_targets)[0])[..., None]  # image indices. shape: [b]
-        # generate tidxs - image index for each target. a ragged tensor, shape: [bi, None], int32
-        tidxs = tf.map_fn(fn=lambda t: generate_tidx(t[0], t[1]), elems=(b_targets, idx),
-                          fn_output_signature=tf.RaggedTensorSpec(shape=[None], dtype=tf.int32))
-        tidxs = tidxs.flat_values# flatten indices. shape [bnt], i.e. nof targets in batch
-        # concat tidxs to target. result shape: [Nt, 6]
-        batch_targets = tf.concat([tidxs[..., None].astype(tf.float32), targets], axis=1)
+        batch_targets = flatten_btargets(b_targets)
 
         nb, height, width, _ = batch_im.shape  # batch size, channels, height, width
         # inference + profiler:
