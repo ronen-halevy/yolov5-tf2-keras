@@ -243,9 +243,9 @@ class ComputeLoss:
         pred_mask = tf.reshape(pmask @ tf.reshape(proto, (self.nm, -1)),[ -1, *proto.shape[1:]])
         # 2. Calc per pixels loss by BinaryCrossentropy:
         bse = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction='none') # setup BinaryCrossentropy
-        loss=bse(gt_mask[...,None], pred_mask[...,None]) # pixels mask loss. shape: [nti,160,160]
+        mloss=bse(gt_mask[...,None], pred_mask[...,None]) # pixels mask loss. shape: [nti,160,160]
         # 3. Calc per object mask loss as a mean of object's pixels loss:
-        targets_mask_loss = tf.math.reduce_mean(crop_mask(loss, xyxy), axis=[1, 2]) # shape[nti]
+        targets_mask_loss = tf.math.reduce_mean(crop_mask(mloss, xyxy), axis=[1, 2]) # shape[nti]
         # 4. Calc mask loss as a mean of objects' mask losses, each divided by its area to equalize effect on mean:
         mask_loss =tf.math.reduce_mean(targets_mask_loss / area) # shape: []
         return mask_loss

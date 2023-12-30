@@ -5,20 +5,20 @@ import tensorflow as tf
 
 def crop_mask(masks, boxes):
     """
-    "Crop" predicted masks by zeroing out everything not in the predicted bbox.
-    Vectorized by Chong (thanks Chong).
-
-    Args:
-        - masks should be a size [n, h, w] tensor of masks
-        - boxes should be a size [n, 4] tensor of bbox coords in relative point form
+    Crop masks pixels to within bboxes regions.
+    :param masks: masks , value range: [0,1], shape:[nt,160,160], tf.float32. Note: actually mask pixels loss values
+    :param boxes: target bboxes, value range: [0,160], shape:[nt4], tf.float32
+    :return:
+    :rtype: cropped masks, value range: [0,1], shape:[nt,160,160], tf.float32
     """
 
     n, h, w = masks.shape
-    x1, y1, x2, y2 = tf.split(boxes[:, :, None], num_or_size_splits=4, axis=1)  # x1 shape(n,1,1)
-    r = tf.range(w, dtype=x1.dtype)[None, None, :]  # rows shape(1,1,w)
-    c = tf.range(h, dtype=x1.dtype)[None, :, None]  # cols shape(1,h,1)
-    crop =(tf.cast((r >= x1), dtype=tf.float32) * tf.cast((r < x2), dtype=tf.float32) * tf.cast((c >= y1), dtype=tf.float32) * tf.cast((c < y2), dtype=tf.float32))
-    return masks * crop # ((r >= x1) * (r < x2) * (c >= y1) * (c < y2))
+    x1, y1, x2, y2 = tf.split(boxes[:, :, None], num_or_size_splits=4, axis=1)  # coords of n bbox , shapes (n,1,1)
+    r = tf.range(w, dtype=x1.dtype)[None, None, :]  # mask rows shape(b,1,w)
+    c = tf.range(h, dtype=x1.dtype)[None, :, None]  # mask cols shape(b,h,1)
+    crop =(r >= x1).astype(tf.float32) * (r < x2).astype(tf.float32) * (c >= y1).astype(tf.float32) * (c < y2).astype(tf.float32) # shape [nt,160,160]
+    cropped_masks = masks * crop  # zero pixels outside bounderies.  ((r >= x1) * (r < x2) * (c >= y1) * (c < y2))
+    return cropped_masks # shape: [nt,160,160], tf.float32
 
 def process_mask_upsample(protos, masks_in, bboxes, shape):
     """

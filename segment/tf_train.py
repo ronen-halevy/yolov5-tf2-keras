@@ -52,6 +52,10 @@ from utils.tf_utils import (EarlyStopping)
 
 import tensorflow as tf
 from tensorflow import keras
+#  for deterministic keras model - debug usage:
+# tf.keras.utils.set_random_seed(1)
+# tf.config.experimental.enable_op_determinism()
+
 import numpy as np
 from models.tf_model import TFModel
 import segment.tf_val as validate  # for end-of-epoch mAP
@@ -66,9 +70,9 @@ WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 
 
 def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
-    save_dir, epochs, batch_size, pretrained, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze, mask_ratio, augment, mosaic = \
+    save_dir, epochs, batch_size, pretrained, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze, mask_ratio, augment, mosaic, debug = \
         Path(opt.save_dir), opt.epochs, opt.batch_size, opt.pretrained, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
-        opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze, opt.mask_ratio, opt.augment, opt.mosaic
+        opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze, opt.mask_ratio, opt.augment, opt.mosaic, opt.debug
     # callbacks.run('on_pretrain_routine_start')
     # todo to config:
     imgsz = [640, 640] # Todo ronen
@@ -174,7 +178,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # ema = tf.train.ExponentialMovingAverage(decay=0.9999) # todo check ema
     # Resume - TBD todo
     # nc = tf_model.nc  # number of classes
-    debug = True # use for dataloaders step-by-set debug
     if debug:
         dataset = LoadImagesAndLabelsAndMasks(train_path, imgsz, mask_ratio, mosaic, augment, hyp, overlap)
         dbg_entries=len(dataset)

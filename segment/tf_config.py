@@ -59,7 +59,8 @@ def parse_opt():
 
     # Instance Segmentation Args
     parser.add_argument('--mask-ratio', type=int, default=4, help='Downsample the truth masks to saving memory')
-    parser.add_argument('--overlap', action='store_false', help='Overlap masks train faster at slightly less mAP')
+    parser.add_argument('--overlap', action='store_false', help='Overlap masks (train faster at slightly less mAP-tbd)')
+    parser.add_argument('--debug', action='store_true', help='permits some step-by-step on create dataset')
 
     return parser.parse_args()
 
