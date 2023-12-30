@@ -166,8 +166,8 @@ class ComputeLoss:
                 # step 4.3: calc box loss as 1-mean(iou(pbox,tbox))
                 pxy = tf.sigmoid(pxy) * 2 - 0.5 # xy  coords adapted according to yolo's formulas
                 pwh = (tf.sigmoid(pwh) * 2) ** 2 * anchors[i] # wh coords  adapted according to yolo's formulas:
-                pbox = tf.concat((pxy, pwh), 1)  # predicted box
-                iou = tf.squeeze(bbox_iou(pbox, tbox[i], CIoU=True))  # iou(prediction, target). shpe:[Nti]
+                pbox = tf.concat((pxy.astype(tf.half), pwh.astype(tf.half)), 1)  # predicted box
+                iou = tf.squeeze(bbox_iou(pbox, tbox[i].astype(tf.half), CIoU=True))  # iou(prediction, target). shpe:[Nti]
                 lbox += (1.0 - iou).mean()  # lbox as a mean iou of all candidate layer's objects, shape:[]
 
                 # step 4.4: prepare tobj for lobj. tobj=max(iou) of all

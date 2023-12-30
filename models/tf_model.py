@@ -25,6 +25,7 @@ import numpy as np
 import tensorflow as tf
 
 from tensorflow import keras
+
 from tensorflow.python.ops.numpy_ops import np_config
 np_config.enable_numpy_behavior() # allows running NumPy code, accelerated by TensorFlow
 from keras import mixed_precision
@@ -410,7 +411,7 @@ class TFDetect(keras.layers.Layer):
                 xy = (tf.sigmoid(y[..., 0:2]) * 2 - 0.5 + self.grid[i]) / [nx, ny] # xy bbox formula, normalized  to 0-1
                 wh = (2*tf.sigmoid(y[..., 2:4])) ** 2 * self.anchor_grid[i]/[ny,ny] # fwh bbox formula. noremalized.
                 # concat modified values back together, operate yolo specified sigmoid on confs:
-                y = tf.concat([xy, wh, tf.sigmoid(y[..., 4:5 + self.nc]), y[..., 5 + self.nc:]], -1)
+                y = tf.concat([xy, wh, tf.sigmoid(y[..., 4:5 + self.nc]).astype(tf.float32), y[..., 5 + self.nc:].astype(tf.float32)], -1)
                 z.append(y.reshape([-1, self.na * ny * nx, self.no])) # reshape [bs,ny,nx,na,no]->[bs,nxi*nyi*na,no]
                 x[i] = x[i].transpose([0, 3, 1, 2, 4])
             else: # train output a list of x[i] arrays , i=0:nl-1,  array shape:  [bs,na,ny,nx,no]
@@ -587,6 +588,8 @@ class TFModel:
     def __init__(self, cfg='', ch=3, nc=None, ref_model_seq=None, imgsz=(640, 640), training=True):  # model, channels, classes
         # todo - check mixed precision. looks slow on amd cpu
         # mixed_precision.set_global_policy('mixed_float16')
+        mixed_precision.set_global_policy('mixed_float16')
+
         super().__init__()
         if isinstance(cfg, dict):
             self.yaml = cfg  # model dict
