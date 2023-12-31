@@ -212,11 +212,11 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     warmup_bias_lr=hyp['warmup_bias_lr']
     optimizer = tf.keras.optimizers.SGD(learning_rate= LRSchedule( hyp['lr0'], hyp['lrf'], nb, nw, warmup_bias_lr, epochs,False), ema_momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
     for epoch in range(epochs):
-        # pbar = enumerate(train_dataset)
         pbar = tqdm(train_loader, total=nb, bar_format=TQDM_BAR_FORMAT)  # progress bar
 
         mloss = tf.zeros([4], dtype=tf.float32)  # mean losses
         # train:
+        LOGGER.info(('\n' + '%11s' * 8) % ('Epoch', 'totloss', 'box_loss', 'mask_loss', 'obj_loss','cls_loss','Instances', 'Size'))
         for batch_idx, (b_images,  b_targets, b_masks, paths, shapes) in enumerate(pbar):
             ni = batch_idx + nb * epoch  # number batches (since train start), used to scheduke debug plots and logs
             # if non-overlap=mask per target, tensor is ragged, shape:[b,None,160,160], otherwise shape is [b, 160,160]
@@ -231,18 +231,12 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                 # preds shapes: [b,na,gyi,gxi,xywh+conf+cls+masks] where na=3,gy,gx[i=1:3]=size/8,/16,/32,masks:32 words
                 # proto shape: [b,32,size/4,size/4]
                 pred = keras_model(b_images)
-                loss, loss_items = compute_loss(pred, targets,
-                                                    b_masks)  # returns: sum(loss),  [lbox, lseg, lobj, lcls]
-
-                #  lbox, lseg, lobj, lcls= tf.split(loss_items, num_or_size_splits=4, axis=-1)
-
+                loss, loss_items = compute_loss(pred, targets, b_masks)  # returns: sum(loss),  [lbox, lseg, lobj, lcls]
             grads = tape.gradient(loss, keras_model.trainable_variables)
             optimizer.apply_gradients(
                     zip(grads, keras_model.trainable_variables))
 
             mloss = (mloss * batch_idx + loss_items) / (batch_idx + 1)  # update mean losses
-
-            LOGGER.info(('\n' + '%11s' * 8) % ('Epoch', 'totloss', 'box_loss', 'mask_loss', 'obj_loss','cls_loss','Instances', 'Size'))
 
             pbar.set_description(('%11s' * 2 + '%11.4g' * 6) %
                                  (f'{epoch}/{epochs - 1}', loss.numpy()/targets.shape[0], *mloss.numpy(), targets.shape[0], b_images.shape[1]))
@@ -255,32 +249,24 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                     files = sorted(save_dir.glob('train*.jpg'))
                     logger.log_images(files, 'Mosaics', epoch)
         # end batch ------------------------------------------------------------------------------------------------
-        # classes_name_file = '/home/ronen/devel/PycharmProjects/tf_yolov5/data/class-names/coco.names'
-        # class_names = [c.strip() for c in open(classes_name_file).readlines()]
-
-        # data_dict = {'nc': 80, 'names': class_names}
         val_keras_model.set_weights(keras_model.get_weights())
         final_epoch = (epoch + 1 == epochs) or stopper.possible_stop
-
-        # results, list[12] - mp_bbox, mr_bbox, map50_bbox, map_bbox, mp_mask, mr_mask, map50_mask, map_mask,  box_loss, obj_loss, cls_loss, mask_loss
-        # maps: array[nc]:  ap-bbox+ap-masks per cla
-        results, maps, _ = validate.run(val_loader,
-                                        data_dict,
-                                        batch_size=batch_size,
-                                        imgsz=imgsz,
-                                        half=False, # half precision model
-                                        model=val_keras_model, # todo use ema
-                                        single_cls=single_cls,
-                                        save_dir=save_dir,
-                                        plots=False,
-                                        callbacks=callbacks,
-                                        compute_loss=compute_loss,
-                                        mask_downsample_ratio=mask_ratio,
-                                        overlap=overlap)
-
-
-        keras_model.save_weights(
-                    last)
+        if not noval or final_epoch:  # Calculate mAP
+            # results, list[12] - mp_bbox, mr_bbox, map50_bbox, map_bbox, mp_mask, mr_mask, map50_mask, map_mask,  box_loss, obj_loss, cls_loss, mask_loss
+            # maps: array[nc]:  ap-bbox+ap-masks per cla
+            results, maps, _ = validate.run(val_loader,
+                                            data_dict,
+                                            batch_size=batch_size,
+                                            imgsz=imgsz,
+                                            half=False, # half precision model
+                                            model=val_keras_model, # todo use ema
+                                            single_cls=single_cls,
+                                            save_dir=save_dir,
+                                            plots=False,
+                                            callbacks=callbacks,
+                                            compute_loss=compute_loss,
+                                            mask_downsample_ratio=mask_ratio,
+                                            overlap=overlap)
 
         # Update best mAP
         # fi=0.1*map50_bbox +0.9*map_bbox+0.1*map50_mask+0.9 map_maskzs
@@ -293,7 +279,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         # Log val metrics and media
         metrics_dict = dict(zip(KEYS, log_vals))
         logger.log_metrics(metrics_dict, epoch)
-
         # Save model
         if (not nosave) or (final_epoch and not evolve):  # if save
             # Save last, best
