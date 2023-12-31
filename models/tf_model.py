@@ -371,8 +371,8 @@ class TFDetect(keras.layers.Layer):
         self.na = len(anchors[0]) // 2  # number of anchors
         self.grid = [tf.zeros(1)] * self.nl  # init grid
         # reshape anchors and normalize by stride values:
-        self.anchors = tf.convert_to_tensor(w.anchors.numpy(), dtype=tf.float32) if w is not None else \
-            tf.convert_to_tensor(anchors, dtype=tf.float32).reshape([self.nl, self.na, 2]) / self.stride.reshape([self.nl, 1, 1])
+        self.anchors = tf.convert_to_tensor(w.anchors.numpy(), dtype=tf.float16) if w is not None else \
+            tf.convert_to_tensor(anchors, dtype=tf.float16).reshape([self.nl, self.na, 2]) / self.stride.reshape([self.nl, 1, 1])
         # rescale anchors by stride values and reshape to
         self.anchor_grid = self.anchors.reshape([self.nl, 1, self.na, 1, 2])
         self.anchor_grid = self.anchor_grid.transpose( [0, 1, 3, 2, 4])  # shape: [nl, 1,1,na,2]
@@ -587,8 +587,7 @@ class TFModel:
     # TF YOLOv5 model
     def __init__(self, cfg='', ch=3, nc=None, ref_model_seq=None, imgsz=(640, 640), training=True):  # model, channels, classes
         # todo - check mixed precision. looks slow on amd cpu
-        # mixed_precision.set_global_policy('mixed_float16')
-        mixed_precision.set_global_policy('mixed_float16')
+        # mixed_precision.set_global_policy('mixed_float16') # mixed precision train runs slow in cpu, upsample2d issue?
 
         super().__init__()
         if isinstance(cfg, dict):
