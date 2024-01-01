@@ -223,7 +223,7 @@ class ComputeLoss:
         lbox *= self.box_lg
         lobj *= self.obj_lg
         lcls *= self.cls_lg
-        lseg *= self.box_lg / bs # summed on batch images loop, but not yet averaged
+        lseg *= self.box_lg / bs # summed on batch images loop, here do average
         loss = lbox + lobj + lcls + lseg
         return loss * bs, tf.concat((lbox, lseg, lobj, lcls), axis=-1)
 
