@@ -235,11 +235,11 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
             grads = tape.gradient(loss, keras_model.trainable_variables)
             optimizer.apply_gradients(
                     zip(grads, keras_model.trainable_variables))
-
             mloss = (mloss * batch_idx + loss_items) / (batch_idx + 1)  # update mean losses
+            totloss = (loss * batch_idx + loss) / (batch_idx + 1)  # update mean losses
 
             pbar.set_description(('%11s' * 2 + '%11.4g' * 6) %
-                                 (f'{epoch}/{epochs - 1}', loss.numpy()/targets.shape[0], *mloss.numpy(), targets.shape[0], b_images.shape[1]))
+                                 (f'{epoch}/{epochs - 1}', totloss.numpy(), *mloss.numpy(), targets.shape[0], b_images.shape[1]))
             #
             # Mosaic plots
             if plots:
