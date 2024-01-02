@@ -11,11 +11,11 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 def parse_opt():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--pretrained', action='store_true', help='load model from weights file')
+    parser.add_argument('--pretrained', action='store_false', help='load model from weights file')
     parser.add_argument('--cfg', type=str, default='../models/segment/yolov5s-seg.yaml', help='model.yaml path')
     shapes=True
     if shapes:
-        parser.add_argument('--weights', type=str, default=ROOT / '/home/ronen/Downloads/best.h5',
+        parser.add_argument('--weights', type=str, default=ROOT / 'segment/saved_weights/best177.h5', #'/home/ronen/Downloads/best5.h5',#'/home/ronen/Downloads/best5.h5','segment/saved_weights/best177.h5',#
                             help='initial weights path')
         parser.add_argument('--data', type=str, default=ROOT / 'data/shapes-seg.yaml', help='dataset.yaml path')
     else:
