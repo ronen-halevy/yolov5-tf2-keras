@@ -187,7 +187,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     train_loader, labels, nb = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp, overlap)
     val_path=train_path # todo debug need a chang2
     create_dataloader_val=DataLoader()
-    val_loader, _ ,_ = create_dataloader_val(val_path, batch_size, imgsz, mask_ratio, mosaic=False, augment=False, hyp=hyp, overlap=overlap)
+    val_loader, _ ,val_nb = create_dataloader_val(val_path, batch_size, imgsz, mask_ratio, mosaic=False, augment=False, hyp=hyp, overlap=overlap)
 
     if not resume:
         if plots:
@@ -211,12 +211,12 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     nw = max(round(hyp['warmup_epochs'] * nb), 100)  # number of lr warmup iterations, max(3 epochs, 100 iterations)
     warmup_bias_lr=hyp['warmup_bias_lr']
     optimizer = tf.keras.optimizers.SGD(learning_rate= LRSchedule( hyp['lr0'], hyp['lrf'], nb, nw, warmup_bias_lr, epochs,False), ema_momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
+    # train loop:
     for epoch in range(epochs):
+        LOGGER.info(('\n' + '%11s' * 8) % ('Epoch', 'totloss', 'box_loss', 'mask_loss', 'obj_loss','cls_loss','Instances', 'Size'))
         pbar = tqdm(train_loader, total=nb, bar_format=TQDM_BAR_FORMAT)  # progress bar
 
         mloss = tf.zeros([4], dtype=tf.float32)  # mean losses
-        # train:
-        LOGGER.info(('\n' + '%11s' * 8) % ('Epoch', 'totloss', 'box_loss', 'mask_loss', 'obj_loss','cls_loss','Instances', 'Size'))
         for batch_idx, (b_images,  b_targets, b_masks, paths, shapes) in enumerate(pbar):
             ni = batch_idx + nb * epoch  # number batches (since train start), used to scheduke debug plots and logs
             # if non-overlap=mask per target, tensor is ragged, shape:[b,None,160,160], otherwise shape is [b, 160,160]
@@ -258,6 +258,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                                             data_dict,
                                             batch_size=batch_size,
                                             imgsz=imgsz,
+                                            nb=val_nb,
                                             half=False, # half precision model
                                             model=val_keras_model, # todo use ema
                                             single_cls=single_cls,
@@ -308,6 +309,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                                     data_dict,
                                     batch_size=batch_size,
                                     imgsz=imgsz,
+                                    nb=val_nb,
                                     half=False,  # half precision model
                                     model=val_keras_model,  # todo use ema
                                     single_cls=single_cls,

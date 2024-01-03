@@ -167,6 +167,7 @@ def run(
         iou_thres=0.6,  # NMS IoU threshold
         max_det=300,  # maximum detections per image
         task='val',  # train, val, test, speed or study
+        nb=1, # nof batches, for progress display
         device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
         workers=8,  # max dataloader workers (per RANK in DDP mode)
         single_cls=False,  # treat as single-class dataset
@@ -225,7 +226,7 @@ def run(
     loss = tf.zeros([4] ) # 4 loss sources: [lbox, lseg, lobj, lcls]
     jdict, stats = [], []
     # callbacks.run('on_val_start')
-    pbar = tqdm(dataloader, desc=s, bar_format=TQDM_BAR_FORMAT)  # progress bar
+    pbar = tqdm(dataloader, total=nb, desc=s, bar_format=TQDM_BAR_FORMAT, colour='green')  # progress bar
     # batch loop on gt dataloader entries. batch size: b
     # shape: batch_targets, shape:[Nt,6], batch_masks, shape:[b,h/4,w/4], paths of img src, shape:[b]
     # shapes: shape0, shape old/shape new, pad:[b,3,2]
