@@ -250,9 +250,9 @@ class LoadImagesAndLabelsAndMasks:
                 self.segments[index])  # image_i segments ragged tensor: "shape": [nti,v_ij,2], vij:vertices in obj_j
             padw, padh = pad[0], pad[1]
             # map loops on all segments, scale normalized coordibnates to fit mage scaling:
-            segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w1, h1, padw, padh), elems=segments,
-                                 fn_output_signature=tf.RaggedTensorSpec(shape=[None, None], dtype=tf.float32,
-                                                                         ragged_rank=1))
+            # segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w1, h1, padw, padh), elems=segments,
+            #                      fn_output_signature=tf.RaggedTensorSpec(shape=[None, None], dtype=tf.float32,
+            #                                                              ragged_rank=1))
             labels = self.xywhn2xyxy(self.labels[index], w1, h1, padw, padh)
 
             if self.augment:
