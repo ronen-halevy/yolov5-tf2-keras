@@ -369,7 +369,7 @@ class LoadImagesAndLabelsAndMasks:
         :rtype: scaled segments coords
         """
         # Convert normalized segments into pixel segments, shape (n,2)
-        # x = x.to_tensor()
+        x = x.to_tensor()
         xcoord=tf.gather(x, 0, axis=1)[...,None]
         ycoord =tf.gather(x, 1, axis=1)[...,None]
         # print('\n xcoord1',xcoord1)
