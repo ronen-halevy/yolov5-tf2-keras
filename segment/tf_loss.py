@@ -279,10 +279,12 @@ class ComputeLoss:
         # 1.b prepare ti-target index within image(s): in mask overlap mode, ti runs per image, otherwise, index is global. Example: 2 images,2 & 3
         # objects. ti=[[1,2,1,2,3],[1,2,1,2,3],[1,2,1,2,3]] if overlap, [[1,2,3,4,5],[1,2,3,4,5],[1,2,3,4,5]] otherwise
         if self.overlap:
+            # in mask overlap mode, ti used as mask colors,values 1:ti:
             ti = [] # target list of np entries. each holds na dups of range(nti), nti: nof objs in ith sample. shape: [na,nti]
             for idx in range( batch_size):# loop on preds in batch,
                 num =tf.math.reduce_sum ( (targets[:, 0:1] == idx).astype(tf.float32)) # nof all targets in image idx
-                ti.append(tf.tile(tf.range(num, dtype=tf.float32 )[None], [na,1]) + 1) #entry shape:(na, nti), +1 for 1 based entries
+                # entry shape:(na, nti). +1 added for 1 based entries
+                ti.append(tf.tile(tf.range(num, dtype=tf.float32 )[None], [na,1]) + 1)
             #  # concat list.
             ti = tf.concat(ti, axis=1) # shape:(na, nt), nt nof all batch targets.
         else:# no overlap: ti holds flat nt indices, where nt nof obj targets in the batch # shape: [na, nt]
