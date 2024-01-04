@@ -359,13 +359,38 @@ class LoadImagesAndLabelsAndMasks:
         return y
 
     def xyn2xy(self, x, w, h, padw=0, padh=0):
+        """
+        Sclae normalized segments coordinates
+        :param x: segment coordibnates. (can probably be ragged). shape: [n_vertices, 2] (None, 3] if ragged
+        :param w: width
+        :param h: height
+        :param padw: pad width, for coords shift
+        :type padh: pad height, for coords shift
+        :rtype: scaled segments coords
+        """
         # Convert normalized segments into pixel segments, shape (n,2)
-        x = x.to_tensor()
-        xcoord = tf.math.multiply(float(w), x[:, 0:1]) + float(padw)  # x coords - resized and shifted by pad val
-        ycoord = tf.math.multiply(float(h), x[:, 1:2]) + float(padh)  # y coords - resized and shifted by pad val
+        # x = x.to_tensor()
+        xcoord=tf.gather(x, 0, axis=1)[...,None]
+        ycoord =tf.gather(x, 1, axis=1)[...,None]
+        # print('\n xcoord1',xcoord1)
+        # print('\n ycoord1',ycoord1)
+        # xcoord=x[:, 0:1]
+        # ycoord=x[:, 1:2]
+
+        # xcoord = tf.math.multiply(float(640), xcoord)   # x coords - resized and shifted by pad val
+        # ycoord = tf.math.multiply(float(640), ycoord)   # y coords - resized and shifted by pad val
+        # y = tf.concat(
+        #     [xcoord[...,None], ycoord[...,None]], axis=-1, name='stack'
+        # )
+        # print('\n  x[:, 0:1]  x[:, 1:2]',x[:, 0:1] , x[:, 1:2])
+        #
+        # print('\n  x[:, 0:1]  x[:, 1:2]',x[:, 0:1],  x[:, 1:2])
+        xcoord = tf.math.multiply(float(w), xcoord) + float(padw)  # x coords - resized and shifted by pad val
+        ycoord = tf.math.multiply(float(h), ycoord) + float(padh)  # y coords - resized and shifted by pad val
         y = tf.concat(
             [xcoord, ycoord], axis=-1, name='stack'
         )
+
         y = tf.RaggedTensor.from_tensor(y)
 
         return y

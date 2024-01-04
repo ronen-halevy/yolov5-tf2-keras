@@ -30,6 +30,5 @@ def flatten_btargets(b_targets,):
     imidxs = imidxs.flat_values
     # concat imidxs to target. result shape: [bnt, 6]
     imidxs=imidxs[..., None].astype(tf.float32)
-    print('\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!',imidxs.shape, targets.shape)
     targets = tf.concat([imidxs, targets], axis=-1)
     return targets
