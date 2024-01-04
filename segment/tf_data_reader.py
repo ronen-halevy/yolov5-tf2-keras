@@ -155,18 +155,18 @@ class LoadImagesAndLabelsAndMasks:
         # verify labels
         if os.path.isfile(lb_file):
             lb, segments = self.read_label_from_file(lb_file)
-            nl = len(lb)
-            if nl:
+            nt = len(lb) # nof targets
+            if nt:
                 assert lb.shape[1] == 5, f'labels require 5 columns, {lb.shape[1]} columns detected'
                 assert (lb >= 0).all(), f'negative label values {lb[lb < 0]}'
                 assert (lb[:,
                         2:] <= 1).all(), f'non-normalized or out of bounds coordinates {lb[:, 2:][lb[:, 2:] > 1]}'
                 _, i = np.unique(lb, axis=0, return_index=True)
-                if len(i) < nl:  # duplicate row check
+                if len(i) < nt:  # duplicate row check
                     lb = lb[i]  # remove duplicates
                     if segments:
                         segments = [segments[x] for x in i]
-                    msg = f'{warning_msg_prefix}WARNING ⚠️ {im_file}: {nl - len(i)} duplicate labels removed'
+                    msg = f'{warning_msg_prefix}WARNING ⚠️ {im_file}: {nt - len(i)} duplicate labels removed'
             else:
                 ne = 1  # label empty
                 lb = np.zeros((0, 5), dtype=np.float32)
@@ -250,6 +250,11 @@ class LoadImagesAndLabelsAndMasks:
                 self.segments[index])  # image_i segments ragged tensor: "shape": [nti,v_ij,2], vij:vertices in obj_j
             padw, padh = pad[0], pad[1]
             # map loops on all segments, scale normalized coordibnates to fit mage scaling:
+            ress = []
+            for segment in segments:
+                res = self.xyn2xy(segment, w1, h1, padw, padh)
+                ress.append(res)
+            segments = tf.stack(ress, axis=0)
             # segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w1, h1, padw, padh), elems=segments,
             #                      fn_output_signature=tf.RaggedTensorSpec(shape=[None, None], dtype=tf.float32,
             #                                                              ragged_rank=1))
@@ -622,7 +627,7 @@ class LoadImagesAndLabelsAndMasks:
                               fn_output_signature=tf.TensorSpec(shape=[640, 640], dtype=tf.float32))
 
         nh, nw = (img_size[0] // downsample_ratio, img_size[1] // downsample_ratio)  # downsample masks by 4
-        masks = tf.squeeze(tf.image.resize(masks[..., None], [nh, nw]), axis=3)  # masks shape: [nl, 160, 160]
+        masks = tf.squeeze(tf.image.resize(masks[..., None], [nh, nw]), axis=3)  # masks shape: [nt, 160, 160]
         return tf.RaggedTensor.from_tensor(masks) # ragged!!! fro no overlap!!
 
     def polygons2masks_overlap(self, segments, size, downsample_ratio, is_ragged):
@@ -644,13 +649,14 @@ class LoadImagesAndLabelsAndMasks:
                           fn_output_signature=tf.TensorSpec(shape=[640, 640], dtype=tf.float32))
         # Merge downsampled masks after sorting by mask size and coloring:
         nh, nw = (size[0] // downsample_ratio, size[1] // downsample_ratio)  # downsample masks by 4
-        masks = tf.squeeze(tf.image.resize(masks[..., None], [nh, nw]), axis=3)  # masks shape: [nl, 160, 160]
+        masks = tf.squeeze(tf.image.resize(masks[..., None], [nh, nw]), axis=3)  # masks shape: [nt, 160, 160]
         # sort masks by area.  reason: to select smallest area mask if masks overlap
-        areas = tf.math.reduce_sum(masks, axis=[1, 2])  # shape: [nl]
-        sorted_index = tf.argsort(areas, axis=-1, direction='DESCENDING', stable=False, name=None)  # shape: [nl]
-        masks = tf.gather(masks, sorted_index, axis=0)  # sort masks by areas shape: [nl]
-        # color masks by index, before merge: 1 for larger, nl to smallest. 0 remains no mask:
-        mask_colors = tf.range(1, len(sorted_index) + 1, dtype=tf.float32)
+        areas = tf.math.reduce_sum(masks, axis=[1, 2])  # shape: [nt]
+        sorted_index = tf.argsort(areas, axis=-1, direction='DESCENDING', stable=False, name=None)  # shape: [nt]
+        masks = tf.gather(masks, sorted_index, axis=0)  # sort masks by areas shape: [nt, 160,160]
+        # color masks by index, before merge: 1 for larger, nt to smallest. 0 remains no mask:
+        mask_colors = tf.range(1, len(sorted_index) + 1, dtype=tf.float32) # masks colors 1:nt
+
         masks = tf.math.multiply(masks, tf.reshape(mask_colors, [-1, 1, 1]))  # set color values to mask pixels
         masks = tf.reduce_max(masks, axis=0)  # merge overlaps: keep max color value  (i.e. smallest area mask)
         return masks, sorted_index
