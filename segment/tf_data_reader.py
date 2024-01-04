@@ -360,12 +360,13 @@ class LoadImagesAndLabelsAndMasks:
 
     def xyn2xy(self, x, w, h, padw=0, padh=0):
         # Convert normalized segments into pixel segments, shape (n,2)
-
+        x = x.to_tensor()
         xcoord = tf.math.multiply(float(w), x[:, 0:1]) + float(padw)  # x coords - resized and shifted by pad val
         ycoord = tf.math.multiply(float(h), x[:, 1:2]) + float(padh)  # y coords - resized and shifted by pad val
         y = tf.concat(
             [xcoord, ycoord], axis=-1, name='stack'
         )
+        y = tf.RaggedTensor.from_tensor(y)
         return y
 
     def affaine_transform(self, img, M):
