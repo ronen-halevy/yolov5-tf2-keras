@@ -29,5 +29,5 @@ def flatten_btargets(b_targets,):
     # flatten indices. shape [bnt], i.e. nof targets in batch
     imidxs = imidxs.flat_values
     # concat imidxs to target. result shape: [bnt, 6]
-    targets = tf.concat([imidxs[..., None].astype(tf.float32), targets], axis=1)
+    targets = tf.concat([imidxs[..., None].astype(tf.float32), targets], axis=-1)
     return targets
