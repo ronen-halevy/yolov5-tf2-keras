@@ -251,7 +251,7 @@ class LoadImagesAndLabelsAndMasks:
             padw, padh = pad[0], pad[1]
             # map loops on all segments, scale normalized coordibnates to fit mage scaling:
             segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w1, h1, padw, padh), elems=segments,
-                                 fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
+                                 fn_output_signature=tf.RaggedTensorSpec(shape=[None, None], dtype=tf.float32,
                                                                          ragged_rank=1))
             labels = self.xywhn2xyxy(self.labels[index], w1, h1, padw, padh)
 
@@ -366,7 +366,10 @@ class LoadImagesAndLabelsAndMasks:
         y = tf.concat(
             [xcoord, ycoord], axis=-1, name='stack'
         )
+        print('\n!!!!! y', y.shape)
         y = tf.RaggedTensor.from_tensor(y)
+        print('\n!!!gggg!! y', y.shape)
+
         return y
 
     def affaine_transform(self, img, M):
