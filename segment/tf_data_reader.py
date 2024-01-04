@@ -366,9 +366,7 @@ class LoadImagesAndLabelsAndMasks:
         y = tf.concat(
             [xcoord, ycoord], axis=-1, name='stack'
         )
-        print('\n!!!!! y', y.shape)
         y = tf.RaggedTensor.from_tensor(y)
-        print('\n!!!gggg!! y', y.shape)
 
         return y
 
