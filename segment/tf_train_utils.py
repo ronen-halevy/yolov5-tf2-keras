@@ -12,23 +12,32 @@ def flatten_btargets(b_targets,):
     # generate idx - target indices of related image:
     idx = tf.range(tf.shape(b_targets)[0])[..., None]  # image indices. shape: [b]
 
-    def generate_imidx(targets, idx):
-        """
-        Produces image idx with size of nof image's targets.
-        :param target: targets of image i, shape: [nti,5], float.
-        :param idx: index in batch of image i,  tf.int32
-        :return: A tensor with image duplicated for all image's targets. shape: [nti], tf.int32
-        :rtype:
-        """
-        imidx = tf.fill([targets.shape[0]], idx)
-        return imidx
+    # def generate_imidx(targets, idx):
+    #     """
+    #     Produces image idx with size of nof image's targets.
+    #     :param target: targets of image i, shape: [nti,5], float.
+    #     :param idx: index in batch of image i,  tf.int32
+    #     :return: A tensor with image duplicated for all image's targets. shape: [nti], tf.int32
+    #     :rtype:
+    #     """
+    #     imidx = tf.fill([targets.shape[0]], idx)
+    #     return imidx
 
     # generate imidxs - image index for each target. a ragged tensor, shape: [bi, None], int32
-    imidxs = tf.map_fn(fn=lambda t: generate_imidx(t[0], t[1]), elems=(b_targets, idx),
-                      fn_output_signature=tf.RaggedTensorSpec(shape=[None], dtype=tf.int32))
+    # imidxs = tf.map_fn(fn=lambda t: generate_imidx(t[0], t[1]), elems=(b_targets, idx),
+    #                   fn_output_signature=tf.RaggedTensorSpec(shape=[None], dtype=tf.int32))
     # flatten indices. shape [bnt], i.e. nof targets in batch
-    imidxs = imidxs.flat_values
+    # imidxs = imidxs.flat_values
     # concat imidxs to target. result shape: [bnt, 6]
-    imidxs=imidxs[..., None].astype(tf.float32)
-    targets = tf.concat([imidxs, targets], axis=-1)
+    # imidxs=imidxs[..., None].astype(tf.float32)
+    # targets = tf.concat([imidxs, targets], axis=-1)
+
+    imidxs = []
+    for idx, b_target in enumerate(b_targets):
+        imidx = tf.fill([targets.shape[0]], idx)
+        imidxs.append(imidx)
+    imidxs = tf.concat(imidxs,axis=0)
+    targets = tf.concat([imidxs[...,None].astype(tf.float32), targets], axis=-1)
+
+
     return targets
