@@ -105,7 +105,7 @@ class TFConv(keras.layers.Layer):
         self.bn = TFBN(w.bn ) if hasattr(w, 'bn') else keras.layers.BatchNormalization(
             momentum=0.03) #tf.identity
         self.act = keras.activations.swish if  w is None else  activations(w.act) if act else tf.identity
-
+    @tf.function
     def call(self, inputs):
         return self.act(self.bn(self.conv(inputs)))
 
@@ -224,12 +224,14 @@ class TFConv2d(keras.layers.Layer):
         self.conv = keras.layers.Conv2D(filters=c2,
                                         kernel_size=k,
                                         strides=s,
-                                        padding='VALID',
-                                        use_bias=bias,
-                                        kernel_initializer='zeros' if w is None else  keras.initializers.Constant(
-                                            w.weight.permute(2, 3, 1, 0).numpy()),
-                                        bias_initializer='zeros' if w is None else keras.initializers.Constant(w.bias.numpy()) if bias else None)
+                                        padding='VALID'
+                                        # use_bias=bias,
+                                        # kernel_initializer='zeros' if w is None else  keras.initializers.Constant(
+                                        #     w.weight.permute(2, 3, 1, 0).numpy()),
+                                        # bias_initializer='zeros' if w is None else keras.initializers.Constant(w.bias.numpy()) if bias else None
+        )
 
+    @tf.function
     def call(self, inputs):
         return self.conv(inputs)
 
@@ -266,6 +268,7 @@ class TFC3(keras.layers.Layer):
         self.cv3 = TFConv(2 * c_, c2, 1, 1, w=w.cv3 if w is not None else None)
         self.m = keras.Sequential([TFBottleneck(c_, c_, shortcut, g, e=1.0, w=w.m[j] if w is not None else None) for j in range(n)])
 
+    @tf.function
     def call(self, inputs):
         return self.cv3(tf.concat((self.m(self.cv1(inputs)), self.cv2(inputs)), axis=3))
 
@@ -387,7 +390,7 @@ class TFDetect(keras.layers.Layer):
             self.grid[i]= tf.stack([xv, yv], 2).reshape( [1, 1, ny, nx, 2])
             self.grid[i] = self.grid[i].transpose( [0, 2, 3, 1, 4]) # shape: [1, ny, nx, 1, 2]
 
-    # @tf.function
+    @tf.function
     def call(self, inputs):
         """
         Model's detection layaer. exeutes conv2d operator on 3 input layers, and then if Training, reshapes result and return.
@@ -399,6 +402,7 @@ class TFDetect(keras.layers.Layer):
         else:
         tuple(2), z: packed output for nms, shape: [b,25200,no], x: list[3] grid layers, with shape detailed above
         """
+
         z = []  # inference output
         x = []
         for i in range(self.nl):
@@ -430,7 +434,7 @@ class TFSegment(TFDetect):
         self.m = [TFConv2d(x, self.no * self.na, 1, w=w.m[i] if w is not None else None) for i, x in enumerate(ch)]  # output conv
         self.proto = TFProto(ch[0], self.npr, self.nm, w=w.proto if w is not None else None)  # protos
         self.detect = TFDetect.call
-
+    @tf.function
     def call(self, x):
         """
         Module's segment layer: envokes proto to generate mask protos and  detection layer. Layer's output combines both
@@ -461,7 +465,6 @@ class TFSegment(TFDetect):
 
         # return [x[0], x[1], x[2], p] if self.training else (x[0], p, x[1])
 
-
 class TFProto(keras.layers.Layer):
 
     def __init__(self, c1, c_=256, c2=32, w=None):
@@ -471,6 +474,7 @@ class TFProto(keras.layers.Layer):
         self.cv2 = TFConv(c_, c_, k=3, w=w.cv2 if w is not None else None)
         self.cv3 = TFConv(c_, c2, w=w.cv3 if w is not None else None)
 
+    @tf.function
     def call(self, inputs):
         """
         Produce mask prod tensor: Apply to conv stages on upsampled input, to produce prod with shape: [b,160,160,32]
@@ -478,7 +482,6 @@ class TFProto(keras.layers.Layer):
         :return: prod shape[b160,160,32], tf.loaf32
         """
         return self.cv3(self.cv2(self.upsample(self.cv1(inputs))))
-
 class TFUpsample(keras.layers.Layer):
     # TF version of torch.nn.Upsample()
     def __init__(self, size, scale_factor, mode, w=None):  # warning: all arguments needed including 'w'
@@ -492,9 +495,9 @@ class TFUpsample(keras.layers.Layer):
         # self.upsample = lambda x: tf.raw_ops.ResizeNearestNeighbor(images=x,
         #                                                            size=(x.shape[1] * 2, x.shape[2] * 2))
 
+    @tf.function
     def call(self, inputs):
         return self.upsample(inputs)
-
 class TFConcat(keras.layers.Layer):
     # TF version of torch.concat()
     def __init__(self, dimension=1, w=None):
@@ -502,6 +505,7 @@ class TFConcat(keras.layers.Layer):
         assert dimension == 1, 'convert only NCHW to NHWC concat'
         self.d = 3
 
+    @tf.function
     def call(self, inputs):
         return tf.concat(inputs, self.d)
 
