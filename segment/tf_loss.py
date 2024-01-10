@@ -124,7 +124,7 @@ class ComputeLoss:
         self.anchor_t=anchor_t
         self.grids = grids # tf.constant([[80,80], [40,40], [20,20]]) # todo fix this
 
-    # @tf.function
+    @tf.function
     def __call__(self, preds, targets, masks):
         """
         Calc batch loss
