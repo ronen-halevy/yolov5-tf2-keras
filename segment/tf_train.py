@@ -93,6 +93,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # degrees,translate,scale,shear,perspective = hyp['degrees'],hyp['translate'], hyp['scale'],hyp['shear'],hyp['perspective']
     # augmentation params:
     # hgain, sgain, vgain, flipud, fliplr =hyp['hsv_h'],hyp['hsv_s'],hyp['hsv_v'],hyp['flipud'],hyp['fliplr']
+    results = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls)
 
 
     # Save run settings
