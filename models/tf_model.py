@@ -363,9 +363,17 @@ class TFSPPF(keras.layers.Layer):
     #     return config
 
 class TFDetect(keras.layers.Layer):
-    # TF YOLOv5 Detect layer
-    # todo detail params w - weights
-    def __init__(self, nc=80, anchors=(), ch=(), imgsz=(640, 640), training=True, w=None):  # detection layer
+    def __init__(self, nc=80, anchors=(),ch=(), imgsz=(640, 640), training=True, w=None):  # detection layer
+        """
+        Detection layer constructor.
+        :param nc: nof classes. int
+        :param anchors: list [nl][na], float
+        :param ch: nof input channels per grid layer, list[3], int
+        :param imgsz: input img size, tupple(2), int, (used for grids size calculation: imgsz/strides)
+        :param training: bool, if False i.e. inference or validation, an additional output object, for nms, is outputed
+        :param w: pytorch weights, used for pffline conversion to TF=keras weights.
+        """
+
         super().__init__()
         self.stride = tf.convert_to_tensor(w.stride.numpy() if w is not None else [8,16,32], dtype=tf.float32)
         self.nc = nc  # number of classes
@@ -425,8 +433,20 @@ class TFDetect(keras.layers.Layer):
 
 
 class TFSegment(TFDetect):
-    # YOLOv5 Segment head for segmentation models
+    # YOLOv5 Segment head for segmentation models. Inherits Detection layer
     def __init__(self, nc=80, anchors=(), nm=32, npr=256, ch=(), imgsz=(640, 640), training=False, w=None):
+        """
+        Segmentation layer constructor.
+        :param nc: nof classes. int
+        :param anchors: list [nl][na], float
+        :param nm: nof proto masks, int, (32 in yolov5)
+        :param npr: nof of protos, int, (128 in yolov5)
+        :param ch: nof input channels per grid layer, list[3], int
+        :param imgsz: input img size, tupple(2), int, (used for grids size calculation: imgsz/strides)
+        :param training: bool, if False i.e. inference or validation, an additional output object, for nms, is outputed
+        :param w: pytorch weights, used for pffline conver-sion to TF=keras weights.
+        """
+
         super().__init__(nc, anchors, ch, imgsz, training, w)
         self.nm = nm  # number of masks
         self.npr = npr  # number of protos
@@ -440,7 +460,10 @@ class TFSegment(TFDetect):
         Module's segment layer: envokes proto to generate mask protos and  detection layer. Layer's output combines both
         :param x: list[3], shapes:[[bsize,nyi,nxi,128] for i=0:2] where ny0,nx0:80,80, ny1,nx1:40,40, ny2,nx2:20,20
         :return:
-        Detect output, with proto addition:
+        x[0]: list[3] grid outs, shapes:[[b,na,nyi,nxi,no], for i=0:2], no=4+1+nc+nm, nyi,nxi=[stride_i/hi,stride_i/wi]
+        x[1]: protos , shape: [b,32,160,160], tf.float32
+        Detect output
+        proto
         if Training:
             list[3] grid layers, with shapes: [[b,na,nyi,nxi,no], for i=0:2], no=4+1+nc+nm
             proto, shape: [b,32,160,160], tf.float32
@@ -517,7 +540,7 @@ def parse_model(anchors, nc, gd, gw, mlist, ch, ref_model_seq, imgsz, training):
     :param gd: depth gain. A scaling factor. float
     :param gw: width gain. A scaling factor. float
     :param mlist: model layers list. A layer is a list[4] structured: [from,number dup, module name,args]
-    :param ch: list of nof in channels to layers. Initiated as [3], then an entry is appended each layers loop iteration
+    :param ch: list of nof out channels, iteratively filled by layers', used as src by later layers. Initiated as [3]
     :param ref_model_seq: A trained ptorch ref model seq, used for offline torch to tensorflow format weights conversion
     :param imgsz: Input img size, Typ [640,640], required by detection module to find grid size as (imgsz/strides). int
     :param training: For detect layer. Bool. if False (inference & validation), output a processed tensor ready for nms.
@@ -531,12 +554,12 @@ def parse_model(anchors, nc, gd, gw, mlist, ch, ref_model_seq, imgsz, training):
     no = na * (nc + 5)  # number of outputs = anchors * (classes + 5)
 
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
-    for i, (f, n, m, args) in enumerate(mlist):  # mlist-list of layers configs. from, number, module, args
+    for i, (f, n, m, args) in enumerate(mlist):  # layer's configs: from layer, nof layer's replicas, module name, args
         m_str = m
         # m = eval(m) if isinstance(m, str) else m  # eval strings
         for j, a in enumerate(args):
             try:
-                args[j] = eval(a) if isinstance(a, str) else a  # eval strings
+                args[j] = eval(a) if isinstance(a, str) else a  # eval string args
             except NameError:
                 pass
 
@@ -567,7 +590,7 @@ def parse_model(anchors, nc, gd, gw, mlist, ch, ref_model_seq, imgsz, training):
             c2 = ch[f]
 
         tf_m = eval('TF' + m_str.replace('nn.', ''))
-        if ref_model_seq: # feed weights directly
+        if ref_model_seq: # feed weights directly - used for pytorch to keras weights conversion
             m_ = keras.Sequential([tf_m(*args, w=ref_model_seq[i][j]) for j in range(n)]) if n > 1 \
                 else tf_m(*args, w=ref_model_seq[i])  # module
         else:
@@ -615,12 +638,6 @@ class TFModel:
 
     def predict(self,
                 inputs,
-                tf_nms=False,
-                agnostic_nms=False,
-                topk_per_class=100,
-                topk_all=100,
-                iou_thres=0.45,
-                conf_thres=0.25,
                 visualize=False):
         y = []  # outputs
         x = inputs
