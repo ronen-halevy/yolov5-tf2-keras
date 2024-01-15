@@ -48,19 +48,19 @@ def autopad(k, p=None, d=1):  # kernel, padding, dilation
     return p
 
 
-class TFBN(keras.layers.Layer):
-    # TensorFlow BatchNormalization wrapper
-    def __init__(self, w=None):
-        super().__init__()
-        self.bn = keras.layers.BatchNormalization(
-            beta_initializer=keras.initializers.Constant(w.bias.numpy()),
-            gamma_initializer=keras.initializers.Constant(w.weight.numpy()),
-            moving_mean_initializer=keras.initializers.Constant(w.running_mean.numpy()),
-            moving_variance_initializer=keras.initializers.Constant(w.running_var.numpy()),
-            epsilon=w.eps)
-
-    def call(self, inputs):
-        return self.bn(inputs)
+# class TFBN(keras.layers.Layer):
+#     # TensorFlow BatchNormalization wrapper
+#     def __init__(self, w=None):
+#         super().__init__()
+#         self.bn = keras.layers.BatchNormalization(
+#             beta_initializer=keras.initializers.Constant(w.bias.numpy()),
+#             gamma_initializer=keras.initializers.Constant(w.weight.numpy()),
+#             moving_mean_initializer=keras.initializers.Constant(w.running_mean.numpy()),
+#             moving_variance_initializer=keras.initializers.Constant(w.running_var.numpy()),
+#             epsilon=w.eps)
+#
+#     def call(self, inputs):
+#         return self.bn(inputs)
 
     # # Solution for model saving error
     # def get_config(self):
@@ -79,7 +79,7 @@ class TFPad(keras.layers.Layer):
             self.pad = tf.constant([[0, 0], [pad, pad], [pad, pad], [0, 0]])
         else:  # tuple/list
             self.pad = tf.constant([[0, 0], [pad[0], pad[0]], [pad[1], pad[1]], [0, 0]])
-
+    @tf.function
     def call(self, inputs):
         return tf.pad(inputs, self.pad, mode='constant', constant_values=0)
 
@@ -120,62 +120,62 @@ class TFConv(keras.layers.Layer):
     #     return config
 
 
-class TFDWConv(keras.layers.Layer):
-    # Depthwise convolution
-    def __init__(self, c1, c2, k=1, s=1, p=None, act=True, w=None):
-        # ch_in, ch_out, weights, kernel, stride, padding, groups
-        super().__init__()
-        assert c2 % c1 == 0, f'TFDWConv() output={c2} must be a multiple of input={c1} channels'
-        conv = keras.layers.DepthwiseConv2D(
-            kernel_size=k,
-            depth_multiplier=c2 // c1,
-            strides=s,
-            padding='SAME' if s == 1 else 'VALID',
-            use_bias=not hasattr(w, 'bn'),
-            depthwise_initializer=keras.initializers.Constant(w.conv.weight.permute(2, 3, 1, 0).numpy()),
-            bias_initializer='zeros' if hasattr(w, 'bn') else keras.initializers.Constant(w.conv.bias.numpy()))
-        self.conv = conv if s == 1 else keras.Sequential([TFPad(autopad(k, p)), conv])
-        self.bn = TFBN(w.bn) if hasattr(w, 'bn') else tf.identity
-        self.act = activations(w.act) if act else tf.identity
-
-    def call(self, inputs):
-        return self.act(self.bn(self.conv(inputs)))
-
-
-class TFDWConvTranspose2d(keras.layers.Layer):
-    # Depthwise ConvTranspose2d
-    def __init__(self, c1, c2, k=1, s=1, p1=0, p2=0, w=None):
-        # ch_in, ch_out, weights, kernel, stride, padding, groups
-        super().__init__()
-        assert c1 == c2, f'TFDWConv() output={c2} must be equal to input={c1} channels'
-        assert k == 4 and p1 == 1, 'TFDWConv() only valid for k=4 and p1=1'
-        weight, bias = w.weight.permute(2, 3, 1, 0).numpy(), w.bias.numpy()
-        self.c1 = c1
-        self.conv = [
-            keras.layers.Conv2DTranspose(filters=1,
-                                         kernel_size=k,
-                                         strides=s,
-                                         padding='VALID',
-                                         output_padding=p2,
-                                         use_bias=True,
-                                         kernel_initializer=keras.initializers.Constant(weight[..., i:i + 1]),
-                                         bias_initializer=keras.initializers.Constant(bias[i])) for i in range(c1)]
-
-    def call(self, inputs):
-        return tf.concat([m(x) for m, x in zip(self.conv, tf.split(inputs, self.c1, 3))], 3)[:, 1:-1, 1:-1]
+# class TFDWConv(keras.layers.Layer):
+#     # Depthwise convolution
+#     def __init__(self, c1, c2, k=1, s=1, p=None, act=True, w=None):
+#         # ch_in, ch_out, weights, kernel, stride, padding, groups
+#         super().__init__()
+#         assert c2 % c1 == 0, f'TFDWConv() output={c2} must be a multiple of input={c1} channels'
+#         conv = keras.layers.DepthwiseConv2D(
+#             kernel_size=k,
+#             depth_multiplier=c2 // c1,
+#             strides=s,
+#             padding='SAME' if s == 1 else 'VALID',
+#             use_bias=not hasattr(w, 'bn'),
+#             depthwise_initializer=keras.initializers.Constant(w.conv.weight.permute(2, 3, 1, 0).numpy()),
+#             bias_initializer='zeros' if hasattr(w, 'bn') else keras.initializers.Constant(w.conv.bias.numpy()))
+#         self.conv = conv if s == 1 else keras.Sequential([TFPad(autopad(k, p)), conv])
+#         self.bn = TFBN(w.bn) if hasattr(w, 'bn') else tf.identity
+#         self.act = activations(w.act) if act else tf.identity
+#
+#     def call(self, inputs):
+#         return self.act(self.bn(self.conv(inputs)))
 
 
-class TFFocus(keras.layers.Layer):
-    # Focus wh information into c-space
-    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True, w=None):
-        # ch_in, ch_out, kernel, stride, padding, groups
-        super().__init__()
-        self.conv = TFConv(c1 * 4, c2, k, s, p, g, act, w.conv)
+# class TFDWConvTranspose2d(keras.layers.Layer):
+#     # Depthwise ConvTranspose2d
+#     def __init__(self, c1, c2, k=1, s=1, p1=0, p2=0, w=None):
+#         # ch_in, ch_out, weights, kernel, stride, padding, groups
+#         super().__init__()
+#         assert c1 == c2, f'TFDWConv() output={c2} must be equal to input={c1} channels'
+#         assert k == 4 and p1 == 1, 'TFDWConv() only valid for k=4 and p1=1'
+#         weight, bias = w.weight.permute(2, 3, 1, 0).numpy(), w.bias.numpy()
+#         self.c1 = c1
+#         self.conv = [
+#             keras.layers.Conv2DTranspose(filters=1,
+#                                          kernel_size=k,
+#                                          strides=s,
+#                                          padding='VALID',
+#                                          output_padding=p2,
+#                                          use_bias=True,
+#                                          kernel_initializer=keras.initializers.Constant(weight[..., i:i + 1]),
+#                                          bias_initializer=keras.initializers.Constant(bias[i])) for i in range(c1)]
+#
+#     def call(self, inputs):
+#         return tf.concat([m(x) for m, x in zip(self.conv, tf.split(inputs, self.c1, 3))], 3)[:, 1:-1, 1:-1]
 
-    def call(self, inputs):  # x(b,w,h,c) -> y(b,w/2,h/2,4c)
-        # inputs = inputs / 255  # normalize 0-255 to 0-1
-        inputs = [inputs[:, ::2, ::2, :], inputs[:, 1::2, ::2, :], inputs[:, ::2, 1::2, :], inputs[:, 1::2, 1::2, :]]
-        return self.conv(tf.concat(inputs, 3))
+
+# class TFFocus(keras.layers.Layer):
+#     # Focus wh information into c-space
+#     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True, w=None):
+#         # ch_in, ch_out, kernel, stride, padding, groups
+#         super().__init__()
+#         self.conv = TFConv(c1 * 4, c2, k, s, p, g, act, w.conv)
+#
+#     def call(self, inputs):  # x(b,w,h,c) -> y(b,w/2,h/2,4c)
+#         # inputs = inputs / 255  # normalize 0-255 to 0-1
+#         inputs = [inputs[:, ::2, ::2, :], inputs[:, 1::2, ::2, :], inputs[:, ::2, 1::2, :], inputs[:, 1::2, 1::2, :]]
+#         return self.conv(tf.concat(inputs, 3))
 
 
 class TFBottleneck(keras.layers.Layer):
@@ -187,6 +187,7 @@ class TFBottleneck(keras.layers.Layer):
         self.cv2 = TFConv(c_, c2, 3, 1, g=g, w=w.cv2 if w is not None else None)
         self.add = shortcut and c1 == c2
 
+    @tf.function
     def call(self, inputs):
         return inputs + self.cv2(self.cv1(inputs)) if self.add else self.cv2(self.cv1(inputs))
 
@@ -203,17 +204,17 @@ class TFBottleneck(keras.layers.Layer):
 
 
 
-class TFCrossConv(keras.layers.Layer):
-    # Cross Convolution
-    def __init__(self, c1, c2, k=3, s=1, g=1, e=1.0, shortcut=False, w=None):
-        super().__init__()
-        c_ = int(c2 * e)  # hidden channels
-        self.cv1 = TFConv(c1, c_, (1, k), (1, s), w=w.cv1)
-        self.cv2 = TFConv(c_, c2, (k, 1), (s, 1), g=g, w=w.cv2)
-        self.add = shortcut and c1 == c2
-
-    def call(self, inputs):
-        return inputs + self.cv2(self.cv1(inputs)) if self.add else self.cv2(self.cv1(inputs))
+# class TFCrossConv(keras.layers.Layer):
+#     # Cross Convolution
+#     def __init__(self, c1, c2, k=3, s=1, g=1, e=1.0, shortcut=False, w=None):
+#         super().__init__()
+#         c_ = int(c2 * e)  # hidden channels
+#         self.cv1 = TFConv(c1, c_, (1, k), (1, s), w=w.cv1)
+#         self.cv2 = TFConv(c_, c2, (k, 1), (s, 1), g=g, w=w.cv2)
+#         self.add = shortcut and c1 == c2
+#
+#     def call(self, inputs):
+#         return inputs + self.cv2(self.cv1(inputs)) if self.add else self.cv2(self.cv1(inputs))
 
 
 class TFConv2d(keras.layers.Layer):
@@ -285,20 +286,20 @@ class TFC3(keras.layers.Layer):
     #     return config
 
 
-class TFC3x(keras.layers.Layer):
-    # 3 module with cross-convolutions
-    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5, w=None):
-        # ch_in, ch_out, number, shortcut, groups, expansion
-        super().__init__()
-        c_ = int(c2 * e)  # hidden channels
-        self.cv1 = TFConv(c1, c_, 1, 1, w=w.cv1)
-        self.cv2 = TFConv(c1, c_, 1, 1, w=w.cv2)
-        self.cv3 = TFConv(2 * c_, c2, 1, 1, w=w.cv3)
-        self.m = keras.Sequential([
-            TFCrossConv(c_, c_, k=3, s=1, g=g, e=1.0, shortcut=shortcut, w=w.m[j]) for j in range(n)])
-
-    def call(self, inputs):
-        return self.cv3(tf.concat((self.m(self.cv1(inputs)), self.cv2(inputs)), axis=3))
+# class TFC3x(keras.layers.Layer):
+#     # 3 module with cross-convolutions
+#     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5, w=None):
+#         # ch_in, ch_out, number, shortcut, groups, expansion
+#         super().__init__()
+#         c_ = int(c2 * e)  # hidden channels
+#         self.cv1 = TFConv(c1, c_, 1, 1, w=w.cv1)
+#         self.cv2 = TFConv(c1, c_, 1, 1, w=w.cv2)
+#         self.cv3 = TFConv(2 * c_, c2, 1, 1, w=w.cv3)
+#         self.m = keras.Sequential([
+#             TFCrossConv(c_, c_, k=3, s=1, g=g, e=1.0, shortcut=shortcut, w=w.m[j]) for j in range(n)])
+#
+#     def call(self, inputs):
+#         return self.cv3(tf.concat((self.m(self.cv1(inputs)), self.cv2(inputs)), axis=3))
 
     # # Solution for model saving error:
     # def get_config(self):
@@ -312,18 +313,18 @@ class TFC3x(keras.layers.Layer):
     #     return config
 
 
-class TFSPP(keras.layers.Layer):
-    # Spatial pyramid pooling layer used in YOLOv3-SPP
-    def __init__(self, c1, c2, k=(5, 9, 13), w=None):
-        super().__init__()
-        c_ = c1 // 2  # hidden channels
-        self.cv1 = TFConv(c1, c_, 1, 1, w=w.cv1)
-        self.cv2 = TFConv(c_ * (len(k) + 1), c2, 1, 1, w=w.cv2)
-        self.m = [keras.layers.MaxPool2D(pool_size=x, strides=1, padding='SAME') for x in k]
-
-    def call(self, inputs):
-        x = self.cv1(inputs)
-        return self.cv2(tf.concat([x] + [m(x) for m in self.m], 3))
+# class TFSPP(keras.layers.Layer):
+#     # Spatial pyramid pooling layer used in YOLOv3-SPP
+#     def __init__(self, c1, c2, k=(5, 9, 13), w=None):
+#         super().__init__()
+#         c_ = c1 // 2  # hidden channels
+#         self.cv1 = TFConv(c1, c_, 1, 1, w=w.cv1)
+#         self.cv2 = TFConv(c_ * (len(k) + 1), c2, 1, 1, w=w.cv2)
+#         self.m = [keras.layers.MaxPool2D(pool_size=x, strides=1, padding='SAME') for x in k]
+#
+#     def call(self, inputs):
+#         x = self.cv1(inputs)
+#         return self.cv2(tf.concat([x] + [m(x) for m in self.m], 3))
 
     # # Solution for model saving error:
     # def get_config(self):
@@ -346,6 +347,7 @@ class TFSPPF(keras.layers.Layer):
         self.cv2 = TFConv(c_ * 4, c2, 1, 1, w=w.cv2 if w is not None else None)
         self.m = keras.layers.MaxPool2D(pool_size=k, strides=1, padding='SAME')
 
+    @tf.function
     def call(self, inputs):
         x = self.cv1(inputs)
         y1 = self.m(x)
