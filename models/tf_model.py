@@ -399,6 +399,18 @@ class TFDetect(keras.layers.Layer):
             self.grid[i] = self.grid[i].transpose( [0, 2, 3, 1, 4]) # shape: [1, ny, nx, 1, 2]
 
     @tf.function
+    def decoder(self, y, nx,ny,grid, anchor_grid):
+        # operate yolo adaptations on box:
+        xy = (tf.sigmoid(y[..., 0:2]) * 2 - 0.5 + grid) / [nx,
+                                                                   ny]  # xy bbox formula, normalized  to 0-1
+        wh = (2 * tf.sigmoid(y[..., 2:4])) ** 2 * anchor_grid / [ny, ny]  # fwh bbox formula. noremalized.
+        # concat modified values back together, operate yolo specified sigmoid on confs:
+        y = tf.concat([xy, wh, tf.sigmoid(y[..., 4:5 + self.nc]).astype(tf.float32),
+                       y[..., 5 + self.nc:].astype(tf.float32)], -1)
+        y = y.reshape([-1, self.na * ny * nx, self.no])  # reshape [bs,ny,nx,na,no]->[bs,nxi*nyi*na,no]
+        return y
+
+    @tf.function
     def call(self, inputs):
         """
         Model's detection layaer. exeutes conv2d operator on 3 input layers, and then if Training, reshapes result and return.
@@ -411,25 +423,17 @@ class TFDetect(keras.layers.Layer):
         tuple(2), z: packed output for nms, shape: [b,25200,no], x: list[3] grid layers, with shape detailed above
         """
 
-        z = []  # inference output
+        decoder_out = []  # inference output
         x = []
         for i in range(self.nl):
-            x.append(self.m[i](inputs[i])) # shape: [bs,nyi,nxi,na*no] where ny,nx=[[80,80],[40,40],[20,20]], no=117
+            x.append(self.m[i](inputs[i]))  # shape: [bs,nyi,nxi,na*no] where ny,nx=[[80,80],[40,40],[20,20]], no=117
             ny, nx = self.imgsz[0] // self.stride[i], self.imgsz[1] // self.stride[i]
-            x[i] = x[i].reshape( [-1,ny, nx, self.na,  self.no]) # from [bs,nyi,nxi,na*no] to [bs,nyi,nxi,na,no]
+            x[i] = x[i].reshape([-1, ny, nx, self.na, self.no])  # from [bs,nyi,nxi,na*no] to [bs,nyi,nxi,na,no]
             if not self.training:  # for inference & validation - process preds according to yolo spec,ready for nms:
-                y = x[i] # shape: [bs, ny,nx,na,no] where no=xywh+conf+nc+nm
-                # operate yolo adaptations on box:
-                xy = (tf.sigmoid(y[..., 0:2]) * 2 - 0.5 + self.grid[i]) / [nx, ny] # xy bbox formula, normalized  to 0-1
-                wh = (2*tf.sigmoid(y[..., 2:4])) ** 2 * self.anchor_grid[i]/[ny,ny] # fwh bbox formula. noremalized.
-                # concat modified values back together, operate yolo specified sigmoid on confs:
-                y = tf.concat([xy, wh, tf.sigmoid(y[..., 4:5 + self.nc]).astype(tf.float32), y[..., 5 + self.nc:].astype(tf.float32)], -1)
-                z.append(y.reshape([-1, self.na * ny * nx, self.no])) # reshape [bs,ny,nx,na,no]->[bs,nxi*nyi*na,no]
-                x[i] = x[i].transpose([0, 3, 1, 2, 4])
-            else: # train output a list of x[i] arrays , i=0:nl-1,  array shape:  [bs,na,ny,nx,no]
-                x[i] = x[i].transpose([0,3,1,2,4]) # from shape [bs,nyi,nxi,na, no] to [bs,na,nyi,nxi,no]
-
-        return  x if self.training else (tf.concat(z, axis=1), x) # x:[bs,nyi,nxi,na,no] for i=0:2], z: [b,25200,no]
+                y = self.decoder(x[i], nx, ny, self.grid[i], self.anchor_grid[i])
+                decoder_out.append(y)
+            x[i] = x[i].transpose([0, 3, 1, 2, 4])  # from shape [bs,nyi,nxi,na, no] to [bs,na,nyi,nxi,no]
+        return x if self.training else (tf.concat(decoder_out, axis=1), x)  # x:[bs,nyi,nxi,na,no] for i=0:2], z: [b,25200,no]
 
 
 class TFSegment(TFDetect):
