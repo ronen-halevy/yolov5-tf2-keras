@@ -24,7 +24,7 @@ def flatten_btargets(b_targets,):
         return imidx
 
     # generate imidxs - image index for each target. a ragged tensor, shape: [bi, None], int32
-    idx=tf.reshape(idx, [-1,1])
+    idx=tf.reshape(idx, [-1,1]) # does this line prevent unexplained error? TBD
     imidxs = tf.map_fn(fn=lambda t: generate_imidx(t[0], t[1]), elems=(b_targets, idx),
                       fn_output_signature=tf.RaggedTensorSpec(shape=[None], dtype=tf.int32))
     # flatten indices. shape [bnt], i.e. nof targets in batch
