@@ -305,7 +305,7 @@ class LoadImagesAndLabelsAndMasks:
         r = self.imgsz[0] / max(img0.shape[:2])  # ratio, + note- imgsz is of a square...
         padh = padw = 0
         if r != 1:  # don't resize if h or w equals  self.imgsz
-            img_resized = tf.image.resize(img0, self.imgsz, preserve_aspect_ratio=True)
+            img_resized = tf.image.resize(img0, self.imgsz, preserve_aspect_ratio=preserve_aspect_ratio)
         resized_shape = img_resized.shape[:2]
         if padding:
             padh = int((self.imgsz[1] - img_resized.shape[0]) / 2)
