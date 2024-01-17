@@ -73,6 +73,8 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     save_dir, epochs, batch_size, pretrained, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze, mask_ratio, augment, mosaic, debug = \
         Path(opt.save_dir), opt.epochs, opt.batch_size, opt.pretrained, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
         opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze, opt.mask_ratio, opt.augment, opt.mosaic, opt.debug
+    if debug:
+        tf.config.run_functions_eagerly(True)
     # callbacks.run('on_pretrain_routine_start')
     # todo to config:
     imgsz = [640, 640] # Todo ronen
