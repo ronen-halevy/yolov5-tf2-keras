@@ -130,14 +130,14 @@ class ComputeLoss:
             tf.TensorSpec(shape=[None, 160, 160], dtype=tf.float32, name='masks'),
             tf.TensorSpec(shape=[], dtype=tf.float32, name='mask_h'),
             tf.TensorSpec(shape=[], dtype=tf.float32, name='mask_w'),
-            tf.TensorSpec(shape=[], dtype=tf.float32, name='nm'),
             tf.TensorSpec(shape=[None, None, None, None], dtype=tf.float32, name='tobj'),
             tf.TensorSpec(shape=[], dtype=tf.float32, name='balancei'),
+            tf.TensorSpec(shape=[], dtype=tf.bool, name='anytargets'),
     )
     )  # (reduce_retracing=True)
     @tf.function
     def calc_loss(self, pi, indicesi, anchorsi, xywhni, tboxi, tclsi, tidxsi, proto, lbox, lseg, lobj, lcls, masks,
-              mask_h, mask_w, nm, tobj, balancei):
+              mask_h, mask_w, tobj, balancei, anytargets):
         """
         Calc loss for a single prediction grid layer
         :param pi: model prediction output shape: [b,na,gyi,gxi,4+1+nc+nm], gyi,gxi =[[80,80],[40,40],[20,20]]
@@ -155,9 +155,10 @@ class ComputeLoss:
         :param masks: masks (true labels), shape: [b,h/4,w/4],tf.float32
         :param mask_h:h/4
         :param mask_w:w/4
-        :param nm: num of proto masks -  32 in yolov5
         :param tobj: obj true value, shape: [b,na,gyi,gxi], gyi,gxi =[[80,80],[40,40],[20,20]]
         :param balancei: balance factor for tobj, per grid layer, float
+        :param anytargets: indication of valid true targets, bool
+
         :return:
             :lbox:  bbox loss accumulator, shape[1]
             : lseg: segmentation loss accumulator, shape[1]
@@ -167,15 +168,15 @@ class ComputeLoss:
 
         # step 4.1: take indices of targets, to fetch matching preds with:
         b, a, gj, gi = tf.unstack(indicesi, 4,
-                                  axis=1)  # an index consists of 4 tensors shape:[nti]: imgid, matched_anchor, grid location
+                                  axis=1)  # indicesi unstacked to 4: imgid, matched_anchor, grid location. shape:[nti,4]
         # ff = tf.split(indices[i], 4)
         # tobj = tf.zeros(pi.shape[:4], dtype=pi.dtype)  # init target obj with all 0s shape:[b,na,gy,gx]
         n = b.shape[0]  # number of targets
-        if n:
+        if anytargets:
             # step 4.2: extract relקvant preds by targets indices. shapes: pxy,pwh:[Nti,2] pcls:[Nti,nc] pmask:[Nti,nm]
 
             pxy, pwh, _, pcls, pmask = tf.split(pi[b.astype(tf.int32), a.astype(tf.int32), gj, gi],
-                                                (2, 2, 1, self.nc, nm), 1)
+                                                (2, 2, 1, self.nc, self.nm ), 1)
             # step 4.3: calc box loss as 1-mean(iou(pbox,tbox))
             pxy = tf.sigmoid(pxy) * 2 - 0.5  # xy  coords adapted according to yolo's formulas
             pwh = (tf.sigmoid(pwh) * 2) ** 2 * anchorsi  # wh coords  adapted according to yolo's formulas:
@@ -201,11 +202,11 @@ class ComputeLoss:
                 lcls += self.BCEcls(t, pcls)  # BCE, with SUM_OVER_BATCH_SIZE reduction: sum/(nof elements)
 
             # step 4.6: calc mask loss as a mean of objects lossess, which are mean of all mask pixels BCE loss:
-            if tuple(masks.shape[-2:]) != (mask_h, mask_w):  # downsample mask by 4. Default: skip already d-sampled
-                masks = tf.image.resize(masks, (mask_h, mask_w), method='nearest')[0]
+            # if tuple(masks.shape[-2:]) != (mask_h, mask_w):  # downsample mask by 4. Default: skip already d-sampled
+            #     masks = tf.image.resize(masks, (mask_h, mask_w), method='nearest')[0]
             marea = tf.math.reduce_prod(xywhni[:, 2:], axis=1)  # normed target areas for mean calc. shape:[nti]
             # convert xywhn->xyxy, downsampled by 4, for bbox. cropping. shape: [nt,4]:
-            mxyxy = xywh2xyxy(xywhni * tf.constant([mask_w, mask_h, mask_w, mask_h]))
+            mxyxy = xywh2xyxy(xywhni * tf.stack([mask_w, mask_h, mask_w, mask_h]))
             for bi in tf.unique(b)[0]:  # loop on images and sum lseg. unique(b) reduces all image's common targets
                 j = b == bi  # mask targets with current iteration's image index bi shape:[nti], bool
                 # In overlap object's mask pixels are colored by a per image index, otherwise index is batch global
@@ -266,7 +267,7 @@ class ComputeLoss:
             tobj = tf.zeros(pi.shape[:4], dtype=pi.dtype)  # init target obj with all 0s shape:[b,na,gy,gx]
             lbox, lseg, lobj, lcls = self.calc_loss(pi, indices[i], anchors[i], xywhn[i], tbox[i], tcls[i], tidxs[i], proto,
                                                 lbox, lseg, lobj, lcls, masks,
-                                                mask_h, mask_w, nm, tobj, self.balance[i])
+                                                mask_h, mask_w, tobj, self.balance[i], indices[i].shape[0]>0)
 
         if self.autobalance:
             self.balance = [x / self.balance[self.ssi] for x in self.balance]
@@ -278,6 +279,7 @@ class ComputeLoss:
         loss = lbox + lobj + lcls + lseg
         return loss * bs, tf.concat((lbox, lseg, lobj, lcls), axis=-1)
 
+    @tf.function
     def single_mask_loss(self, gt_mask, pmask, proto, xyxy, area):
         """ Description Calc mask loss as the mean of all input objects masks losses calculated separately.
         Each object mask loss is the mean of its mask pixels losses  calculated by BinaryCrossentropy,
