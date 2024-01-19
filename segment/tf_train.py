@@ -42,7 +42,7 @@ from utils.tf_general import (LOGGER, TQDM_BAR_FORMAT,  check_file,
 from segment.tb import GenericLogger
 from utils.tf_plots import plot_evolve, plot_labels
 from tf_dataloaders import DataLoader
-from simple_dataset import SimpleDataset
+# from simple_dataset import SimpleDataset
 
 from tf_data_reader import LoadImagesAndLabelsAndMasks
 
