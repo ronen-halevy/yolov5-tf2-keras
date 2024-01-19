@@ -256,7 +256,7 @@ class LoadImagesAndLabelsAndMasks:
             #     ress.append(res)
             # segments = tf.stack(ress, axis=0)
             segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w1, h1, padw, padh), elems=segments,
-                                 fn_output_signature=tf.RaggedTensorSpec(shape=[None, None], dtype=tf.float32,
+                                 fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
                                                                          ragged_rank=1))
             labels = self.xywhn2xyxy(self.labels[index], w1, h1, padw, padh)
 
