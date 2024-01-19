@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-def flatten_btargets(b_targets,):
+def flatten_btargets(b_targets, shape0):
     """
      Flatten batched images targets tensors to a flat targets tensors, i.e. shape: [b, None, 5] to [nt,6]
      To preserve targets to image relation, bidx-imnage index,is concatenated to entries, which are now 6 words wide.
@@ -10,7 +10,7 @@ def flatten_btargets(b_targets,):
     """
     targets = tf.reshape(b_targets.flat_values, [-1, 5])  # flatten ragged tensor shape: [bnt,5]
     # generate idx - target indices of related image:
-    idx = tf.range(tf.shape(b_targets)[0])[..., None]  # image indices. shape: [b]
+    idx = tf.range(shape0)[..., None]  # image indices. shape: [b]
 
     def generate_imidx(targets, idx):
         """

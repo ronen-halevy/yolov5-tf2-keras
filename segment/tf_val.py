@@ -235,7 +235,7 @@ def run(
         if not overlap: # convert ragged shape [b,nti,160,160] to tensor [b*nti,160,160]
             b_masks = tf.reshape(b_masks.flat_values, [-1, 160, 160])  # flatten ragged tensor shape: [bnt, 160,160]
         # Flatten batched targets ragged tensor shape: [b, nti,5] to tensor & concat im_idx, to shape:[nt,imidx+cls+xywh] i.e. [nt,6]
-        batch_targets = flatten_btargets(b_targets)
+        batch_targets = flatten_btargets(b_targets, tf.shape(batch_im)[0])
 
         nb, height, width, _ = batch_im.shape  # batch size, channels, height, width
         # inference + profiler:

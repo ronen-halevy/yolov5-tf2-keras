@@ -42,6 +42,8 @@ from utils.tf_general import (LOGGER, TQDM_BAR_FORMAT,  check_file,
 from segment.tb import GenericLogger
 from utils.tf_plots import plot_evolve, plot_labels
 from tf_dataloaders import DataLoader
+from simple_dataset import SimpleDataset
+
 from tf_data_reader import LoadImagesAndLabelsAndMasks
 
 from tf_loss import ComputeLoss
@@ -192,9 +194,14 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     create_dataloader_val=DataLoader()
     val_loader, _ ,val_nb = create_dataloader_val(val_path, batch_size, imgsz, mask_ratio, mosaic=False, augment=False, hyp=hyp, overlap=overlap)
 
-    if not resume:
-        if plots:
-            plot_labels(labels, names, save_dir)
+    # train_ds=SimpleDataset(imgsz, hyp, overlap, train_path, mask_ratio, mosaic, augment,batch_size)
+    # val_ds=SimpleDataset(imgsz, hyp, overlap, train_path, mask_ratio, mosaic, augment,batch_size)
+    # train_loader=train_ds.train_loader
+    # val_loader=val_ds.train_loader
+    # val_nb=nb = train_ds.nb
+    # # if not resume:
+    #     if plots:
+    #         plot_labels(labels, names, save_dir)
 
 
 
@@ -227,7 +234,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                 b_masks = tf.reshape(b_masks.flat_values, [-1, 160,160]) # flatten ragged tensor shape: [b, 160,160]
 
             # Flatten batched targets ragged tensor shape: [b, nti,5] to tensor & concat im_idx, to shape:[nt,imidx+cls+xywh] i.e. [nt,6]
-            targets = flatten_btargets(b_targets)
+            targets = flatten_btargets(b_targets, tf.shape(b_images)[0])
 
             with tf.GradientTape() as tape:
                 # model forward, with training=True, outputs a tuple:2 - preds list:3 & proto. Details:
