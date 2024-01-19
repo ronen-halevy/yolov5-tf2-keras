@@ -15,7 +15,7 @@ def parse_opt():
     parser.add_argument('--cfg', type=str, default='../models/segment/yolov5s-seg.yaml', help='model.yaml path')
     shapes=True
     if shapes:
-        parser.add_argument('--weights', type=str, default=ROOT / 'segment/saved_weights/best177.h5', #'/home/ronen/Downloads/best5.h5',#'/home/ronen/Downloads/best5.h5','segment/saved_weights/best177.h5',#
+        parser.add_argument('--weights', type=str, default=ROOT / 'segment/saved_weights/best.h5', #'/home/ronen/Downloads/best5.h5',#'/home/ronen/Downloads/best5.h5','segment/saved_weights/best177.h5',#
                             help='initial weights path')
         parser.add_argument('--data', type=str, default=ROOT / 'data/shapes-seg.yaml', help='dataset.yaml path')
     else:
@@ -24,8 +24,8 @@ def parse_opt():
         parser.add_argument('--data', type=str, default=ROOT / 'data/coco128-seg-short.yaml', help='dataset.yaml path')
 
     parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.scratch-low.yaml', help='hyperparameters path')
-    parser.add_argument('--epochs', type=int, default=300, help='total training epochs')
-    parser.add_argument('--batch-size', type=int, default=8, help='total batch size for all GPUs, -1 for autobatch')
+    parser.add_argument('--epochs', type=int, default=1000, help='total training epochs')
+    parser.add_argument('--batch-size', type=int, default=2, help='total batch size for all GPUs, -1 for autobatch')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='train, val image size (pixels)')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
