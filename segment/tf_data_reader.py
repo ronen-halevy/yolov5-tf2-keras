@@ -246,8 +246,6 @@ class LoadImagesAndLabelsAndMasks:
         else:
             (img, (h0, w0), (h1, w1), pad) = self.decode_resize(index, padding=True)
             shapes = tf.constant(((float(h0), float(w0)), (h1 / h0, w1 / w0), pad))  # for mAP rescaling.
-            segments = tf.ragged.constant(
-                self.segments[index])  # image_i segments ragged tensor: "shape": [nti,v_ij,2], vij:vertices in obj_j
             padw, padh = pad[0], pad[1]
             # map loops on all segments, scale normalized coordibnates to fit mage scaling:
             ress = []
@@ -255,9 +253,13 @@ class LoadImagesAndLabelsAndMasks:
             #     res = self.xyn2xy(segment, w1, h1, padw, padh)
             #     ress.append(res)
             # segments = tf.stack(ress, axis=0)
-            segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w1, h1, padw, padh), elems=segments,
-                                 fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
-                                                                         ragged_rank=1))
+            segmentidx = self.xyn2xys(self.segments[index], w1, h1, padw, padh)
+            segments = tf.ragged.constant(
+                segmentidx)  # image_i segments ragged tensor: "shape": [nti,v_ij,2], vij:vertices in obj_j
+
+            # segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w1, h1, padw, padh), elems=segments,
+            #                      fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
+            #                                                              ragged_rank=1))
             labels = self.xywhn2xyxy(self.labels[index], w1, h1, padw, padh)
 
             if self.augment:
@@ -362,6 +364,13 @@ class LoadImagesAndLabelsAndMasks:
         ymax = tf.math.multiply(float(h), (x[..., 2:3] + x[..., 4:5] / 2)) + float(padh)  # bottom right y
         y = tf.concat([x[..., 0:1], xmin, ymin, xmax, ymax], axis=-1, name='concat')
         return y
+
+    def xyn2xys(self, x, w, h, padw=0, padh=0):
+        yy=[]
+        for xx in x:
+            xx = xx*[w,h]+[padw, padh]
+            yy.append(xx)
+        return yy
 
     def xyn2xy(self, x, w, h, padw=0, padh=0):
         """
