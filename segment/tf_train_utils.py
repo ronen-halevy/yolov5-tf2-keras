@@ -23,10 +23,40 @@ def flatten_btargets(b_targets, shape0):
         imidx = tf.fill([tf.shape(targets)[0]], idx)
         return imidx
 
-    # generate imidxs - image index for each target. a ragged tensor, shape: [bi, None], int32
-    idx=tf.reshape(idx, [-1,1]) # does this line prevent unexplained error? TBD
-    imidxs = tf.map_fn(fn=lambda t: generate_imidx(t[0], t[1]), elems=(b_targets, idx),
+    def get_ncnt(targets):
+        """
+        Produces image idx with size of nof image's targets.
+        :param target: targets of image i, shape: [nti,5], float.
+        :param idx: index in batch of image i,  tf.int32
+        :return: A tensor with image duplicated for all image's targets. shape: [nti], tf.int32
+        :rtype:
+        """
+        imidx = tf.shape(targets)[0]
+        return imidx
+
+
+    targets_cnt = tf.map_fn(fn=lambda t: get_ncnt(t), elems=(b_targets),
+                      fn_output_signature=tf.int32)
+
+    def fill_indices(imidxs, idx):
+        """
+        Produces image idx with size of nof image's targets.
+        :param target: targets of image i, shape: [nti,5], float.
+        :param idx: index in batch of image i,  tf.int32
+        :return: A tensor with image duplicated for all image's targets. shape: [nti], tf.int32
+        :rtype:
+        """
+        imidx = tf.fill([imidxs], idx)
+
+        return imidx
+    imidxs = tf.map_fn(fn=lambda t: fill_indices(t[0], t[1]), elems=(targets_cnt, idx),
                       fn_output_signature=tf.RaggedTensorSpec(shape=[None], dtype=tf.int32))
+
+    # imidxs=tf.ragged.range(imidxs)
+    # generate imidxs - image index for each target. a ragged tensor, shape: [bi, None], int32
+    # idx=tf.reshape(idx, [-1,1]) # does this line prevent unexplained error? TBD
+    # imidxs = tf.map_fn(fn=lambda t: generate_imidx(t[0], t[1]), elems=(b_targets, idx),
+    #                   fn_output_signature=tf.RaggedTensorSpec(shape=[None], dtype=tf.int32))
     # flatten indices. shape [bnt], i.e. nof targets in batch
     imidxs = imidxs.flat_values
     # concat imidxs to target. result shape: [bnt, 6]
