@@ -20,7 +20,7 @@ def flatten_btargets(b_targets, shape0):
         :return: A tensor with image duplicated for all image's targets. shape: [nti], tf.int32
         :rtype:
         """
-        imidx = tf.fill([targets.shape[0]], idx)
+        imidx = tf.fill([tf.shape(targets)[0]], idx)
         return imidx
 
     # generate imidxs - image index for each target. a ragged tensor, shape: [bi, None], int32
