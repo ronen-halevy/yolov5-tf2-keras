@@ -189,10 +189,10 @@ def _parse_convolutional(x,  decay, filters, kernel_size=1, stride=1, pad=1, bn=
     return x
 
 
-def parse_model(inputs, na, nc, gd, gw,mlist, ch, imgsz, decay_factor):  # model_dict, input_channels(3)
+def parse_model(x, na, nc, gd, gw,mlist, ch, imgsz, decay_factor):  # model_dict, input_channels(3)
     """
 
-    @param inputs: model inputs, KerasTensor, shape:[b,w,h,ch], float
+    @param x: model inputs, KerasTensor, shape:[b,w,h,ch], float
     @param na: nof anchors per grid layer,  int
     @param nc: nof classes, int
     @param mlist: layers config list read from yaml
@@ -203,7 +203,7 @@ def parse_model(inputs, na, nc, gd, gw,mlist, ch, imgsz, decay_factor):  # model
     layers: list of parsed layers
     """
 
-    x = inputs
+    x_in=x
     na = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors
     no = na * (nc + 5)  # number of outputs = anchors * (classes + 5)
 
@@ -212,7 +212,7 @@ def parse_model(inputs, na, nc, gd, gw,mlist, ch, imgsz, decay_factor):  # model
     for i, (f, n, m, args) in enumerate(mlist):  # mlist-list of layers configs. from, number, module, args
         m_str = m
         if f != -1:  # if not from previous layer
-            x = y[f] if isinstance(f, int) else [x if j == -1 else y[j] for j in f]  # from earlier layers
+            x_in = x = y[f] if isinstance(f, int) else [x if j == -1 else y[j] for j in f]  # from earlier layers
         for j, a in enumerate(args):
             try:
                 args[j] = eval(a) if isinstance(a, str) else a  # eval strings
@@ -242,12 +242,7 @@ def parse_model(inputs, na, nc, gd, gw,mlist, ch, imgsz, decay_factor):  # model
             args.append(imgsz)
             args.append(training)
         if m_str == 'Conv':
-            inputs = x
             x = _parse_convolutional(x,  decay_factor, *args)
-            mmmodel = Model(inputs, x)
-            x = Model(inputs, x, name=f'Conv{i}')(inputs)
-            # layers.append(x)
-
         elif m_str == 'Shortcut':
             x = _parse_shortcut(x)
 
@@ -259,25 +254,10 @@ def parse_model(inputs, na, nc, gd, gw,mlist, ch, imgsz, decay_factor):  # model
             x = _parse_concat(x) # todo no args needed, *args)
         elif m_str == 'C3':
             kernel_size, stride=1,1
-            # for idx in range(n):
-            inputs = x
             x = _parse_c3(x,  decay_factor,  n, kernel_size, stride, *args)
-
-            mmmodel = Model(inputs, x)
-            x = Model(inputs, x, name=f'C3_{i}')(inputs)
-            # layers.append(x)
-            # print(mmmodel.summary())
-
         elif m_str == 'SPPF':
-            inputs = x
+            # inputs = x
             x = _parse_sppf(x,  decay_factor, kernel_size, stride, *args)
-
-
-            mmmodel = Model(inputs, x)
-            x = Model(inputs, x, name=f'SPPF_{i}')(inputs)
-            # layers.append(x)
-            # print(mmmodel.summary())
-
         elif m_str == 'Maxpool':
             x = _parse_maxpool(x,  *args)
         elif m_str == 'Reshape':
@@ -285,16 +265,13 @@ def parse_model(inputs, na, nc, gd, gw,mlist, ch, imgsz, decay_factor):  # model
         elif m_str == 'Output':
             x = _parse_output(x,  *args)
         elif m_str == 'Segment':
-            inputs=x
             x = _parse_segmment(x,  decay_factor,*args)
-            x = Model(inputs, x, name=f'Segment')(inputs)
-
-            # mmmodel = Model(inputs, x)
-            # print(mmmodel.summary())
         else:
             print('\n! Warning!! Unknown module name:', m_str)
         ch.append(c2)
-        # print('\n x.shape', x.shape)
+        # pack laers as models for a more compact network .summary() display:
+        x = Model(x_in, x, name=f'{m_str}_{i}')(x_in)
+        x_in=x # for next iter
         y.append(x)  # save output
         layers.append(x)
 
