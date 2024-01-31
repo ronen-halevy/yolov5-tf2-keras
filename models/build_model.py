@@ -115,8 +115,8 @@ def _parse_segmment(x, layers, decay_factor, nc=80, anchors=(), nm=32, npr=256, 
     p,_ = mask_proto(x[0], layers, decay_factor, npr, nm)
     p = tf.transpose(p, perm=[0, 3, 1, 2])  # from shape(1,160,160,32) to shape(1,32,160,160)
     x=detect(x, nc, anchors, nm, npr, ch, imgsz, training)
-    y=     (x, p) if training else (x[0], p, x[1])
-    layers.append(y)
+    y = (x, p) if training else (x[0], p, x[1])
+    # layers.append(y)
     return y,layers
 
 
@@ -134,7 +134,7 @@ def _parse_sppf(x, layers, decay_factor, kernel_size, stride, c2, pad=1):
     y3,_=_parse_maxpool(y2, layers, pool_size=5, stride_xy=1, pad='same')
     x = tf.keras.layers.Concatenate(axis=3)([x,y1,y2,y3])
     x,_ = _parse_convolutional(x, layers, decay_factor, c2, kernel_size=1, stride=1, pad=1, bn=1, activation=1)
-    layers.append(x)
+    # layers.append(x)
     return x, layers
 
 
@@ -148,7 +148,7 @@ def _parse_c3(x, layers, decay, n,kernel_size, stride, c1, filters, pad=1, bn=1,
     x2,_ = _parse_convolutional(x, layers, decay, c_, kernel_size, stride, pad, bn=1, activation=1)
     x = tf.keras.layers.Concatenate(axis=3)([x1, x2])
     x,_ = _parse_convolutional(x, layers, decay,filters, kernel_size, stride, pad, bn=1, activation=1)
-    layers.append(x)
+    # layers.append(x)
     return x, layers
 
 def _parse_bottleneck(x, c1, c2, decay=0.01, shortcut=True, g=1, e=0.5):
@@ -184,7 +184,7 @@ def _parse_convolutional(x, layers, decay, filters, kernel_size=1, stride=1, pad
     if activation:
         x = tf.keras.layers.LeakyReLU(alpha=0.1)(x)
 
-    layers.append(x)
+    # layers.append(x)
 
     return x, layers
 
@@ -242,7 +242,12 @@ def parse_model(inputs, na, nc, gd, gw,mlist, ch, imgsz, decay_factor):  # model
             args.append(imgsz)
             args.append(training)
         if m_str == 'Conv':
+            inputs = x
             x, layers = _parse_convolutional(x, layers, decay_factor, *args)
+            mmmodel = Model(inputs, x)
+            x = Model(inputs, x, name=f'Conv{i}')(inputs)
+            layers.append(x)
+
         elif m_str == 'Shortcut':
             x, layers = _parse_shortcut(x, layers)
 
@@ -254,18 +259,23 @@ def parse_model(inputs, na, nc, gd, gw,mlist, ch, imgsz, decay_factor):  # model
             x, layers = _parse_concat(x, layers) # todo no args needed, *args)
         elif m_str == 'C3':
             kernel_size, stride=1,1
-            print('n', n)
             # for idx in range(n):
             inputs = x
-            x, layers = _parse_c3(x, layers, decay_factor,  n, kernel_size, stride, *args)
+            x, _ = _parse_c3(x, layers, decay_factor,  n, kernel_size, stride, *args)
 
-            # mmmodel = Model(inputs, x)
+            mmmodel = Model(inputs, x)
+            x = Model(inputs, x, name=f'C3_{i}')(inputs)
+            layers.append(x)
             # print(mmmodel.summary())
 
         elif m_str == 'SPPF':
-            # inputs = x
+            inputs = x
             x, layers = _parse_sppf(x, layers, decay_factor, kernel_size, stride, *args)
-            # mmmodel = Model(inputs, x)
+
+
+            mmmodel = Model(inputs, x)
+            x = Model(inputs, x, name=f'SPPF_{i}')(inputs)
+            layers.append(x)
             # print(mmmodel.summary())
 
         elif m_str == 'Maxpool':
@@ -275,8 +285,10 @@ def parse_model(inputs, na, nc, gd, gw,mlist, ch, imgsz, decay_factor):  # model
         elif m_str == 'Output':
             x, layers = _parse_output(x, layers, *args)
         elif m_str == 'Segment':
-            # inputs=x
+            inputs=x
             x, layers = _parse_segmment(x, layers, decay_factor,*args)
+            x = Model(inputs, x, name=f'Segment')(inputs)
+            layers.append(x)
 
             # mmmodel = Model(inputs, x)
             # print(mmmodel.summary())
