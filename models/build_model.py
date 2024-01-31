@@ -62,7 +62,7 @@ def _parse_shortcut(x, layers):
 
 
 def mask_proto(x, layers, decay_factor, npr, nm):
-    x,_=_parse_convolutional(x, layers, decay_factor, npr, kernel_size=1)
+    x,_=_parse_convolutional(x, layers, decay_factor, npr, kernel_size=3)
     size = (2,2)
     x, layers = _parse_upsample(x, layers, size, interpolation= 'nearest')
     x,_=_parse_convolutional(x, layers, decay_factor,  npr, kernel_size=3)
@@ -99,8 +99,8 @@ def detect(inputs, nc=80, anchors=(), nm=32, npr=256, ch=(), imgsz=(640, 640), t
         layers=[]
 
         for i in range(nl):
-            y, _ =_parse_convolutional(inputs[i], layers, decay_factor, no * na, kernel_size=1, stride=1, pad=1, bn=1,
-                                 activation=1)
+            y, _ =_parse_convolutional(inputs[i], layers, decay_factor, no * na, kernel_size=1, stride=1, pad=1, bn=0,
+                                 activation=0)
             x.append(y)
             ny, nx = imgsz[0] // stride[i], imgsz[1] // stride[i]
             x[i] = tf.reshape(x[i], [-1, ny, nx, na, no])  # from [bs,nyi,nxi,na*no] to [bs,nyi,nxi,na,no]
@@ -115,20 +115,23 @@ def _parse_segmment(x, layers, decay_factor, nc=80, anchors=(), nm=32, npr=256, 
     p,_ = mask_proto(x[0], layers, decay_factor, npr, nm)
     p = tf.transpose(p, perm=[0, 3, 1, 2])  # from shape(1,160,160,32) to shape(1,32,160,160)
     x=detect(x, nc, anchors, nm, npr, ch, imgsz, training)
-    return     (x, p) if training else (x[0], p, x[1])
+    y=     (x, p) if training else (x[0], p, x[1])
+    layers.append(y)
+    return y,layers
 
 
 
 
 
-def _parse_sppf(x, layers, decay_factor, kernel_size, stride, c1,c2, pad=1):
+
+def _parse_sppf(x, layers, decay_factor, kernel_size, stride, c2, pad=1):
 
     # e=0.5 # todo ronen
-    c_ = c1 // 2  # hidden channels
+    c_ = x.shape[3] // 2  # hidden channels
     x,_=_parse_convolutional(x, layers, decay_factor, c_, kernel_size=1, stride=1, pad=1, bn=1, activation=1)
     y1,_=_parse_maxpool(x, layers, pool_size=5, stride_xy=1, pad='same')
-    y2,_=_parse_maxpool(x, layers, pool_size=5, stride_xy=1, pad='same')
-    y3,_=_parse_maxpool(x, layers, pool_size=5, stride_xy=1, pad='same')
+    y2,_=_parse_maxpool(y1, layers, pool_size=5, stride_xy=1, pad='same')
+    y3,_=_parse_maxpool(y2, layers, pool_size=5, stride_xy=1, pad='same')
     x = tf.keras.layers.Concatenate(axis=3)([x,y1,y2,y3])
     x,_ = _parse_convolutional(x, layers, decay_factor, c2, kernel_size=1, stride=1, pad=1, bn=1, activation=1)
     layers.append(x)
@@ -210,7 +213,6 @@ def parse_model(inputs, na, nc, gd, gw,mlist, ch, imgsz, decay_factor):  # model
         m_str = m
         if f != -1:  # if not from previous layer
             x = y[f] if isinstance(f, int) else [x if j == -1 else y[j] for j in f]  # from earlier layers
-
         for j, a in enumerate(args):
             try:
                 args[j] = eval(a) if isinstance(a, str) else a  # eval strings
@@ -261,7 +263,10 @@ def parse_model(inputs, na, nc, gd, gw,mlist, ch, imgsz, decay_factor):  # model
             # print(mmmodel.summary())
 
         elif m_str == 'SPPF':
+            # inputs = x
             x, layers = _parse_sppf(x, layers, decay_factor, kernel_size, stride, *args)
+            # mmmodel = Model(inputs, x)
+            # print(mmmodel.summary())
 
         elif m_str == 'Maxpool':
             x, layers = _parse_maxpool(x, layers, *args)
@@ -270,10 +275,13 @@ def parse_model(inputs, na, nc, gd, gw,mlist, ch, imgsz, decay_factor):  # model
         elif m_str == 'Output':
             x, layers = _parse_output(x, layers, *args)
         elif m_str == 'Segment':
+            # inputs=x
             x, layers = _parse_segmment(x, layers, decay_factor,*args)
 
+            # mmmodel = Model(inputs, x)
+            # print(mmmodel.summary())
         else:
-            print('\n!!!!!!!! unknown', m_str)
+            print('\n! Warning!! Unknown module name:', m_str)
         ch.append(c2)
         # print('\n x.shape', x.shape)
         y.append(x)  # save output
@@ -307,7 +315,7 @@ if __name__ == '__main__':
     d = deepcopy(yaml)
 
     mlist = d['backbone'] + d['head']
-    nc = 7
+    nc = 80
     training = True
     imgsz = [640, 640]
     ch = 3
