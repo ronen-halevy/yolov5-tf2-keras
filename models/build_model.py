@@ -26,11 +26,6 @@ def make_divisible(x, divisor):
     return math.ceil(x / divisor) * divisor
 
 
-def _parse_output(x, nc):
-    #
-    return x
-
-
 def parse_reshape(x, dim0, dim1, dim2, dim3):
     x = tf.keras.layers.Reshape((dim0, dim1, dim2, dim3))(x)
 
@@ -73,7 +68,9 @@ def mask_proto(x, decay_factor, npr, nm):
     return x
 
 
-def decoder(y, nx, ny, grid, anchor_grid):
+def decoder(y, nx, ny, nc, na, grid, anchor_grid):
+    xy = (tf.sigmoid(y[..., 0:2]) * 2 - 0.5 + grid) / [nx,
+                                                       ny]  # xy bbox formula, normalized  to 0-1
     wh = (2 * tf.sigmoid(y[..., 2:4])) ** 2 * anchor_grid / [ny, ny]  # fwh bbox formula. noremalized.
     # concat modified values back together, operate yolo specified sigmoid on confs:
 
@@ -83,7 +80,7 @@ def decoder(y, nx, ny, grid, anchor_grid):
     return y
 
 
-def detect(inputs, nc=80, anchors=(), nm=32, npr=256, ch=(), imgsz=(640, 640), training=False, w=None):
+def detect(inputs, decay_factor, nc=80, anchors=(), nm=32, imgsz=(640, 640), training=False, w=None):
     stride = tf.convert_to_tensor(w.stride.numpy() if w is not None else [8, 16, 32], dtype=tf.float32)
     no = 5 + nc + nm  # number of outputs per anchor
     nl = len(anchors)  # number of detection layers
@@ -98,7 +95,6 @@ def detect(inputs, nc=80, anchors=(), nm=32, npr=256, ch=(), imgsz=(640, 640), t
     #####
     decoder_out = []  # inference output
     x = []
-    layers = []
 
     for i in range(nl):
         y = _parse_convolutional(inputs[i], decay_factor, no * na, kernel_size=1, stride=1, bn=0,
@@ -107,18 +103,17 @@ def detect(inputs, nc=80, anchors=(), nm=32, npr=256, ch=(), imgsz=(640, 640), t
         ny, nx = imgsz[0] // stride[i], imgsz[1] // stride[i]
         x[i] = tf.reshape(x[i], [-1, ny, nx, na, no])  # from [bs,nyi,nxi,na*no] to [bs,nyi,nxi,na,no]
         if not training:  # for inference & validation - process preds according to yolo spec,ready for nms:
-            y = decoder(x[i], nx, ny, grid[i], anchor_grid[i])
+            y = decoder(x[i], nx, ny, nc, na, grid[i], anchor_grid[i])
             decoder_out.append(y)
         x[i] = tf.transpose(x[i], [0, 3, 1, 2, 4])  # from shape [bs,nyi,nxi,na, no] to [bs,na,nyi,nxi,no]
     return x if training else (tf.concat(decoder_out, axis=1), x)  # x:[bs,nyi,nxi,na,no] for i=0:2], z: [b,25200,no]
 
 
-def _parse_segmment(x, decay_factor, nc=80, anchors=(), nm=32, npr=256, ch=(), imgsz=(640, 640), training=False):
+def _parse_segmment(x, decay_factor, nc=80, anchors=(), nm=32, npr=256, imgsz=(640, 640), training=False):
     p = mask_proto(x[0], decay_factor, npr, nm)
     p = tf.transpose(p, perm=[0, 3, 1, 2])  # from shape(1,160,160,32) to shape(1,32,160,160)
-    x = detect(x, nc, anchors, nm, npr, ch, imgsz, training)
+    x = detect(x, decay_factor, nc, anchors, nm, imgsz, training)
     y = (x, p) if training else (x[0], p, x[1])
-    # layers.append(y)
     return y
 
 
@@ -135,29 +130,27 @@ def _parse_sppf(x, decay_factor, c2, pool_size):
     return x
 
 
-def _parse_c3(x, decay, n, kernel_size, stride, c1, filters,  bn=1, activation=1):
+def _parse_c3(x, decay, n, kernel_size, stride, filters, shortcut=True):
     e = 0.5
     c_ = int(filters * e)  # hidden channels
     x1 = _parse_convolutional(x, decay, c_, kernel_size, stride, bn=1, activation=1)
     for idx in range(n):
-        x1 = _parse_bottleneck(x1, c_, c_, shortcut=True, g=1, e=1.0)
+        x1 = _parse_bottleneck(x1, c_, shortcut, e=1.0)
     x2 = _parse_convolutional(x, decay, c_, kernel_size, stride, bn=1, activation=1)
     x = tf.keras.layers.Concatenate(axis=3)([x1, x2])
     x = _parse_convolutional(x, decay, filters, kernel_size, stride, bn=1, activation=1)
-    #
     return x
 
 
-def _parse_bottleneck(x, c1, c2, decay=0.01, shortcut=True, g=1, e=0.5):
-    c_ = int(c2 * e)  # hidden channels
-    layers = []
+def _parse_bottleneck(x, filters2, decay=0.01, shortcut=True, e=0.5):
+    c_ = int(filters2 * e)  # hidden channels
     kernel_size = 1
     stride = 1
     x1 = _parse_convolutional(x, decay, c_, kernel_size, stride)
     kernel_size = 3
-    x1 = _parse_convolutional(x1, decay, c2, kernel_size, stride)
+    x1 = _parse_convolutional(x1, decay, filters2, kernel_size, stride)
 
-    add = shortcut and c1 == c2
+    add = shortcut and x.shape[3] == filters2  # n ch in = n ch out
     if add:
         x1 = tf.keras.layers.Add()([x, x1])
     return x1
@@ -182,11 +175,11 @@ def _parse_convolutional(x, decay, filters, kernel_size=1, stride=1, bn=1, activ
     return x
 
 
-def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor):  # model_dict, input_channels(3)
+def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, training):  # model_dict, input_channels(3)
     """
 
     @param x: model inputs, KerasTensor, shape:[b,w,h,ch], float
-    @param na: nof anchors per grid layer,  int
+    @param anchors:  anchors, shape: [nl, na,2]
     @param nc: nof classes, int
     @param mlist: layers config list read from yaml
     @param ch: nof channels, list, iteratively populated, init value: ch=[3]
@@ -215,21 +208,20 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor):  # mode
         n = max(round(n * gd), 1) if n > 1 else n  # depth gain
         if m_str in [
             'C3', 'Conv', 'SPPF']:
-            c2 = args[0]  # c1: nof layer's in channels, c2: nof layer's out channels
+            c2 = args[0]  # c2: nof out channels
             c2 = make_divisible(c2 * gw, 8) if c2 != no else c2
 
             args = [c2, *args[1:]]  # [nch_in, nch_o, args]
         if m_str in [
             'C3']:
-            c1 = ch[f]  # c1: nof layer's in channels, c2: nof layer's out channels
-            args = [c1, *args]  # [nch_in, nch_o, args]
+            args = [*args]  # [nch_in, nch_o, args]
 
         if m_str == 'Concat':
             c2 = sum(ch[-1 if x == -1 else x + 1] for x in f)
         elif m_str in ['Detect', 'Segment']:
             if m_str == 'Segment':
                 args[3] = make_divisible(args[3] * gw, 8)
-            args.append([ch[x + 1] for x in f])
+            # args.append([ch[x + 1] for x in f])
             if isinstance(args[1], int):  # number of anchors
                 args[1] = [list(range(args[1] * 2))] * len(f)
             args.append(imgsz)
@@ -249,14 +241,13 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor):  # mode
             kernel_size, stride = 1, 1
             x = _parse_c3(x, decay_factor, n, kernel_size, stride, *args)
         elif m_str == 'SPPF':
-            x = _parse_sppf(x, decay_factor,   *args)
+            x = _parse_sppf(x, decay_factor, *args)
         elif m_str == 'Maxpool':
             x = _parse_maxpool(x, *args)
         elif m_str == 'Reshape':
             x = parse_reshape(x, *args)
-        elif m_str == 'Output':
-            x = _parse_output(x, *args)
         elif m_str == 'Segment':
+
             x = _parse_segmment(x, decay_factor, *args)
         else:
             print('\n! Warning!! Unknown module name:', m_str)
@@ -270,11 +261,10 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor):  # mode
     return layers
 
 
-def build_model(inputs, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor):
+def build_model(inputs, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, training):
     """
     layers: list of parsed layers
     @param inputs:model inputs, KerasTensor, shape:[b,w,h,ch], float
-    @param na:nof anchors per grid layer,  int
     @param nc:nof classes, int
     @param mlist: layers config list read from yaml
     @param ch: nof channels, list, iteratively populated, init value: ch=[3]
@@ -283,40 +273,44 @@ def build_model(inputs, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor):
     @return:
         model : functional model
     """
-    layers = parse_model(inputs, anchors, nc, gd, gw, mlist, ch, imgsz=imgsz, decay_factor=decay_factor)
+    layers = parse_model(inputs, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, training)
     model = Model(inputs, layers[-1])
     return model
 
 
 if __name__ == '__main__':
-    cfg = '/home/ronen/devel/PycharmProjects/tf_yolov5/models/segment/yolov5s-seg.yaml'
-    # cfg = '/home/ronen/devel/PycharmProjects/yolo-v3-tf2/config/models/yolov3/yolov3.yaml'
-    with open(cfg) as f:
-        yaml = yaml.load(f, Loader=yaml.FullLoader)  # model dict
+    def demo():
+        cfg = '/home/ronen/devel/PycharmProjects/tf_yolov5/models/segment/yolov5s-seg.yaml'
+        # cfg = '/home/ronen/devel/PycharmProjects/yolo-v3-tf2/config/models/yolov3/yolov3.yaml'
+        with open(cfg) as f:
+            model_cfg = yaml.load(f, Loader=yaml.FullLoader)  # model dict
 
-    d = deepcopy(yaml)
+        d = deepcopy(model_cfg)
 
-    mlist = d['backbone'] + d['head']
-    nc = 80
-    training = True
-    imgsz = [640, 640]
-    ch = 3
-    bs = 2
-    inputs = Input(shape=(640, 640, 3))
+        # mlist = d['backbone'] + d['head']
+        # nc = 80
+        imgsz = [640, 640]
+        ch = 3
+        # bs = 2
+        inputs = Input(shape=(640, 640, 3))
 
-    decay_factor = 0.01
-    # na = 3
-    gd = 0.33  # depth multiply
-    gw = 0.5  # width multiply
-    anchors, nc, gd, gw, mlist = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d['backbone'] + d[
-        'head']
+        decay_factor = 0.01
+        # na = 3
+        # gd = 0.33  # depth multiply
+        # gw = 0.5  # width multiply
+        anchors, nc, gd, gw, mlist = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d['backbone'] + d[
+            'head']
 
-    model = build_model(inputs, anchors, nc, gd, gw, mlist, ch=[ch], imgsz=imgsz, decay_factor=decay_factor)
-    import numpy as np
+        model = build_model(inputs, anchors, nc, gd, gw, mlist, ch=[ch], imgsz=imgsz, decay_factor=decay_factor,
+                            training=True)
+        import numpy as np
 
-    hh = model.trainable_variables
-    np.sum([np.prod(v.get_shape().as_list()) for v in model.trainable_variables])
+        hh = model.trainable_variables
+        np.sum([np.prod(v.get_shape().as_list()) for v in model.trainable_variables])
 
-    xx = tf.zeros([1, 640, 640, 3], dtype=tf.float32)
-    outp = model(xx)
-    print(model.summary())
+        xx = tf.zeros([1, 640, 640, 3], dtype=tf.float32)
+        outp = model(xx)
+        print(model.summary())
+
+
+    demo()
