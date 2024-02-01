@@ -66,15 +66,24 @@ def mask_proto(x, decay_factor, npr, nm):
     return x
 
 
-def decoder(y, nx, ny, nc, na, grid, anchor_grid):
-    xy = (tf.sigmoid(y[..., 0:2]) * 2 - 0.5 + grid) / [nx,
-                                                       ny]  # xy bbox formula, normalized  to 0-1
-    wh = (2 * tf.sigmoid(y[..., 2:4])) ** 2 * anchor_grid / [ny, ny]  # fwh bbox formula. noremalized.
-    # concat modified values back together, operate yolo specified sigmoid on confs:
+def decoder(y, nx, ny, nc, na, nm, grid, anchor_grid):
+    xy = tf.keras.activations.sigmoid(y[..., 0:2])
+    xy=tf.keras.layers.Multiply()([xy, tf.constant([2])])
+    xy = tf.keras.layers.subtract([xy,tf.constant([0.5])])
+    xy = tf.keras.layers.add([xy,grid])
+    gg=1. / nx
+    gg=tf.reshape(gg, [1])
+    xy=tf.keras.layers.Multiply()([xy,gg])
 
-    y = tf.concat([xy, wh, tf.sigmoid(y[..., 4:5 + nc]).astype(tf.float32), y[..., 5 + nc:].astype(tf.float32)], -1)
-    no = nc + 5  # number of outputs per anchor
-    y = y.reshape([-1, na * ny * nx, no])  # reshape [bs,ny,nx,na,no]->[bs,nxi*nyi*na,no]
+    wh = tf.sigmoid(y[..., 2:4])# ** 2 * anchor_grid / [ny, ny]  # fwh bbox formula. noremalized.
+    wh=tf.keras.layers.Multiply()([wh, tf.constant([2])])
+    wh=tf.keras.layers.Multiply()([wh, wh])
+    wh=tf.keras.layers.Multiply()([wh, anchor_grid])
+    wh=tf.keras.layers.Multiply()([wh, gg])
+    cls = tf.keras.activations.sigmoid(y[..., 4:5 + nc])
+    mask = y[..., 5 + nc:]
+    y = tf.keras.layers.Concatenate(axis=-1)([xy, wh, cls, mask])
+    y = tf.keras.layers.Reshape([ na * int(nx.numpy() )* int(ny.numpy()), 5+nc+nm])(y)
     return y
 
 
@@ -83,7 +92,15 @@ def detect(inputs, decay_factor, nc=80, anchors=(), nm=32, imgsz=(640, 640), tra
     no = 5 + nc + nm  # number of outputs per anchor
     nl = len(anchors)  # number of detection layers
     na = len(anchors[0]) // 2  # number of anchors
-    grid = [tf.zeros(1)] * nl  # init grid
+    grid = []
+    for i in range(nl):
+        ny, nx = imgsz[0] // stride[i], imgsz[1] // stride[i]
+        xv, yv = tf.meshgrid(tf.range(nx, dtype=tf.float32), tf.range(ny, dtype=tf.float32))  # shapes: [ny,nx]
+        # stack to grid, reshape & transpose to predictions matching shape:
+        layer_grid = tf.stack([xv, yv], 2).reshape([1, 1, ny, nx, 2])
+        layer_grid = layer_grid.transpose([0, 2, 3, 1, 4])  # shape: [1, ny, nx, 1, 2]
+        grid.append(layer_grid)
+
     # reshape anchors and normalize by stride values:
     anchors = tf.convert_to_tensor(w.anchors.numpy(), dtype=tf.float16) if w is not None else \
         tf.convert_to_tensor(anchors, dtype=tf.float16).reshape([nl, na, 2]) / stride.reshape([nl, 1, 1])
@@ -97,13 +114,14 @@ def detect(inputs, decay_factor, nc=80, anchors=(), nm=32, imgsz=(640, 640), tra
     for i in range(nl):
         y = _parse_convolutional(inputs[i], decay_factor, no * na, kernel_size=1, stride=1, bn=0,
                                  activation=0)
-        x.append(y)
-        ny, nx = imgsz[0] // stride[i], imgsz[1] // stride[i]
-        x[i] = tf.reshape(x[i], [-1, ny, nx, na, no])  # from [bs,nyi,nxi,na*no] to [bs,nyi,nxi,na,no]
+        # x.append(y)
+        ny, nx = imgsz[0] // stride[i], imgsz[1] // stride[i] # ronen todo check reuse calc
+        y = tf.reshape(y, [-1, ny, nx, na, no])  # from [bs,nyi,nxi,na*no] to [bs,nyi,nxi,na,no]
         if not training:  # for inference & validation - process preds according to yolo spec,ready for nms:
-            y = decoder(x[i], nx, ny, nc, na, grid[i], anchor_grid[i])
-            decoder_out.append(y)
-        x[i] = tf.transpose(x[i], [0, 3, 1, 2, 4])  # from shape [bs,nyi,nxi,na, no] to [bs,na,nyi,nxi,no]
+            z = decoder(y, nx, ny, nc, na, nm, grid[i], anchor_grid[i])
+            decoder_out.append(z)
+        y = tf.transpose(y, [0, 3, 1, 2, 4])  # from shape [bs,nyi,nxi,na, no] to [bs,na,nyi,nxi,no]
+        x.append(y)
     return x if training else (tf.concat(decoder_out, axis=1), x)  # x:[bs,nyi,nxi,na,no] for i=0:2], z: [b,25200,no]
 
 
@@ -260,7 +278,7 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, training
     return layers
 
 
-def build_model(inputs, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, training):
+def build_model(cfg, imgsz, training):
     """
     layers: list of parsed layers
     @param inputs:model inputs, KerasTensor, shape:[b,w,h,ch], float
@@ -277,6 +295,15 @@ def build_model(inputs, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, tra
     @return:
         model : functional model
     """
+    with open(cfg) as f:
+        model_cfg = yaml.load(f, Loader=yaml.FullLoader)  # model dict
+
+    d = deepcopy(model_cfg)
+    anchors, nc, gd, gw, mlist = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d['backbone'] + d[
+        'head']
+    inputs = Input(shape=(640, 640, 3))
+    ch = [3]
+    decay_factor = 0.01
     layers = parse_model(inputs, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, training)
     model = Model(inputs, layers[-1])
     return model
@@ -286,27 +313,25 @@ if __name__ == '__main__':
     def demo():
         cfg = '/home/ronen/devel/PycharmProjects/tf_yolov5/models/segment/yolov5s-seg.yaml'
         # cfg = '/home/ronen/devel/PycharmProjects/yolo-v3-tf2/config/models/yolov3/yolov3.yaml'
-        with open(cfg) as f:
-            model_cfg = yaml.load(f, Loader=yaml.FullLoader)  # model dict
 
-        d = deepcopy(model_cfg)
 
         # mlist = d['backbone'] + d['head']
         # nc = 80
         imgsz = [640, 640]
         ch = 3
         # bs = 2
-        inputs = Input(shape=(640, 640, 3))
 
         decay_factor = 0.01
         # na = 3
         # gd = 0.33  # depth multiply
         # gw = 0.5  # width multiply
-        anchors, nc, gd, gw, mlist = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d['backbone'] + d[
-            'head']
-
-        model = build_model(inputs, anchors, nc, gd, gw, mlist, ch=[ch], imgsz=imgsz, decay_factor=decay_factor,
+        # anchors, nc, gd, gw, mlist = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d['backbone'] + d[
+        #     'head']
+        model = build_model(cfg,  imgsz=imgsz,
+                            training=False)
+        model = build_model(cfg,  imgsz=imgsz,
                             training=True)
+
         import numpy as np
 
         np.sum([np.prod(v.get_shape().as_list()) for v in model.trainable_variables])
@@ -315,6 +340,7 @@ if __name__ == '__main__':
         outp = model(xx)
         print(outp)
         print(model.summary())
+
 
 
     demo()
