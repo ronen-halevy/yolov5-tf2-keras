@@ -1,34 +1,32 @@
 from tensorflow.keras.regularizers import l2
-
 from tensorflow.keras import Input, Model
 from tensorflow.python.ops.numpy_ops import np_config
-
-np_config.enable_numpy_behavior()  # allows running NumPy code, accelerated by TensorFlow
 
 import sys
 from copy import deepcopy
 from pathlib import Path
 import yaml  # for torch hub
+import tensorflow as tf
+import math
+
+np_config.enable_numpy_behavior()  # allows running NumPy code, accelerated by TensorFlow
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 
-import tensorflow as tf
-import math
-
 
 def make_divisible(x, divisor):
-    # Returns nearest x divisible by divisor
-    # if isinstance(divisor, torch.Tensor):
-    #     divisor = int(divisor.max())  # to int
+    """
+    Returns nearest x divisible by divisor
+    """
+
     return math.ceil(x / divisor) * divisor
 
 
 def parse_reshape(x, dim0, dim1, dim2, dim3):
     x = tf.keras.layers.Reshape((dim0, dim1, dim2, dim3))(x)
-
     return x
 
 
@@ -181,10 +179,13 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, training
     @param x: model inputs, KerasTensor, shape:[b,w,h,ch], float
     @param anchors:  anchors, shape: [nl, na,2]
     @param nc: nof classes, int
+    @param gd: depth gain. Factors nof layers' repeats.  float
+    @param gw: width gain, Factors nof layers' filters. float
     @param mlist: layers config list read from yaml
     @param ch: nof channels, list, iteratively populated, init value: ch=[3]
     @param imgsz: image size, list[2] (can be set to [None,None] )
     @param decay_factor: value for conv kernel_regularizer, float
+    @param training:  if false (inference  & validation), model returns also decoded output for nms process, bool
     @return:
     layers: list of parsed layers
     """
@@ -206,14 +207,12 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, training
                 pass
 
         n = max(round(n * gd), 1) if n > 1 else n  # depth gain
-        if m_str in [
-            'C3', 'Conv', 'SPPF']:
+        if m_str in ['C3', 'Conv', 'SPPF']:
             c2 = args[0]  # c2: nof out channels
             c2 = make_divisible(c2 * gw, 8) if c2 != no else c2
 
             args = [c2, *args[1:]]  # [nch_in, nch_o, args]
-        if m_str in [
-            'C3']:
+        if m_str in ['C3']:
             args = [*args]  # [nch_in, nch_o, args]
 
         if m_str == 'Concat':
@@ -265,11 +264,16 @@ def build_model(inputs, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, tra
     """
     layers: list of parsed layers
     @param inputs:model inputs, KerasTensor, shape:[b,w,h,ch], float
+    @param anchors:  anchors, shape: [nl, na,2]
     @param nc:nof classes, int
+    @param gd: depth gain. Factors nof layers' repeats.  float
+    @param gw: width gain, Factors nof layers' filters. float
     @param mlist: layers config list read from yaml
     @param ch: nof channels, list, iteratively populated, init value: ch=[3]
     @param imgsz: image size, list[2] (can be set to [None,None] )
     @param decay_factor: value for conv kernel_regularizer, float
+    @param training: if not training, model returns also decoded output for nms process, bool
+
     @return:
         model : functional model
     """
@@ -305,11 +309,11 @@ if __name__ == '__main__':
                             training=True)
         import numpy as np
 
-        hh = model.trainable_variables
         np.sum([np.prod(v.get_shape().as_list()) for v in model.trainable_variables])
 
         xx = tf.zeros([1, 640, 640, 3], dtype=tf.float32)
         outp = model(xx)
+        print(outp)
         print(model.summary())
 
 
