@@ -100,7 +100,7 @@ def process_batch(detections, labels, iouv, pred_masks=None, gt_masks=None, over
     Detection can be either a mask or a bbox, and iou is computed accordingly.
 
     Arguments:
-        detections (array[Np, 6]), x1, y1, x2, y2, conf, class
+        detections (array[Np, 38]), (xyxy+conf+cls+32masks)
         labels (array[nl, 5]), class, x1, y1, x2, y2
         iouv (array [10]), iou vector for mAP@0.5:0.95  linspace(start: 0.5, end: 0.95,steps: 10)
         pred_masks: shape: A mask map per each of the N predictions  1-object pixel 0-background, shape:[Np,h/4, w/4]
@@ -124,9 +124,9 @@ def process_batch(detections, labels, iouv, pred_masks=None, gt_masks=None, over
             gt_masks = tf.image.resize(gt_masks[...,None], pred_masks.shape[1:])
             gt_masks = gt_masks.gt_(0.5) # thresh after resize interpolation
         # iou gt prepare: flatten gt masks shape to shape: [nl, w/4*h/4):
-        gt_mask_reshaped = tf.reshape(gt_masks, (gt_masks.shape[0], -1))
+        gt_mask_reshaped = tf.reshape(gt_masks, (gt_masks.shape[0], -1)) # shape: [nl,160*160]
         # iou pred prepare: flatten pred masks shape to shape: [np, w/4*h/4):
-        pred_mask_reshaped = tf.reshape(pred_masks, (pred_masks.shape[0], -1))
+        pred_mask_reshaped = tf.reshape(pred_masks, (pred_masks.shape[0], -1)) # shape[Np, 160*160]
         # iou between nl and Npi pred masks. iou resultant shape: [nl,Npi]
         iou = mask_iou(gt_mask_reshaped, pred_mask_reshaped) # shape: [nl, Np]
     else:  # boxes
@@ -146,8 +146,9 @@ def process_batch(detections, labels, iouv, pred_masks=None, gt_masks=None, over
         if x.shape[0]: # if any iou thresh survivors:
             # `matches`holds surviers ious, concats (i,j,iou) of all n thresh surviers. shape[n,3]:
             matches = (tf.concat((x.astype(tf.float32),tf.gather_nd(iou, x)[..., None]), 1).numpy())
-            # if x[0].shape[0] > 1: #
-            # Remove entries of label duplicates, if label ind contained in multi entries, select that with biggest iou
+            # if x[0].shape[0] > 1:
+            # Remove entries of label or preds duplicates. in case of a dup, select that with larger iou.
+            # So sort first by iou, larger iou in the end, since unique takes latest occurance:
             matches = matches[matches[:, 2].argsort()[::-1]]  #assending sort by iou, b4 unique takes latest occurance.
             matches = matches[np.unique(matches[:, 1], return_index=True)[1]] # unique takes latest occurances
             # Remove entries of preds duplicates, if pred ind contained in multi entries, select that with biggest iou
@@ -195,17 +196,6 @@ def run(
         process = process_mask_native  # more accurate
     else:
         process = process_mask  # faster
-
-    # Initialize/load model and set device
-    training = model is not None
-    if training:  # called by train.py
-        # pt, jit, engine = True, False, False  # get model device, PyTorch model
-        # half &= device.type != 'cpu'  # half precision only supported on CUDA
-        # model.half() if half else model.float()
-        nm = 32 # Todo ronen de_parallel(model).model[-1].nm  # number of masks
-
-        # Data
-        # data = check_dataset(data)  # check
 
     # Configure
     is_coco = isinstance(data.get('val'), str) and data['val'].endswith(f'coco{os.sep}val2017.txt')  # COCO dataset
@@ -371,15 +361,15 @@ def run(
         LOGGER.warning(f'WARNING ⚠️ no labels found in {task} set, can not compute metrics without labels')
 
     # Print results per class
-    if (verbose or (nc < 50 and not training)) and nc > 1 and len(stats):
+    if (verbose) and nc > 1 and len(stats):
         for i, c in enumerate(metrics.ap_class_index):
             LOGGER.info(pf % (names[c], seen, nt[c], *metrics.class_result(i)))
 
     # Print speeds
     t = tuple(x.t / seen * 1E3 for x in dt)  # speeds per image
-    if not training:
-        shape = (batch_size, 3, imgsz, imgsz)
-        LOGGER.info(f'Speed: %.1fms inference, %.1fms loss, %.1fms NMS per image at shape {shape}' % t)
+    # if not training:
+    shape = (batch_size, 3, imgsz, imgsz)
+    LOGGER.info(f'Speed: %.1fms inference, %.1fms loss, %.1fms NMS per image at shape {shape}' % t)
 
     # Plots
     if plots:
@@ -419,9 +409,9 @@ def run(
 
     # Return results
     # model.float()  # for training
-    if not training:
-        s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
-        LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}{s}")
+    # if not training:
+    # s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
+    # LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}{s}")
     final_metric = mp_bbox, mr_bbox, map50_bbox, map_bbox, mp_mask, mr_mask, map50_mask, map_mask
     # return: final_metric, [boxloss, objloss, clsloss, maskloss]/len(dataloader), ap[nc], t[3]
     return (*final_metric, *(loss / len(list(dataloader))).tolist()), metrics.get_maps(nc), t
