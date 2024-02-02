@@ -9,6 +9,8 @@ import yaml  # for torch hub
 import tensorflow as tf
 import math
 
+from tf_common import parse_reshape,_parse_maxpool,_parse_concat,_parse_upsample,_parse_shortcut,mask_proto,_parse_sppf,_parse_c3, _parse_convolutional
+
 np_config.enable_numpy_behavior()  # allows running NumPy code, accelerated by TensorFlow
 
 FILE = Path(__file__).resolve()
@@ -23,47 +25,6 @@ def make_divisible(x, divisor):
     """
 
     return math.ceil(x / divisor) * divisor
-
-
-def parse_reshape(x, dim0, dim1, dim2, dim3):
-    x = tf.keras.layers.Reshape((dim0, dim1, dim2, dim3))(x)
-    return x
-
-
-def _parse_maxpool(x, pool_size, stride_xy, pad='same'):
-    padding = pad
-    x = tf.keras.layers.MaxPooling2D(pool_size=pool_size,
-                                     strides=stride_xy,
-                                     padding=padding)(x)
-
-    return x
-
-
-def _parse_concat(x):
-    x = tf.keras.layers.Concatenate(axis=3)(x)
-
-    return x
-
-
-def _parse_upsample(x, size, interpolation):
-    x = tf.keras.layers.UpSampling2D(size=size, interpolation=interpolation)(x)
-
-    return x
-
-
-def _parse_shortcut(x):
-    x = tf.keras.layers.Add()(x)
-
-    return x
-
-
-def mask_proto(x, decay_factor, npr, nm):
-    x = _parse_convolutional(x, decay_factor, npr, kernel_size=3)
-    size = (2, 2)
-    x = _parse_upsample(x, size, interpolation='nearest')
-    x = _parse_convolutional(x, decay_factor, npr, kernel_size=3)
-    x = _parse_convolutional(x, decay_factor, nm)
-    return x
 
 
 def decoder(y, nx, ny, nc, na, nm, grid, anchor_grid):
@@ -83,7 +44,7 @@ def decoder(y, nx, ny, nc, na, nm, grid, anchor_grid):
     cls = tf.keras.activations.sigmoid(y[..., 4:5 + nc])
     mask = y[..., 5 + nc:]
     y = tf.keras.layers.Concatenate(axis=-1)([xy, wh, cls, mask])
-    y = tf.keras.layers.Reshape([ na * int(nx.numpy() )* int(ny.numpy()), 5+nc+nm])(y)
+    y = tf.keras.layers.Reshape([ na * int(nx )* int(ny), 5+nc+nm])(y)
     return y
 
 
@@ -131,64 +92,6 @@ def _parse_segmment(x, decay_factor, nc=80, anchors=(), nm=32, npr=256, imgsz=(6
     x = detect(x, decay_factor, nc, anchors, nm, imgsz, training)
     y = (x, p) if training else (x[0], p, x[1])
     return y
-
-
-def _parse_sppf(x, decay_factor, c2, pool_size):
-    # e=0.5 # todo ronen
-    c_ = x.shape[3] // 2  # hidden channels
-    x = _parse_convolutional(x, decay_factor, c_, kernel_size=1, stride=1, bn=1, activation=1)
-    y1 = _parse_maxpool(x, pool_size, stride_xy=1, pad='same')
-    y2 = _parse_maxpool(y1, pool_size, stride_xy=1, pad='same')
-    y3 = _parse_maxpool(y2, pool_size, stride_xy=1, pad='same')
-    x = tf.keras.layers.Concatenate(axis=3)([x, y1, y2, y3])
-    x = _parse_convolutional(x, decay_factor, c2, kernel_size=1, stride=1, bn=1, activation=1)
-    #
-    return x
-
-
-def _parse_c3(x, decay, n, kernel_size, stride, filters, shortcut=True):
-    e = 0.5
-    c_ = int(filters * e)  # hidden channels
-    x1 = _parse_convolutional(x, decay, c_, kernel_size, stride, bn=1, activation=1)
-    for idx in range(n):
-        x1 = _parse_bottleneck(x1, c_, shortcut, e=1.0)
-    x2 = _parse_convolutional(x, decay, c_, kernel_size, stride, bn=1, activation=1)
-    x = tf.keras.layers.Concatenate(axis=3)([x1, x2])
-    x = _parse_convolutional(x, decay, filters, kernel_size, stride, bn=1, activation=1)
-    return x
-
-
-def _parse_bottleneck(x, filters2, decay=0.01, shortcut=True, e=0.5):
-    c_ = int(filters2 * e)  # hidden channels
-    kernel_size = 1
-    stride = 1
-    x1 = _parse_convolutional(x, decay, c_, kernel_size, stride)
-    kernel_size = 3
-    x1 = _parse_convolutional(x1, decay, filters2, kernel_size, stride)
-
-    add = shortcut and x.shape[3] == filters2  # n ch in = n ch out
-    if add:
-        x1 = tf.keras.layers.Add()([x, x1])
-    return x1
-
-
-def _parse_convolutional(x, decay, filters, kernel_size=1, stride=1, bn=1, activation=1):
-    x = tf.keras.layers.Conv2D(filters=filters,
-                               kernel_size=kernel_size,
-                               strides=(stride, stride),
-                               padding='SAME',
-                               use_bias=not bn,
-                               activation='linear',
-                               kernel_regularizer=l2(decay))(x)
-
-    if bn:
-        x = tf.keras.layers.BatchNormalization()(x)
-    if activation:
-        x = tf.keras.layers.LeakyReLU(alpha=0.1)(x)
-
-    #
-
-    return x
 
 
 def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, training):  # model_dict, input_channels(3)
@@ -318,29 +221,26 @@ if __name__ == '__main__':
         # mlist = d['backbone'] + d['head']
         # nc = 80
         imgsz = [640, 640]
-        ch = 3
-        # bs = 2
+        # ch = 3 # input image nof channels
+        # decay_factor = 0.01
+        im = tf.zeros([1, 640, 640, 3], dtype=tf.float32)
 
-        decay_factor = 0.01
-        # na = 3
-        # gd = 0.33  # depth multiply
-        # gw = 0.5  # width multiply
-        # anchors, nc, gd, gw, mlist = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d['backbone'] + d[
-        #     'head']
-        model = build_model(cfg,  imgsz=imgsz,
-                            training=False)
-        model = build_model(cfg,  imgsz=imgsz,
+        train_model = build_model(cfg,  imgsz=imgsz,
                             training=True)
-
+        pred = train_model(im)
+        print(train_model.summary())
+        for idx,p in enumerate(pred[0]):
+            print(f'training pred layer {idx} shape: {p.shape}')
+        print(f'train proto shape: {pred[1].shape}')
         import numpy as np
+        np.sum([np.prod(v.get_shape().as_list()) for v in train_model.trainable_variables])
 
-        np.sum([np.prod(v.get_shape().as_list()) for v in model.trainable_variables])
-
-        xx = tf.zeros([1, 640, 640, 3], dtype=tf.float32)
-        outp = model(xx)
-        print(outp)
-        print(model.summary())
-
-
+        inference_model = build_model(cfg,  imgsz=imgsz,
+                            training=False)
+        pred = inference_model(im)
+        print(f'inference decoded out shape: {pred[0].shape}')
+        print(f'inference proto shape: {pred[1].shape}')
+        for idx,p in enumerate(pred[2]):
+            print(f'inference pred layer {idx} shape: {p.shape}')
 
     demo()
