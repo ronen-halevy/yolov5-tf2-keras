@@ -130,9 +130,7 @@ def mask_iou(mask1, mask2, eps=1e-7):
 
     return: masks iou, [N, M]
     """
-    # intersection = tf.matmul(mask1, tf.transpose(mask2.t()).clamp(0)
-    intersection = tf.maximum(tf.matmul(mask1, tf.transpose(mask2)), 0) # clamp(0)
-
+    intersection = tf.maximum(tf.matmul(mask1, tf.transpose(mask2)), 0) # clamp(0). shape: [Nt,Np]
     union = (tf.math.reduce_sum(mask1, axis=1)[:, None] + tf.math.reduce_sum(mask2, axis=1)[None]) - intersection  # (area1 + area2) - intersection
     return intersection / (union + eps)
 
