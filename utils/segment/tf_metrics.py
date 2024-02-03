@@ -25,6 +25,7 @@ def ap_per_class_box_and_mask(
         names=(),
 ):
     """
+    calc Average Precision per class, box and mask
     Args:
         tp_b: tp of boxes.
         tp_m: tp of masks.
