@@ -83,6 +83,7 @@ class Annotator:
             )
             self.draw = ImageDraw.Draw(self.im)
             try:
+                # font_size=9.0
                 self.font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSansNarrow-Regular.ttf",
                                                font_size)
             except IOError:
@@ -170,6 +171,7 @@ class Annotator:
 
     def fromarray(self, im):
         # Update self.im from a numpy array
+        # self.im = im if isinstance(im, Image.Image) else Image.fromarray(im.astype(np.uint8))
         self.im = im if isinstance(im, Image.Image) else Image.fromarray(im)
         self.draw = ImageDraw.Draw(self.im)
 
