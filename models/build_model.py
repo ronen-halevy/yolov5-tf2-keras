@@ -9,7 +9,7 @@ import yaml  # for torch hub
 import tensorflow as tf
 import math
 
-from tf_common import parse_reshape,_parse_maxpool,_parse_concat,_parse_upsample,_parse_shortcut,mask_proto,_parse_sppf,_parse_c3, _parse_convolutional
+from models.tf_common import parse_reshape,_parse_maxpool,_parse_concat,_parse_upsample,_parse_shortcut,mask_proto,_parse_sppf,_parse_c3, _parse_conv
 
 np_config.enable_numpy_behavior()  # allows running NumPy code, accelerated by TensorFlow
 
@@ -25,6 +25,62 @@ def make_divisible(x, divisor):
     """
 
     return math.ceil(x / divisor) * divisor
+class Decoder:
+    def __init__(self, nc, nm, anchors, imgsz):
+        stride = tf.convert_to_tensor( [8, 16, 32], dtype=tf.float32)
+        self.nc=nc
+        self.no = 5 + nc + nm  # number of outputs per anchor
+        self.nl = len(anchors)  # number of detection layers
+        self.na = len(anchors[0]) // 2  # number of anchors
+        self.grid, self.ny, self.nx = [], [], []
+        for i in range(self.nl):
+            ny, nx = imgsz[0] // stride[i], imgsz[1] // stride[i]
+            self.nx.append(nx)
+            self.ny.append(ny)
+
+            xv, yv = tf.meshgrid(tf.range( self.nx[i], dtype=tf.float32), tf.range( self.ny[i], dtype=tf.float32))  # shapes: [ny,nx]
+            # stack to grid, reshape & transpose to predictions matching shape:
+            layer_grid = tf.stack([xv, yv], 2).reshape([1, 1,  self.ny[i],  self.nx[i], 2])
+            # layer_grid = layer_grid.transpose([0, 2, 3, 1, 4])  # shape: [1, ny, nx, 1, 2]
+            self.grid.append(layer_grid)
+
+        # reshape anchors and normalize by stride values:
+        anchors = tf.convert_to_tensor(anchors, dtype=tf.float16).reshape([self.nl, self.na, 2]) / stride.reshape([self.nl, 1, 1])
+        # rescale anchors by stride values and reshape to
+        self.anchor_grid = anchors.reshape([self.nl, 1, self.na, 1, 2])
+        self.anchor_grid = self.anchor_grid.transpose([0, 2, 1, 3,  4])  # shape: [nl, 1,1,na,2]
+
+    def decoder(self, y, layer_idx):
+        # operate yolo adaptations on box:
+        dd = tf.sigmoid(y[..., 0:2]) * 2 - 0.5 + self.grid[layer_idx]
+        xy = (tf.sigmoid(y[..., 0:2]) * 2 - 0.5 + self.grid[layer_idx]) / [self.nx[layer_idx],
+                                                                   self.ny[layer_idx]]  # xy bbox formula, normalized  to 0-1
+        wh = (2 * tf.sigmoid(y[..., 2:4])) ** 2 * self.anchor_grid[layer_idx] / [self.ny[layer_idx], self.ny[layer_idx]]  # fwh bbox formula. noremalized.
+        # concat modified values back together, operate yolo specified sigmoid on confs:
+        y = tf.concat([xy, wh, tf.sigmoid(y[..., 4:5 + self.nc]).astype(tf.float32),
+                       y[..., 5 + self.nc:].astype(tf.float32)], -1)
+        y = y.reshape([-1, self.na * self.ny[layer_idx] * self.nx[layer_idx], self.no])  # reshape [bs,ny,nx,na,no]->[bs,nxi*nyi*na,no]
+        return y
+
+    # def decoder1(self, y):
+    #     xy = tf.keras.activations.sigmoid(y[..., 0:2])
+    #     xy = tf.keras.layers.Multiply()([xy, tf.constant([2])])
+    #     xy = tf.keras.layers.subtract([xy, tf.constant([0.5])])
+    #     xy = tf.keras.layers.add([xy, self.grid])
+    #     gg = 1. / nx
+    #     gg = tf.reshape(gg, [1])
+    #     xy = tf.keras.layers.Multiply()([xy, gg])
+    #
+    #     wh = tf.sigmoid(y[..., 2:4])  # ** 2 * anchor_grid / [ny, ny]  # fwh bbox formula. noremalized.
+    #     wh = tf.keras.layers.Multiply()([wh, tf.constant([2])])
+    #     wh = tf.keras.layers.Multiply()([wh, wh])
+    #     wh = tf.keras.layers.Multiply()([wh, anchor_grid])
+    #     wh = tf.keras.layers.Multiply()([wh, gg])
+    #     cls = tf.keras.activations.sigmoid(y[..., 4:5 + nc])
+    #     mask = y[..., 5 + nc:]
+    #     y = tf.keras.layers.Concatenate(axis=-1)([xy, wh, cls, mask])
+    #     y = tf.keras.layers.Reshape([na * int(nx) * int(ny), 5 + nc + nm])(y)
+    #     return y
 
 
 def decoder(y, nx, ny, nc, na, nm, grid, anchor_grid):
@@ -48,53 +104,33 @@ def decoder(y, nx, ny, nc, na, nm, grid, anchor_grid):
     return y
 
 
-def detect(inputs, decay_factor, nc=80, anchors=(), nm=32, imgsz=(640, 640), training=False, w=None):
+def detect(inputs, decay_factor, nc=80, anchors=(), nm=32, imgsz=(640, 640), w=None):
     stride = tf.convert_to_tensor(w.stride.numpy() if w is not None else [8, 16, 32], dtype=tf.float32)
     no = 5 + nc + nm  # number of outputs per anchor
     nl = len(anchors)  # number of detection layers
     na = len(anchors[0]) // 2  # number of anchors
-    grid = []
-    for i in range(nl):
-        ny, nx = imgsz[0] // stride[i], imgsz[1] // stride[i]
-        xv, yv = tf.meshgrid(tf.range(nx, dtype=tf.float32), tf.range(ny, dtype=tf.float32))  # shapes: [ny,nx]
-        # stack to grid, reshape & transpose to predictions matching shape:
-        layer_grid = tf.stack([xv, yv], 2).reshape([1, 1, ny, nx, 2])
-        layer_grid = layer_grid.transpose([0, 2, 3, 1, 4])  # shape: [1, ny, nx, 1, 2]
-        grid.append(layer_grid)
-
-    # reshape anchors and normalize by stride values:
-    anchors = tf.convert_to_tensor(w.anchors.numpy(), dtype=tf.float16) if w is not None else \
-        tf.convert_to_tensor(anchors, dtype=tf.float16).reshape([nl, na, 2]) / stride.reshape([nl, 1, 1])
-    # rescale anchors by stride values and reshape to
-    anchor_grid = anchors.reshape([nl, 1, na, 1, 2])
-    anchor_grid = anchor_grid.transpose([0, 1, 3, 2, 4])  # shape: [nl, 1,1,na,2]
-    #####
-    decoder_out = []  # inference output
     x = []
 
     for i in range(nl):
-        y = _parse_convolutional(inputs[i], decay_factor, no * na, kernel_size=1, stride=1, bn=0,
+        y = _parse_conv(inputs[i], decay_factor, no * na, kernel_size=1, stride=1, bn=0,
                                  activation=0)
         # x.append(y)
         ny, nx = imgsz[0] // stride[i], imgsz[1] // stride[i] # ronen todo check reuse calc
-        y = tf.reshape(y, [-1, ny, nx, na, no])  # from [bs,nyi,nxi,na*no] to [bs,nyi,nxi,na,no]
-        if not training:  # for inference & validation - process preds according to yolo spec,ready for nms:
-            z = decoder(y, nx, ny, nc, na, nm, grid[i], anchor_grid[i])
-            decoder_out.append(z)
-        y = tf.transpose(y, [0, 3, 1, 2, 4])  # from shape [bs,nyi,nxi,na, no] to [bs,na,nyi,nxi,no]
+        y = tf.keras.layers.Reshape([int(ny), int(nx), na, no])(y) # from [bs,nyi,nxi,na*no] to [bs,nyi,nxi,na,no]
+        y = tf.keras.layers.Permute([3, 1, 2, 4])(y)# from shape [bs,nyi,nxi,na, no] to [bs,na,nyi,nxi,no]
         x.append(y)
-    return x if training else (tf.concat(decoder_out, axis=1), x)  # x:[bs,nyi,nxi,na,no] for i=0:2], z: [b,25200,no]
+    return x #if training else (tf.keras.layers.Concatenate(axis=1)(decoder_out), x)  # x:[bs,nyi,nxi,na,no] for i=0:2], z: [b,25200,no]
 
 
-def _parse_segmment(x, decay_factor, nc=80, anchors=(), nm=32, npr=256, imgsz=(640, 640), training=False):
+def _parse_segmment(x, decay_factor, nc=80, anchors=(), nm=32, npr=256, imgsz=(640, 640)):
     p = mask_proto(x[0], decay_factor, npr, nm)
     p = tf.transpose(p, perm=[0, 3, 1, 2])  # from shape(1,160,160,32) to shape(1,32,160,160)
-    x = detect(x, decay_factor, nc, anchors, nm, imgsz, training)
-    y = (x, p) if training else (x[0], p, x[1])
+    x = detect(x, decay_factor, nc, anchors, nm, imgsz)
+    y = (x, p) #if training else x[0], (p, x[1])
     return y
 
 
-def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, training):  # model_dict, input_channels(3)
+def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor):  # model_dict, input_channels(3)
     """
 
     @param x: model inputs, KerasTensor, shape:[b,w,h,ch], float
@@ -145,9 +181,9 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, training
             if isinstance(args[1], int):  # number of anchors
                 args[1] = [list(range(args[1] * 2))] * len(f)
             args.append(imgsz)
-            args.append(training)
+            # args.append(training)
         if m_str == 'Conv':
-            x = _parse_convolutional(x, decay_factor, *args)
+            x = _parse_conv(x, decay_factor, *args)
         elif m_str == 'Shortcut':
             x = _parse_shortcut(x)
 
@@ -167,8 +203,9 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, training
         elif m_str == 'Reshape':
             x = parse_reshape(x, *args)
         elif m_str == 'Segment':
-
             x = _parse_segmment(x, decay_factor, *args)
+            # decoder_out = x[0]
+            # x = x[1]
         else:
             print('\n! Warning!! Unknown module name:', m_str)
         ch.append(c2)
@@ -181,7 +218,7 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, training
     return layers
 
 
-def build_model(cfg, imgsz, training):
+def build_model(cfg, imgsz):
     """
     layers: list of parsed layers
     @param inputs:model inputs, KerasTensor, shape:[b,w,h,ch], float
@@ -207,8 +244,11 @@ def build_model(cfg, imgsz, training):
     inputs = Input(shape=(640, 640, 3))
     ch = [3]
     decay_factor = 0.01
-    layers = parse_model(inputs, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, training)
+    layers = parse_model(inputs, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor)
     model = Model(inputs, layers[-1])
+    # model(layers[-1])
+    # decoder = Model(layers[-1][1],decoder_out)
+
     return model
 
 
@@ -225,8 +265,7 @@ if __name__ == '__main__':
         # decay_factor = 0.01
         im = tf.zeros([1, 640, 640, 3], dtype=tf.float32)
 
-        train_model = build_model(cfg,  imgsz=imgsz,
-                            training=True)
+        train_model = build_model(cfg,  imgsz=imgsz)
         pred = train_model(im)
         print(train_model.summary())
         for idx,p in enumerate(pred[0]):
@@ -235,12 +274,24 @@ if __name__ == '__main__':
         import numpy as np
         np.sum([np.prod(v.get_shape().as_list()) for v in train_model.trainable_variables])
 
-        inference_model = build_model(cfg,  imgsz=imgsz,
-                            training=False)
-        pred = inference_model(im)
-        print(f'inference decoded out shape: {pred[0].shape}')
-        print(f'inference proto shape: {pred[1].shape}')
-        for idx,p in enumerate(pred[2]):
-            print(f'inference pred layer {idx} shape: {p.shape}')
+        nm=32
+        with open(cfg) as f:
+            model_cfg = yaml.load(f, Loader=yaml.FullLoader)  # model dict
+
+        d = deepcopy(model_cfg)
+        anchors, nc, gd, gw, mlist = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d['backbone'] + d['head']
+        dd = Decoder(nc, nm, anchors, imgsz)
+        layer_idx=0
+        dd.decoder(pred[0][0], layer_idx)
+
+
+    # inference_model = build_model(cfg,  imgsz=imgsz,
+        #                     training=True)
+        # pred = inference_model(im)
+        # print(f'inference decoded out shape: {pred[1].shape}')
+        # print(f'inference proto shape: {pred[0].shape}')
+        # for idx,p in enumerate(pred[2]):
+        #     print(f'inference pred layer {idx} shape: {p.shape}')
+        # inference_model.set_weights(train_model.get_weights())
 
     demo()
