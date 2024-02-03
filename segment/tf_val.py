@@ -184,6 +184,7 @@ def run(
         half=True,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
         model=None,
+        decoder=None,
         save_dir=Path(''),
         plots=True,
         overlap=False,
@@ -236,7 +237,12 @@ def run(
             # 2. preds is a train_out but bbox and conf are post-processed and packed. shape:[b,Np,xywh+conf+cls+masks]
             # where Np: (na*sum(gyi*gxi)) i=0:2]
             # 3. proto holds 32 proto masks. shape: [b,32,size/4,size/4]
-            preds, protos, train_out = model(batch_im)
+            train_out, protos = model(batch_im)
+            preds = []
+            for layer_idx, train_out_layer in enumerate(train_out):
+                p = decoder(train_out_layer, layer_idx)
+                preds.append(p)
+            preds = tf.concat(preds, axis=1)
 
 
         with dt[1]:

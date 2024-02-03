@@ -42,7 +42,7 @@ from utils.tf_general import (LOGGER, TQDM_BAR_FORMAT,  check_file,
 from segment.tb import GenericLogger
 from utils.tf_plots import plot_evolve, plot_labels
 from tf_dataloaders import DataLoader
-# from simple_dataset import SimpleDataset
+from simple_dataset import SimpleDataset
 
 from tf_data_reader import LoadImagesAndLabelsAndMasks
 
@@ -59,7 +59,9 @@ from tensorflow import keras
 # tf.config.experimental.enable_op_determinism()
 
 import numpy as np
-from models.tf_model import TFModel
+# from models.tf_model import TFModel
+from models.build_model import build_model, Decoder
+
 import segment.tf_val as validate  # for end-of-epoch mAP
 from optimizer import LRSchedule
 
@@ -127,19 +129,30 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # is_coco = isinstance(val_path, str) and val_path.endswith('coco/val2017.txt')  # COCO dataset
     # Model
     dynamic = False
-    tf_model = TFModel(cfg=cfg,
-                       ref_model_seq=None, nc=nc, imgsz=imgsz, training=True)
+    # tf_model = TFModel(cfg=cfg,
+    #                    ref_model_seq=None, nc=nc, imgsz=imgsz, training=True)
     # im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else batch_size)
     ch=3
     im = keras.Input(shape=(None,None, ch), batch_size=None if dynamic else batch_size)
 
-    keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im), name='train')
+    # keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im), name='train')
+    keras_model=build_model(cfg,  imgsz=imgsz)
 
-    val_tf_model = TFModel(cfg=cfg,
-                       ref_model_seq=None, nc=nc, imgsz=imgsz, training=False)
+    # val_tf_model = TFModel(cfg=cfg,
+    #                    ref_model_seq=None, nc=nc, imgsz=imgsz, training=False)
     im_val = keras.Input(shape=(None,None, ch), batch_size=None if dynamic else batch_size)
 
-    val_keras_model = tf.keras.Model(inputs=im_val, outputs=val_tf_model.predict(im_val), name='validation')
+    # val_keras_model = tf.keras.Model(inputs=im_val, outputs=val_tf_model.predict(im_val), name='validation')
+    val_keras_model = build_model(cfg, imgsz=imgsz)
+
+    # todo - fix anchors config!!!!!!
+    with open(cfg) as f:
+        model_cfg = yaml.load(f, Loader=yaml.FullLoader)  # model dict
+    from copy import deepcopy
+    d = deepcopy(model_cfg)
+    anchors, nc, gd, gw, mlist = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d['backbone'] + d[
+        'head']
+    decoder = Decoder(nc, nm, anchors, imgsz)
 
     # extract 3 layers grid shapes strides:
     grids =[ [x.shape[2], x.shape[2] ]for x in keras_model.predict(tf.zeros([1,*imgsz, ch]))[0]]
@@ -206,7 +219,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
 
 
-    anchors = tf.reshape(tf_model.anchors, [len(tf_model.anchors), -1, 2]) # shape: [nl, np, 2]
+    anchors = tf.reshape(anchors, [len(anchors), -1, 2]) # shape: [nl, np, 2]
     anchors = tf.cast(anchors, tf.float32) / tf.reshape(stride, (-1, 1, 1)) # scale by stride to nl grid layers
 
     nl = anchors.shape[0] # number of layers (output grids)
@@ -221,6 +234,8 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     nw = max(round(hyp['warmup_epochs'] * nb), 100)  # number of lr warmup iterations, max(3 epochs, 100 iterations)
     warmup_bias_lr=hyp['warmup_bias_lr']
     optimizer = tf.keras.optimizers.SGD(learning_rate= LRSchedule( hyp['lr0'], hyp['lrf'], nb, nw, warmup_bias_lr, epochs,False), ema_momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
+    # optimizer = tf.keras.optimizers.SGD(learning_rate= 0.01, ema_momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
+
     # train loop:
     for epoch in range(epochs):
         LOGGER.info(('\n' + '%11s' * 8) % ('Epoch', 'totloss', 'box_loss', 'mask_loss', 'obj_loss','cls_loss','Instances', 'Size'))
@@ -271,9 +286,10 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                                             nb=val_nb,
                                             half=False, # half precision model
                                             model=val_keras_model, # todo use ema
+                                            decoder=decoder.decoder,
                                             single_cls=single_cls,
                                             save_dir=save_dir,
-                                            plots=False,
+                                            plots=True,
                                             callbacks=callbacks,
                                             compute_loss=compute_loss,
                                             mask_downsample_ratio=mask_ratio,
@@ -322,6 +338,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                                     nb=val_nb,
                                     half=False,  # half precision model
                                     model=val_keras_model,  # todo use ema
+                                    decoder=decoder.decoder,
                                     single_cls=single_cls,
                                     save_dir=save_dir,
                                     verbose=True,
