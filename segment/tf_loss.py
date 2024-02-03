@@ -114,28 +114,28 @@ class ComputeLoss:
         self.anchor_t = anchor_t
         self.grids = grids
 
-    @tf.function(input_signature=(
-            tf.TensorSpec(shape=[None, None, None, None, None], dtype=tf.float32, name='p'),
-            tf.TensorSpec(shape=[None, 4], dtype=tf.int32, name='indices'),
-            tf.TensorSpec(shape=[None, 2], dtype=tf.float32, name='anchors'),
-            tf.TensorSpec(shape=[None, 4], dtype=tf.float32, name='xywhn'),
-            tf.TensorSpec(shape=[None, 4], dtype=tf.float32, name='tboxi'),
-            tf.TensorSpec(shape=[None], dtype=tf.float32, name='tcls'),
-            tf.TensorSpec(shape=[None], dtype=tf.float32, name='tidxs'),
-            tf.TensorSpec(shape=[None, 32, 160, 160], dtype=tf.float32, name='proto'),
-            tf.TensorSpec(shape=[1], dtype=tf.float32, name='lbox'),
-            tf.TensorSpec(shape=[1], dtype=tf.float32, name='lseg'),
-            tf.TensorSpec(shape=[1], dtype=tf.float32, name='lobj'),
-            tf.TensorSpec(shape=[1], dtype=tf.float32, name='lcls'),
-            tf.TensorSpec(shape=[None, 160, 160], dtype=tf.float32, name='masks'),
-            tf.TensorSpec(shape=[], dtype=tf.float32, name='mask_h'),
-            tf.TensorSpec(shape=[], dtype=tf.float32, name='mask_w'),
-            tf.TensorSpec(shape=[None, None, None, None], dtype=tf.float32, name='tobj'),
-            tf.TensorSpec(shape=[], dtype=tf.float32, name='balancei'),
-            tf.TensorSpec(shape=[], dtype=tf.bool, name='anytargets'),
-    )
-    )  # (reduce_retracing=True)
-    @tf.function
+    # @tf.function(input_signature=(
+    #         tf.TensorSpec(shape=[None, None, None, None, None], dtype=tf.float32, name='p'),
+    #         tf.TensorSpec(shape=[None, 4], dtype=tf.int32, name='indices'),
+    #         tf.TensorSpec(shape=[None, 2], dtype=tf.float32, name='anchors'),
+    #         tf.TensorSpec(shape=[None, 4], dtype=tf.float32, name='xywhn'),
+    #         tf.TensorSpec(shape=[None, 4], dtype=tf.float32, name='tboxi'),
+    #         tf.TensorSpec(shape=[None], dtype=tf.float32, name='tcls'),
+    #         tf.TensorSpec(shape=[None], dtype=tf.float32, name='tidxs'),
+    #         tf.TensorSpec(shape=[None, 32, 160, 160], dtype=tf.float32, name='proto'),
+    #         tf.TensorSpec(shape=[1], dtype=tf.float32, name='lbox'),
+    #         tf.TensorSpec(shape=[1], dtype=tf.float32, name='lseg'),
+    #         tf.TensorSpec(shape=[1], dtype=tf.float32, name='lobj'),
+    #         tf.TensorSpec(shape=[1], dtype=tf.float32, name='lcls'),
+    #         tf.TensorSpec(shape=[None, 160, 160], dtype=tf.float32, name='masks'),
+    #         tf.TensorSpec(shape=[], dtype=tf.float32, name='mask_h'),
+    #         tf.TensorSpec(shape=[], dtype=tf.float32, name='mask_w'),
+    #         tf.TensorSpec(shape=[None, None, None, None], dtype=tf.float32, name='tobj'),
+    #         tf.TensorSpec(shape=[], dtype=tf.float32, name='balancei'),
+    #         tf.TensorSpec(shape=[], dtype=tf.bool, name='anytargets'),
+    # )
+    # )  # (reduce_retracing=True)
+    # @tf.function
     def calc_loss(self, pi, indicesi, anchorsi, xywhni, tboxi, tclsi, tidxsi, proto, lbox, lseg, lobj, lcls, masks,
               mask_h, mask_w, tobj, balancei, anytargets):
         """
@@ -200,6 +200,7 @@ class ComputeLoss:
                 # create [nt, nc] one_hot class array:
                 t = tf.one_hot(indices=tclsi.astype(tf.int32), depth=pcls.shape[1])
                 lcls += self.BCEcls(t, pcls)  # BCE, with SUM_OVER_BATCH_SIZE reduction: sum/(nof elements)
+                # lcls +=tf.math.reduce_mean(tf.nn.weighted_cross_entropy_with_logits(t, pcls,pos_weight=tf.constant(1.0 )))
 
             # step 4.6: calc mask loss as a mean of objects lossess, which are mean of all mask pixels BCE loss:
             # if tuple(masks.shape[-2:]) != (mask_h, mask_w):  # downsample mask by 4. Default: skip already d-sampled
@@ -279,7 +280,7 @@ class ComputeLoss:
         loss = lbox + lobj + lcls + lseg
         return loss * bs, tf.concat((lbox, lseg, lobj, lcls), axis=-1)
 
-    @tf.function
+    # @tf.function
     def single_mask_loss(self, gt_mask, pmask, proto, xyxy, area):
         """ Description Calc mask loss as the mean of all input objects masks losses calculated separately.
         Each object mask loss is the mean of its mask pixels losses  calculated by BinaryCrossentropy,
@@ -301,9 +302,12 @@ class ComputeLoss:
         targets_mask_loss = tf.math.reduce_mean(crop_mask(mloss, xyxy), axis=[1, 2])  # shape[nti]
         # 4. Calc mask loss as a mean of objects' mask losses, each divided by its area to equalize effect on mean:
         mask_loss = tf.math.reduce_mean(targets_mask_loss / area)  # shape: []
+        # debug:
+        # mask_loss = tf.reduce_mean(tf.square(gt_mask - pred_mask)/ tf.reshape(area,[-1,1,1]))
+
         return mask_loss
 
-    @tf.function
+    # @tf.function
     def anchors_thresholding(self, t, anchors):
         """
         Threshold bbox width and height to anchors ratio. Filter out target entries with ratio above threshold.
@@ -318,7 +322,7 @@ class ComputeLoss:
         t = t[j]  # filter out unmatched to anchors targets. shape:  [nt, 8] where nt changed to nt_filtered
         return t
 
-    @tf.function
+    # @tf.function
     def duplicate_bbox(self, t, gxy, grid_dims):
         """
         Duplicate bboxes to adjacent grid bboxes.
@@ -352,14 +356,14 @@ class ComputeLoss:
         # dup to left/up if x/y in left/up half & gxy>1 i.e. a none left/up edge with adjacent squares.
 
         # left/up cpprds: ((gxy % 1 <  0.5) & (gxy > 1)).T:
-        lu_coords = ((tf.math.less(tf.math.floormod(gxy, tf.constant(1.0)), tf.constant(g)))
-                     & (tf.math.less(gxy, tf.constant(1.)))).T  # bool, shape: j:[nt], k:[nt]
-        j, k = tf.split(lu_coords, 2, axis=0, num=None, name='split')  # bool, shape: j:[nt], k:[nt]
+        left_upper_coords = ((tf.math.less(tf.math.floormod(gxy, tf.constant(1.0)), tf.constant(g)))
+                     & (tf.math.greater(gxy, tf.constant(1.)))).T  # bool, shape: j:[nt], k:[nt]
+        j, k = tf.split(left_upper_coords, 2, axis=0, num=None, name='split')  # bool, shape: j:[nt], k:[nt]
 
         gxi = grid_dims - gxy  # inverse, i.e. offsets from box centers to squares' right/down ends. shape: [nt,2]
         # right/bottom coords: ((gxi % 1 < 0.5) & (gxi > 1)).T, gxi>1 means none edge, i.e. has neighbors:
-        rb_coords = tf.transpose((gxi % 1 < g) & (gxi > 1))
-        l, m = tf.split(rb_coords, 2, axis=0, num=None, name='split')  # bool, shape: l:[nt], m:[nt]
+        right_bottom_coords = tf.transpose((gxi % 1 < g) & (gxi > 1))
+        l, m = tf.split(right_bottom_coords, 2, axis=0, num=None, name='split')  # bool, shape: l:[nt], m:[nt]
         # entries dup indications: center (always 1),4 adjacents if true:
         j = tf.concat((tf.ones_like(j), j, k, l, m),
                       axis=0)  # shape:[5,nt]: central (allways valid so akk 1s), and 4 offsets
@@ -368,8 +372,23 @@ class ComputeLoss:
         offsets = tf.zeros_like(gxy)[None] + off[:, None]  # broadcast add 5 offsets to square. shape:[5,nt.2]
         offsets = offsets[j]  # filter valid offsets . shape: [valid dup nt, 2]
         return t, offsets
-    @tf.function
+    # @tf.function
     def build_targets_per_layer(self, shape, targets,anchors):
+        """
+
+        :param grids: grid's shape - [80,80] or [40,40] or [20,20] for layers 0-2, int32
+        :param targets:  # shape:[na, nt, imidx+cls+xywh+ai+ti]
+        :param anchors: shape: [na,2]
+        :return:
+                ind: [batch ind,anchor ind, box center], shape: [nt,4]
+                tbox: [x,y,w,h] x,y offsets from  squares corner, [nt,4]
+                tcls: class. list size: [nt]
+                tidxs: target indices - target index in image, shape: [nt]
+                xywhn: xywh normalized shape: [nt, 4]
+                ai: anchor indices. shape: [nt]
+
+        :rtype:
+        """
         # 2.a scale tbbox to grid, and threshold wh to annchor ratio:
         # shape = grids[i]  # anchors scale, shape: [na,2], grids[i]: [gy[i],gx[i]], shape[2]
         # update gain columns 2,3,4,5 by grid dims gsx[i],gsy[i] where gs are [[80,80],[40,40],[20,20]] for i=0:2
