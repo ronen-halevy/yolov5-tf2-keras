@@ -853,13 +853,13 @@ def scale_boxes(img1_shape, boxes, img0_shape, ratio_pad=None):
         gain = min(img1_shape[0] / img0_shape[0], img1_shape[1] / img0_shape[1])  # gain  = old / new
         pad = (img1_shape[1] - img0_shape[1] * gain) / 2, (img1_shape[0] - img0_shape[0] * gain) / 2  # wh padding
     else:
-        gain = ratio_pad[0] # shape0/shape1 i.e. old / new
+        gain = ratio_pad[0][0] # shape0/shape1 i.e. old / new
         pad = ratio_pad[1]
 
-    b0 = tf.clip_by_value((boxes[:, 0:1] - pad[0])/ gain[0], 0,  img0_shape[1]) # remove padding, scale, clip
-    b1 = tf.clip_by_value((boxes[:, 1:2] - pad[1])/ gain[1], 0,  img0_shape[0])  # y padding
-    b2 = tf.clip_by_value((boxes[:, 2:3] - pad[0])/ gain[0], 0,  img0_shape[1])  # x padding
-    b3 = tf.clip_by_value((boxes[:, 3:4] - pad[1])/ gain[1], 0,  img0_shape[0])  # y padding
+    b0 = tf.clip_by_value((boxes[:, 0:1] - pad[0])/ gain, 0,  img0_shape[1]) # remove padding, scale, clip
+    b1 = tf.clip_by_value((boxes[:, 1:2] - pad[1])/ gain, 0,  img0_shape[0])  # y padding
+    b2 = tf.clip_by_value((boxes[:, 2:3] - pad[0])/ gain, 0,  img0_shape[1])  # x padding
+    b3 = tf.clip_by_value((boxes[:, 3:4] - pad[1])/ gain, 0,  img0_shape[0])  # y padding
 
      ##todo check problem here! + return value not used!!!
     # b4 = boxes[:, :4] / gain
