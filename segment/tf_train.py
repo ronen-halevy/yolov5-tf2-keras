@@ -59,8 +59,8 @@ from tensorflow import keras
 # tf.config.experimental.enable_op_determinism()
 
 import numpy as np
-# from models.tf_model import TFModel
-from models.build_model import build_model, Decoder
+from models.tf_model import TFModel
+# from models.build_model import build_model, Decoder
 
 import segment.tf_val as validate  # for end-of-epoch mAP
 from optimizer import LRSchedule
@@ -129,21 +129,21 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # is_coco = isinstance(val_path, str) and val_path.endswith('coco/val2017.txt')  # COCO dataset
     # Model
     dynamic = False
-    # tf_model = TFModel(cfg=cfg,
-    #                    ref_model_seq=None, nc=nc, imgsz=imgsz, training=True)
+    tf_model = TFModel(cfg=cfg,
+                       ref_model_seq=None, nc=nc, imgsz=imgsz, training=True)
     # im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else batch_size)
     ch=3
     im = keras.Input(shape=(None,None, ch), batch_size=None if dynamic else batch_size)
 
-    # keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im), name='train')
-    keras_model=build_model(cfg,  imgsz=imgsz)
+    keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im), name='train')
+    # keras_model=build_model(cfg,  imgsz=imgsz)
 
-    # val_tf_model = TFModel(cfg=cfg,
-    #                    ref_model_seq=None, nc=nc, imgsz=imgsz, training=False)
+    val_tf_model = TFModel(cfg=cfg,
+                       ref_model_seq=None, nc=nc, imgsz=imgsz, training=False)
     im_val = keras.Input(shape=(None,None, ch), batch_size=None if dynamic else batch_size)
 
-    # val_keras_model = tf.keras.Model(inputs=im_val, outputs=val_tf_model.predict(im_val), name='validation')
-    val_keras_model = build_model(cfg, imgsz=imgsz)
+    val_keras_model = tf.keras.Model(inputs=im_val, outputs=val_tf_model.predict(im_val), name='validation')
+    # val_keras_model = build_model(cfg, imgsz=imgsz)
 
     # todo - fix anchors config!!!!!!
     with open(cfg) as f:
