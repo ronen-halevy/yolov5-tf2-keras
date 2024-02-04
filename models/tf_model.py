@@ -225,11 +225,11 @@ class TFConv2d(keras.layers.Layer):
         self.conv = keras.layers.Conv2D(filters=c2,
                                         kernel_size=k,
                                         strides=s,
-                                        padding='VALID'
-                                        # use_bias=bias,
-                                        # kernel_initializer='zeros' if w is None else  keras.initializers.Constant(
-                                        #     w.weight.permute(2, 3, 1, 0).numpy()),
-                                        # bias_initializer='zeros' if w is None else keras.initializers.Constant(w.bias.numpy()) if bias else None
+                                        padding='VALID',
+                                        use_bias=bias,
+                                        kernel_initializer='zeros' if w is None else  keras.initializers.Constant(
+                                            w.weight.permute(2, 3, 1, 0).numpy()),
+                                        bias_initializer='zeros' if w is None else keras.initializers.Constant(w.bias.numpy()) if bias else None
         )
 
     #@tf.function
