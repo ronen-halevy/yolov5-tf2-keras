@@ -60,6 +60,8 @@ def plot_images_and_masks(images, targets, masks, paths=None, fname='images.jpg'
             # targets[:,0] indicates bs id:
             idx = targets[:, 0] == i# mask targets which belong to image i. shape: [Nt]
             ti = targets[idx]  # current image's targets
+            # if ti.shape[0]==0: # no targets in image
+            #     continue
 
             boxes = tf.transpose(xywh2xyxy(ti[:, 2:6]))# shape: [4, nboxes]
             classes = ti[:, 1].astype('int')
@@ -95,7 +97,7 @@ def plot_images_and_masks(images, targets, masks, paths=None, fname='images.jpg'
                     image_masks = np.repeat(image_masks, nti, axis=0) # dup masks per nof labels, shape: [nl,160,160]
                     image_masks = np.where(image_masks == index, 1.0, 0.0) # Each mask dup holds a single target mask
                 else: # in non-overlapping mode uses a mask per target, select all image i masks by idx (bool kuat):
-                    image_masks = masks[idx]
+                    image_masks = masks[idx] # take masks which belong to current image #todo - test overlap with single mask
 
                 im = np.asarray(annotator.im).copy()
                 for j, box in enumerate(boxes.T.tolist()):
