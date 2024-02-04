@@ -130,7 +130,7 @@ def _parse_segmment(x, decay_factor, nc=80, anchors=(), nm=32, npr=256, imgsz=(6
     return y
 
 
-def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor):  # model_dict, input_channels(3)
+def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, ref_model_seq=None):  # model_dict, input_channels(3)
     """
 
     @param x: model inputs, KerasTensor, shape:[b,w,h,ch], float
@@ -183,7 +183,10 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor):  # mode
             args.append(imgsz)
             # args.append(training)
         if m_str == 'Conv':
-            x = _parse_conv(x, decay_factor, *args)
+            if ref_model_seq:  # feed weights directly - used for pytorch to keras weights conversion
+                x = _parse_conv(x, decay_factor, *args, w=ref_model_seq[i])
+            else:
+                x = _parse_conv(x, decay_factor, *args)
         elif m_str == 'Shortcut':
             x = _parse_shortcut(x)
 
@@ -195,7 +198,11 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor):  # mode
             x = _parse_concat(x)  # todo no args needed, *args)
         elif m_str == 'C3':
             kernel_size, stride = 1, 1
-            x = _parse_c3(x, decay_factor, n, kernel_size, stride, *args)
+
+            if ref_model_seq:  # feed weights directly - used for pytorch to keras weights conversion
+                x = _parse_c3(x, decay_factor, n, kernel_size, stride, *args, w=ref_model_seq[i])
+            else:
+                x = _parse_c3(x, decay_factor, n, kernel_size, stride, *args)
         elif m_str == 'SPPF':
             x = _parse_sppf(x, decay_factor, *args)
         elif m_str == 'Maxpool':
@@ -218,7 +225,7 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor):  # mode
     return layers
 
 
-def build_model(cfg, imgsz):
+def build_model(cfg, imgsz,ref_model_seq=None):
     """
     layers: list of parsed layers
     @param inputs:model inputs, KerasTensor, shape:[b,w,h,ch], float
@@ -235,8 +242,12 @@ def build_model(cfg, imgsz):
     @return:
         model : functional model
     """
-    with open(cfg) as f:
-        model_cfg = yaml.load(f, Loader=yaml.FullLoader)  # model dict
+    if isinstance(cfg, dict):
+        model_cfg = cfg  # model dict
+    else:  # is *.yaml
+        import yaml  # for torch hub
+        with open(cfg) as f:
+            model_cfg = yaml.load(f, Loader=yaml.FullLoader)  # model dict
 
     d = deepcopy(model_cfg)
     anchors, nc, gd, gw, mlist = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d['backbone'] + d[
@@ -244,10 +255,8 @@ def build_model(cfg, imgsz):
     inputs = Input(shape=(640, 640, 3))
     ch = [3]
     decay_factor = 0.01
-    layers = parse_model(inputs, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor)
+    layers = parse_model(inputs, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, ref_model_seq=ref_model_seq)
     model = Model(inputs, layers[-1])
-    # model(layers[-1])
-    # decoder = Model(layers[-1][1],decoder_out)
 
     return model
 
