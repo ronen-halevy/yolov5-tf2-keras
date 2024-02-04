@@ -42,9 +42,12 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 
 # from models.common import DetectMultiBackend
-# from utils.tf_dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams  # , LoadScreenshots, LoadStreams
+from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams  # , LoadScreenshots, LoadStreams
+IMG_FORMATS = 'bmp', 'dng', 'jpeg', 'jpg', 'mpo', 'png', 'tif', 'tiff', 'webp', 'pfm'  # include image suffixes
+VID_FORMATS = 'asf', 'avi', 'gif', 'm4v', 'mkv', 'mov', 'mp4', 'mpeg', 'mpg', 'ts', 'wmv'  # include video suffixes
+# from tf_dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams  # , LoadScreenshots, LoadStreams
 
-from utils.tf_dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams  # , LoadScreenshots, LoadStreams
+# from tf_dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams  # , LoadScreenshots, LoadStreams
 from utils.tf_general import (LOGGER, Profile, check_file, check_img_size, check_imshow, check_requirements, colorstr,
                               cv2,
                               increment_path, print_args, scale_boxes, scale_segments, xywh2xyxy
@@ -52,6 +55,8 @@ from utils.tf_general import (LOGGER, Profile, check_file, check_img_size, check
 from utils.tf_plots import Annotator, colors, save_one_box
 from utils.segment.tf_general import masks2segments, process_mask, process_mask_native
 from models.tf_model import TFModel
+from models.build_model import build_model, Decoder
+
 from nms import non_max_suppression
 
 
@@ -160,6 +165,8 @@ def run(
                            ref_model_seq=None, nc=80, imgsz=imgsz, training=False)
         im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else bs)
         keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im))
+        # keras_model = build_model(model_cfg_file, imgsz=imgsz)
+
     if load_weights:  # normally True when load_model is false
         keras_model.load_weights(weights_load_path)
     # if save_weights:
@@ -325,7 +332,7 @@ def parse_opt():
                             help='class names')
     else:
 
-        parser.add_argument('--weights_load_path', type=str, default=ROOT / 'utilities/keras_weights/yolov5s-seg.tf',
+        parser.add_argument('--weights_load_path', type=str, default=ROOT / 'utilities/keras_weights/yolov5s-seg.tf',#'/home/ronen/devel/PycharmProjects/tf_yolov5/utilities/keras_weights/rrcoco.tf',
                             help='load weights path')
         parser.add_argument('--source', type=str, default=ROOT / 'data/image_bus')# '/home/ronen/devel/PycharmProjects/shapes-dataset/dataset/train/images'
         parser.add_argument('--class_names_file', type=str, default=ROOT / 'data/class-names/coco.names',
@@ -339,7 +346,7 @@ def parse_opt():
     #                     help='class names')
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[640, 640],
                         help='inference size h,w')
-    parser.add_argument('--conf_thres', type=float, default=0.1, help='confidence threshold')
+    parser.add_argument('--conf_thres', type=float, default=0.6, help='confidence threshold')
     parser.add_argument('--iou_thres', type=float, default=0.45, help='NMS IoU threshold')
     parser.add_argument('--max-det', type=int, default=1000, help='maximum detections per image')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
