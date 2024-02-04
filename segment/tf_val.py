@@ -184,7 +184,7 @@ def run(
         half=True,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
         model=None,
-        decoder=None,
+        # decoder=None,
         save_dir=Path(''),
         plots=True,
         overlap=False,

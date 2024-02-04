@@ -152,7 +152,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     d = deepcopy(model_cfg)
     anchors, nc, gd, gw, mlist = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d['backbone'] + d[
         'head']
-    decoder = Decoder(nc, nm, anchors, imgsz)
+    # decoder = Decoder(nc, nm, anchors, imgsz)
 
     # extract 3 layers grid shapes strides:
     grids =[ [x.shape[2], x.shape[2] ]for x in keras_model.predict(tf.zeros([1,*imgsz, ch]))[0]]
@@ -286,7 +286,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                                             nb=val_nb,
                                             half=False, # half precision model
                                             model=val_keras_model, # todo use ema
-                                            decoder=decoder.decoder,
+                                            # decoder=decoder.decoder,
                                             single_cls=single_cls,
                                             save_dir=save_dir,
                                             plots=True,
