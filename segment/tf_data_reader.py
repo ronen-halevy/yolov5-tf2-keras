@@ -295,21 +295,22 @@ class LoadImagesAndLabelsAndMasks:
     def decode_resize(self, index, preserve_aspect_ratio=True, padding=False):
         filename = self.im_files[index]
         img_orig = tf.io.read_file(filename)
-
-        img0 = tf.image.decode_image(img_orig, channels=3).astype(tf.float32) / 255
-        img_resized = img0  # init
-        r = self.imgsz[0] / max(img0.shape[:2])  # ratio, + note- imgsz is of a square...
+        # note: format result: [height,width,ch]
+        img0 = tf.image.decode_image(img_orig, channels=3).astype(tf.float32) / 255 # read format:  [height,width,ch]
+        img_resized = img0  # init - to be resized
+        r = self.imgsz[0] / max(img0.shape[:2])  # ratio, Note: assumed squared target imgsz
         padh = padw = 0
         if r != 1:  # don't resize if h or w equals  self.imgsz
-            img_resized = tf.image.resize(img0, self.imgsz, preserve_aspect_ratio=preserve_aspect_ratio)
+            img_resized = tf.image.resize(img0, self.imgsz, preserve_aspect_ratio=preserve_aspect_ratio) # shape: h,w,ch
         resized_shape = img_resized.shape[:2]
         if padding:
-            padh = int((self.imgsz[1] - img_resized.shape[0]) / 2)
+            padh = int((self.imgsz[1] - img_resized.shape[0]) / 2) # note: img_resized shape: [h,w,ch]
             padw = int((self.imgsz[0] - img_resized.shape[1]) / 2)
-            # pad with grey color:
-            paddings = tf.constant([[padh, self.imgsz[1] - img_resized.shape[0] - padh],
-                                    [padw, self.imgsz[0] - img_resized.shape[1] - padw], [0, 0]])
-            img_resized = tf.pad(img_resized, paddings, "CONSTANT", constant_values=114)
+
+            img_resized = tf.image.pad_to_bounding_box(
+                img_resized, padh, padw, self.imgsz[1], self.imgsz[0]
+            )
+
         return (
             img_resized, img0.shape[:2], resized_shape,
             (padw, padh))  # pad is 0 by def while aspect ratio not preserved
