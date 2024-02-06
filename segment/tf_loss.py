@@ -199,6 +199,7 @@ class ComputeLoss:
             if self.nc > 1:  # cls loss (only if multiple classes)
                 # create [nt, nc] one_hot class array:
                 t = tf.one_hot(indices=tclsi.astype(tf.int32), depth=pcls.shape[1])
+                # lcls += self.BCEcls(pcls,t)  # BCE, with SUM_OVER_BATCH_SIZE reduction: sum/(nof elements)
                 lcls += self.BCEcls(t, pcls)  # BCE, with SUM_OVER_BATCH_SIZE reduction: sum/(nof elements)
                 # lcls +=tf.math.reduce_mean(tf.nn.weighted_cross_entropy_with_logits(t, pcls,pos_weight=tf.constant(1.0 )))
 
@@ -380,7 +381,7 @@ class ComputeLoss:
         :param targets:  # shape:[na, nt, imidx+cls+xywh+ai+ti]
         :param anchors: shape: [na,2]
         :return:
-                ind: [batch ind,anchor ind, box center], shape: [nt,4]
+                ind: [batch_ind,anchor_ind, box_center], shape: [nt,4]
                 tbox: [x,y,w,h] x,y offsets from  squares corner, [nt,4]
                 tcls: class. list size: [nt]
                 tidxs: target indices - target index in image, shape: [nt]
@@ -414,7 +415,8 @@ class ComputeLoss:
             tf.int32)  # grid's square left corners. gij=gxy-offs giving left corner of grid square, shape: [nt,2]
         gij = tf.clip_by_value(gij, [0, 0],
                                [shape[0] - 1, shape[1] - 1])  # clip grid indices to grid bounderies, shape: [nt,2]
-        ind = tf.concat([bi.astype(tf.int32), ai.astype(tf.int32), gij],
+        gi, gj = tf.transpose(gij)
+        ind = tf.concat([bi.astype(tf.int32), ai.astype(tf.int32), gj[...,None], gi[...,None]],
                         axis=1)  # [batch ind,anchor ind, box center], shape: [nt,4]
         tbox = tf.concat((gxy - gij.astype(tf.float32), gwh), 1)  # [x,y,w,h] x,y offsets from  squares corner
         ai = tf.squeeze(ai).astype(tf.int32)  # anchor indices. list.size: 3. shape: [nt]
