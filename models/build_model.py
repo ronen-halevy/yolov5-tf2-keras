@@ -104,11 +104,31 @@ def decoder(y, nx, ny, nc, na, nm, grid, anchor_grid):
     return y
 
 
-def detect(inputs, decay_factor, nc=80, anchors=(), nm=32, imgsz=(640, 640), w=None):
+def detect(inputs, decay_factor, nc=80, nl=3, nm=32, imgsz=(640, 640), na=3,w=None):
+    """
+
+    :param inputs:
+    :type inputs:
+    :param decay_factor:
+    :type decay_factor:
+    :param nc:
+    :type nc:
+    :param nm:
+    :type nm:
+    :param imgsz:
+    :type imgsz:
+    :param nl: nof grid layers, int
+    :type nl:
+    :param na: nof anchor sets per layer, int
+    :type na:
+    :param w:
+    :type w:
+    :return:
+    :rtype:
+    """
     stride = tf.convert_to_tensor([8, 16, 32], dtype=tf.float32) # todo used config for stride
     no = 5 + nc + nm  # number of outputs per anchor
-    nl = len(anchors)  # number of detection layers
-    na = len(anchors[0]) // 2  # number of anchors
+
     x = []
     for i in range(nl):
         # reason for avoiding common conv: pytorch weights structure arrangement is slightly different (no w.conv attr):
@@ -130,15 +150,38 @@ def detect(inputs, decay_factor, nc=80, anchors=(), nm=32, imgsz=(640, 640), w=N
     return x #if training else (tf.keras.layers.Concatenate(axis=1)(decoder_out), x)  # x:[bs,nyi,nxi,na,no] for i=0:2], z: [b,25200,no]
 
 
-def _parse_segment(x, decay_factor, nc=80, anchors=(), nm=32, npr=256, imgsz=(640, 640), w=None):
+def _parse_segment(x, decay_factor, nc=8, nl=3, nm=32, npr=256, imgsz=(640, 640), na=3, w=None):
+    """
+
+    :param x:
+    :type x:
+    :param decay_factor:
+    :type decay_factor:
+    :param nc:
+    :type nc:
+    :param nm:
+    :type nm:
+    :param npr:
+    :type npr:
+    :param imgsz:
+    :type imgsz:
+    :param nl: nof grid layers, int
+    :type nl:
+    :param na: nof anchor sets per layer, int
+    :type na:
+    :param w:
+    :type w:
+    :return:
+    :rtype:
+    """
     p = mask_proto(x[0], decay_factor, npr, nm, w.proto if w is not None else None)
     p = tf.transpose(p, perm=[0, 3, 1, 2])  # from shape(1,160,160,32) to shape(1,32,160,160)
-    x = detect(x, decay_factor, nc, anchors, nm, imgsz, w)
+    x = detect(x, decay_factor, nc, nl, nm, imgsz, na, w)
     y = (x, p) #if training else x[0], (p, x[1])
     return y
 
 
-def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, ref_model_seq=None):  # model_dict, input_channels(3)
+def parse_model(x, nl,na, nc, gd, gw, mlist, ch, imgsz, decay_factor, ref_model_seq=None):  # model_dict, input_channels(3)
     """
 
     @param x: model inputs, KerasTensor, shape:[b,w,h,ch], float
@@ -156,7 +199,6 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, ref_mode
     """
 
     x_in = x
-    na = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors
     no = na * (nc + 5)  # number of outputs = anchors * (classes + 5)
 
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
@@ -167,6 +209,11 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, ref_mode
             x_in = x = y[f] if isinstance(f, int) else [x if j == -1 else y[j] for j in f]  # from earlier layers
         for j, a in enumerate(args):
             try:
+                # patch effective for pytorch weights porting: Remove anchors from args. Pytorch trained weights
+                # model hold it but uneeded here.
+                if a == 'anchors':
+                    args[j]=nl
+                    continue
                 args[j] = eval(a) if isinstance(a, str) else a  # eval strings
             except NameError:
                 pass
@@ -184,11 +231,7 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, ref_mode
         elif m_str in ['Detect', 'Segment']:
             if m_str == 'Segment':
                 args[3] = make_divisible(args[3] * gw, 8)
-            # args.append([ch[x + 1] for x in f])
-            if isinstance(args[1], int):  # number of anchors
-                args[1] = [list(range(args[1] * 2))] * len(f)
             args.append(imgsz)
-            # args.append(training)
         if m_str == 'Conv':
             x = _parse_conv(x, decay_factor, *args, w=ref_model_seq[i] if ref_model_seq else None)
         elif m_str == 'Shortcut':
@@ -210,9 +253,7 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, ref_mode
         elif m_str == 'Reshape':
             x = parse_reshape(x, *args)
         elif m_str == 'Segment':
-            x = _parse_segment(x, decay_factor, *args, w=ref_model_seq[i] if ref_model_seq else None)
-            # decoder_out = x[0]
-            # x = x[1]
+            x = _parse_segment(x, decay_factor, *args, na=3, w=ref_model_seq[i] if ref_model_seq else None)
         else:
             print('\n! Warning!! Unknown module name:', m_str)
         ch.append(c2)
@@ -225,7 +266,7 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, ref_mode
     return layers
 
 
-def build_model(cfg, imgsz,ref_model_seq=None):
+def build_model(cfg, nl,na, imgsz,ref_model_seq=None):
     """
     layers: list of parsed layers
     @param inputs:model inputs, KerasTensor, shape:[b,w,h,ch], float
@@ -251,12 +292,12 @@ def build_model(cfg, imgsz,ref_model_seq=None):
             model_cfg = yaml.load(f, Loader=yaml.FullLoader)  # model dict
 
     d = deepcopy(model_cfg)
-    anchors, nc, gd, gw, mlist = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d['backbone'] + d[
+    nc, gd, gw, mlist = d['nc'], d['depth_multiple'], d['width_multiple'], d['backbone'] + d[
         'head']
     inputs = Input(shape=(640, 640, 3))
     ch = [3]
     decay_factor = 0.01
-    layers = parse_model(inputs, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, ref_model_seq=ref_model_seq)
+    layers = parse_model(inputs, nl,na, nc, gd, gw, mlist, ch, imgsz, decay_factor, ref_model_seq=ref_model_seq)
     model = Model(inputs, layers[-1])
 
     return model
@@ -266,10 +307,8 @@ if __name__ == '__main__':
     def demo():
         cfg = '/home/ronen/devel/PycharmProjects/tf_yolov5/models/segment/yolov5s-seg.yaml'
         # cfg = '/home/ronen/devel/PycharmProjects/yolo-v3-tf2/config/models/yolov3/yolov3.yaml'
-
-
         # mlist = d['backbone'] + d['head']
-        # nc = 80
+        nc = 80 # todo from cfg
         imgsz = [640, 640]
         # ch = 3 # input image nof channels
         # decay_factor = 0.01
@@ -285,11 +324,10 @@ if __name__ == '__main__':
         np.sum([np.prod(v.get_shape().as_list()) for v in train_model.trainable_variables])
 
         nm=32
-        with open(cfg) as f:
-            model_cfg = yaml.load(f, Loader=yaml.FullLoader)  # model dict
-
-        d = deepcopy(model_cfg)
-        anchors, nc, gd, gw, mlist = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d['backbone'] + d['head']
+        dataset_cfg_file = 'data/coco128-seg-short.yaml'
+        with open(cfg) as dataset_cfg_file:
+            data_cfg = yaml.load(f, Loader=yaml.FullLoader)  # model dict
+        anchors = data_cfg['anchors']
         dd = Decoder(nc, nm, anchors, imgsz)
         layer_idx=0
         dd.decoder(pred[0][0], layer_idx)
