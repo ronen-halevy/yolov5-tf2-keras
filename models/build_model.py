@@ -105,16 +105,24 @@ def decoder(y, nx, ny, nc, na, nm, grid, anchor_grid):
 
 
 def detect(inputs, decay_factor, nc=80, anchors=(), nm=32, imgsz=(640, 640), w=None):
-    stride = tf.convert_to_tensor(w.stride.numpy() if w is not None else [8, 16, 32], dtype=tf.float32)
+    stride = tf.convert_to_tensor([8, 16, 32], dtype=tf.float32) # todo used config for stride
     no = 5 + nc + nm  # number of outputs per anchor
     nl = len(anchors)  # number of detection layers
     na = len(anchors[0]) // 2  # number of anchors
     x = []
-
     for i in range(nl):
-        y = _parse_conv(inputs[i], decay_factor, no * na, kernel_size=1, stride=1, bn=0,
-                                 activation=0)
-        # x.append(y)
+        # reason for avoiding common conv: pytorch weights structure arrangement is slightly different (no w.conv attr):
+        bias = True
+        y = tf.keras.layers.Conv2D(filters=no * na,
+                                        kernel_size=1,
+                                        strides=1,
+                                        padding='VALID',
+                                        use_bias=bias,
+                                        kernel_initializer='zeros' if w is None else  tf.keras.initializers.Constant(
+                                            w.m[i].weight.permute(2, 3, 1, 0).numpy()),
+                                        bias_initializer='zeros' if w is None else tf.keras.initializers.Constant(w.m[i].bias.numpy()) if bias else None
+                                   )(inputs[i])
+
         ny, nx = imgsz[0] // stride[i], imgsz[1] // stride[i] # ronen todo check reuse calc
         y = tf.keras.layers.Reshape([int(ny), int(nx), na, no])(y) # from [bs,nyi,nxi,na*no] to [bs,nyi,nxi,na,no]
         y = tf.keras.layers.Permute([3, 1, 2, 4])(y)# from shape [bs,nyi,nxi,na, no] to [bs,na,nyi,nxi,no]
@@ -122,10 +130,10 @@ def detect(inputs, decay_factor, nc=80, anchors=(), nm=32, imgsz=(640, 640), w=N
     return x #if training else (tf.keras.layers.Concatenate(axis=1)(decoder_out), x)  # x:[bs,nyi,nxi,na,no] for i=0:2], z: [b,25200,no]
 
 
-def _parse_segmment(x, decay_factor, nc=80, anchors=(), nm=32, npr=256, imgsz=(640, 640)):
-    p = mask_proto(x[0], decay_factor, npr, nm)
+def _parse_segment(x, decay_factor, nc=80, anchors=(), nm=32, npr=256, imgsz=(640, 640), w=None):
+    p = mask_proto(x[0], decay_factor, npr, nm, w.proto if w is not None else None)
     p = tf.transpose(p, perm=[0, 3, 1, 2])  # from shape(1,160,160,32) to shape(1,32,160,160)
-    x = detect(x, decay_factor, nc, anchors, nm, imgsz)
+    x = detect(x, decay_factor, nc, anchors, nm, imgsz, w)
     y = (x, p) #if training else x[0], (p, x[1])
     return y
 
@@ -171,7 +179,6 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, ref_mode
             args = [c2, *args[1:]]  # [nch_in, nch_o, args]
         if m_str in ['C3']:
             args = [*args]  # [nch_in, nch_o, args]
-
         if m_str == 'Concat':
             c2 = sum(ch[-1 if x == -1 else x + 1] for x in f)
         elif m_str in ['Detect', 'Segment']:
@@ -183,13 +190,9 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, ref_mode
             args.append(imgsz)
             # args.append(training)
         if m_str == 'Conv':
-            if ref_model_seq:  # feed weights directly - used for pytorch to keras weights conversion
-                x = _parse_conv(x, decay_factor, *args, w=ref_model_seq[i])
-            else:
-                x = _parse_conv(x, decay_factor, *args)
+            x = _parse_conv(x, decay_factor, *args, w=ref_model_seq[i] if ref_model_seq else None)
         elif m_str == 'Shortcut':
             x = _parse_shortcut(x)
-
         elif m_str == 'nn.Upsample':
             size = (args[1], args[1])
             interpolation = args[2]
@@ -199,18 +202,15 @@ def parse_model(x, anchors, nc, gd, gw, mlist, ch, imgsz, decay_factor, ref_mode
         elif m_str == 'C3':
             kernel_size, stride = 1, 1
 
-            if ref_model_seq:  # feed weights directly - used for pytorch to keras weights conversion
-                x = _parse_c3(x, decay_factor, n, kernel_size, stride, *args, w=ref_model_seq[i])
-            else:
-                x = _parse_c3(x, decay_factor, n, kernel_size, stride, *args)
+            x = _parse_c3(x, decay_factor, n, kernel_size, stride, *args, w=ref_model_seq[i] if ref_model_seq else None)
         elif m_str == 'SPPF':
-            x = _parse_sppf(x, decay_factor, *args)
+            x = _parse_sppf(x, decay_factor, *args, w=ref_model_seq[i] if ref_model_seq else None)
         elif m_str == 'Maxpool':
             x = _parse_maxpool(x, *args)
         elif m_str == 'Reshape':
             x = parse_reshape(x, *args)
         elif m_str == 'Segment':
-            x = _parse_segmment(x, decay_factor, *args)
+            x = _parse_segment(x, decay_factor, *args, w=ref_model_seq[i] if ref_model_seq else None)
             # decoder_out = x[0]
             # x = x[1]
         else:
@@ -231,10 +231,10 @@ def build_model(cfg, imgsz,ref_model_seq=None):
     @param inputs:model inputs, KerasTensor, shape:[b,w,h,ch], float
     @param anchors:  anchors, shape: [nl, na,2]
     @param nc:nof classes, int
-    @param gd: depth gain. Factors nof layers' repeats.  float
-    @param gw: width gain, Factors nof layers' filters. float
+    @param gd: depth gain.  a factor used in n layers repeats settings.  float
+    @param gw: width gain, a factor used in n layers repeats settings. float
     @param mlist: layers config list read from yaml
-    @param ch: nof channels, list, iteratively populated, init value: ch=[3]
+    @param ch: nof channels, list, iteratively populated for all layers, init value: ch=[3]
     @param imgsz: image size, list[2] (can be set to [None,None] )
     @param decay_factor: value for conv kernel_regularizer, float
     @param training: if not training, model returns also decoded output for nms process, bool
@@ -242,6 +242,7 @@ def build_model(cfg, imgsz,ref_model_seq=None):
     @return:
         model : functional model
     """
+    # read cfg from either dict (in pytorch weights porting mode) or yaml file (in normal operation):
     if isinstance(cfg, dict):
         model_cfg = cfg  # model dict
     else:  # is *.yaml
