@@ -33,6 +33,7 @@ import os
 import platform
 import sys
 from pathlib import Path
+import yaml
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
@@ -54,7 +55,8 @@ from utils.tf_general import (LOGGER, Profile, check_file, check_img_size, check
                               )
 from utils.tf_plots import Annotator, colors, save_one_box
 from utils.segment.tf_general import masks2segments, process_mask, process_mask_native
-from models.tf_model import TFModel
+new_model=True # todo clean old model
+from models.tf_model import TFModel # todo clean old model
 from models.build_model import build_model, Decoder
 
 from nms import non_max_suppression
@@ -126,7 +128,15 @@ def run(
         no_strech=False  # resize image to max rectangle
 ):
     source = str(source)
-    class_names = [c.strip() for c in open(class_names_file).readlines()]
+    # class_names = [c.strip() for c in open(class_names_file).readlines()]
+
+    with open(data) as f:
+        data_cfg = yaml.load(f, Loader=yaml.FullLoader)  # model dict
+    class_names = data_cfg['names']
+    anchors = data_cfg['anchors']
+    nl = len(anchors)  # number of detection layers
+    na = len(anchors[0]) // 2  # number of anchors
+
     save_img = not nosave and not source.endswith('.txt')  # save inference images
     is_file = Path(source).suffix[1:] in (IMG_FORMATS + VID_FORMATS)
     is_url = source.lower().startswith(('rtsp://', 'rtmp://', 'http://', 'https://'))
@@ -161,11 +171,14 @@ def run(
 
     else:
         dynamic = False
-        tf_model = TFModel(cfg=model_cfg_file,
-                           ref_model_seq=None, nc=80, imgsz=imgsz, training=False)
-        im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else bs)
-        keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im))
-        # keras_model = build_model(model_cfg_file, imgsz=imgsz)
+        if not new_model:# todo clean old model
+            tf_model = TFModel(cfg=model_cfg_file,
+                               ref_model_seq=None, nc=80, imgsz=imgsz, training=False)
+            im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else bs)
+
+            keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im))
+        else:
+            keras_model = build_model(model_cfg_file, nl, na, imgsz=imgsz)
 
     if load_weights:  # normally True when load_model is false
         keras_model.load_weights(weights_load_path)
@@ -204,7 +217,20 @@ def run(
                 pred = pred.numpy()  # make it ndarray, same as keras predict output
             else:
                 # For step-by-step debug use keras_model(im)
-                pred, proto, _ = keras_model.predict(im) # model returns pred, proto, train_out:
+                if not new_model: # todo clean old model
+                    pred, proto, _ = keras_model.predict(im) # model returns pred, proto, train_out:
+                else:
+                    train_out, proto = keras_model(im)
+                    preds = []
+                    nc=80 # todo config
+                    nm=32 # todo config
+
+                    decoder = Decoder(nc, nm, anchors, imgsz)
+                    for layer_idx, train_out_layer in enumerate(train_out):
+                        p = decoder.decoder(train_out_layer, layer_idx)
+                        preds.append(p)
+                    pred = tf.concat(preds, axis=1)
+
         #     # NMS
         pred=tf.squeeze(pred, axis=0)
         nms_pred=non_max_suppression(pred, conf_thres, iou_thres, max_det)
@@ -329,16 +355,18 @@ def parse_opt():
         parser.add_argument('--source', type=str,
                             default='/home/ronen/devel/PycharmProjects/shapes-dataset/dataset/train/images')  # default=ROOT / 'data/images', help='file/dir/URL/glob/screen/0(webcam)')
         parser.add_argument('--class_names_file', type=str, default=ROOT / '../shapes-dataset/dataset/class.names',
-                            help='class names')
+                            help='anchors and class names')
+        parser.add_argument('--data', type=str, default=ROOT / 'data/shapes-seg.yaml', help='anchors and class names')
+
     else:
 
-        parser.add_argument('--weights_load_path', type=str, default=ROOT / 'utilities/keras_weights/yolov5s-seg.tf',#'/home/ronen/devel/PycharmProjects/tf_yolov5/utilities/keras_weights/rrcoco.tf',
+        parser.add_argument('--weights_load_path', type=str, default=ROOT / 'utilities/keras_weights/rrcoco.h5',#'/home/ronen/devel/PycharmProjects/tf_yolov5/utilities/keras_weights/rrcoco.tf',
                             help='load weights path')
         parser.add_argument('--source', type=str, default=ROOT / 'data/image_bus')# '/home/ronen/devel/PycharmProjects/shapes-dataset/dataset/train/images'
         parser.add_argument('--class_names_file', type=str, default=ROOT / 'data/class-names/coco.names',
                              help='class names')
 
-    parser.add_argument('--data', type=str, default=ROOT / 'data/coco128.yaml', help='(optional) dataset.yaml path')
+        parser.add_argument('--data', type=str, default=ROOT / 'data/coco128-seg.yaml', help='anchors and class names')
 
     # parser.add_argument('--weights_save_path', type=str, default=ROOT / 'utilities/keras_weights/yolov5s-seg.tf',
     #                     help='save weights path')
