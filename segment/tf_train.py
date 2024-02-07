@@ -59,8 +59,8 @@ from tensorflow import keras
 # tf.config.experimental.enable_op_determinism()
 
 import numpy as np
-from models.tf_model import TFModel
-# from models.build_model import build_model, Decoder
+from models.tf_model import TFModel#  todo remove old TFmodel
+from models.build_model import build_model, Decoder
 
 import segment.tf_val as validate  # for end-of-epoch mAP
 from optimizer import LRSchedule
@@ -129,42 +129,43 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # is_coco = isinstance(val_path, str) and val_path.endswith('coco/val2017.txt')  # COCO dataset
     # Model
     dynamic = False
-    tf_model = TFModel(cfg=cfg,
-                       ref_model_seq=None, nc=nc, imgsz=imgsz, training=True)
-    # im = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else batch_size)
-    ch=3
-    im = keras.Input(shape=(None,None, ch), batch_size=None if dynamic else batch_size)
 
-    keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im), name='train')
-    # keras_model=build_model(cfg,  imgsz=imgsz)
+    anchors = data_dict['anchors']
+    nl = len(anchors)  # number of detection layers
+    na = len(anchors[0]) // 2  # number of anchors
 
-    val_tf_model = TFModel(cfg=cfg,
-                       ref_model_seq=None, nc=nc, imgsz=imgsz, training=False)
-    im_val = keras.Input(shape=(None,None, ch), batch_size=None if dynamic else batch_size)
+    ch=3 # nof input data channels. used by build model.
+    new_model=True
+    if not new_model:#  todo remove old TFmodel
+        tf_model = TFModel(cfg=cfg,
+                           ref_model_seq=None, nc=nc, imgsz=imgsz, training=True)
+        im = keras.Input(shape=(None, None, ch), batch_size=None if dynamic else batch_size)
+        keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im), name='train')
 
-    val_keras_model = tf.keras.Model(inputs=im_val, outputs=val_tf_model.predict(im_val), name='validation')
-    # val_keras_model = build_model(cfg, imgsz=imgsz)
+        val_tf_model = TFModel(cfg=cfg,
+                           ref_model_seq=None, nc=nc, imgsz=imgsz, training=False)
+        im_val = keras.Input(shape=(None,None, ch), batch_size=None if dynamic else batch_size)
 
-    # todo - fix anchors config!!!!!!
-    with open(cfg) as f:
-        model_cfg = yaml.load(f, Loader=yaml.FullLoader)  # model dict
-    from copy import deepcopy
-    d = deepcopy(model_cfg)
-    anchors, nc, gd, gw, mlist = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d['backbone'] + d[
-        'head']
-    # decoder = Decoder(nc, nm, anchors, imgsz)
+        val_keras_model = tf.keras.Model(inputs=im_val, outputs=val_tf_model.predict(im_val), name='validation')
+        grids =[ [x.shape[2], x.shape[2] ]for x in keras_model.predict(tf.zeros([1,*imgsz, ch]))[0]]
+        stride = [imgsz[0]/grid[0] for grid in grids]
+        grids = tf.constant(grids)
+    else:
+        keras_model=build_model(cfg,  nl, na, imgsz=imgsz)
+        val_keras_model = build_model(cfg,nl,na, imgsz=imgsz)
+        decoder = Decoder(nc, nm, anchors, imgsz)
+        # extract 3 layers grid shapes strides:
+        grids =[[80,80],[40,40],[20,20]]
+        stride = [8.,16.,32.]
+        grids = tf.constant(grids)#  todo arranmge configl
 
-    # extract 3 layers grid shapes strides:
-    grids =[ [x.shape[2], x.shape[2] ]for x in keras_model.predict(tf.zeros([1,*imgsz, ch]))[0]]
-    stride = [imgsz[0]/grid[0] for grid in grids]
-    grids = tf.constant(grids)
+
     # keras_model.compile()
     print(val_keras_model.summary())
     # tf_model.run_eagerly = True
     # pred = keras_model(im)  # forward
     best_fitness, start_epoch = 0.0, 0
 
-    # check_suffix(weights, '.pt')  # check weights
     if pretrained:
         keras_model.load_weights(weights)
 
@@ -286,7 +287,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                                             nb=val_nb,
                                             half=False, # half precision model
                                             model=val_keras_model, # todo use ema
-                                            # decoder=decoder.decoder,
+                                            decoder=decoder.decoder if new_model else None,
                                             single_cls=single_cls,
                                             save_dir=save_dir,
                                             plots=True,
