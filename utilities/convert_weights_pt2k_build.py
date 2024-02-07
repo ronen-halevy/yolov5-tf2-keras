@@ -1,38 +1,17 @@
 # YOLOv5 🚀 by Ultralytics, AGPL-3.0 license
-"""
-TensorFlow, Keras and TFLite versions of YOLOv5
-Authored by https://github.com/zldrobit in PR https://github.com/ultralytics/yolov5/pull/1127
 
-Usage:
-    $ python models/tf.py --weights yolov5s.pt
-
-Export:
-    $ python export.py --weights yolov5s.pt --include saved_model pb tflite tfjs
-"""
 
 import argparse
 import sys
-from copy import deepcopy
 from pathlib import Path
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
-# ROOT = ROOT.relative_to(Path.cwd())  # relative
 
-import numpy as np
 import torch
-import torch.nn as nn
-import tensorflow as tf
-
-from tensorflow import keras
-
-from models.common import (C3, SPP, SPPF, Bottleneck, BottleneckCSP, C3x, Concat, Conv, CrossConv, DWConv,
-                           DWConvTranspose2d, Focus, autopad)
 from models.experimental import MixConv2d, attempt_load
-from models.yolo import Detect, Segment
-from utils.activations import SiLU
 from utils.general import LOGGER, make_divisible, print_args
 
 # from models.tf_model import TFModel
@@ -42,12 +21,13 @@ from models.build_model import build_model
 def run(
         weights=ROOT / 'yolov5s-seg.pt',  # weights path
         imgsz=(640, 640),  # inference size h,w
+        nl=3,
+        na=3,
         batch_size=1,  # batch size
         tf_weights_dir='.',
         tf_model_dir='.',
         **kwargs
 ):
-    ref_model = attempt_load(weights, device=torch.device('cpu'), inplace=True, fuse=True)
     # PyTorch model
     im = torch.zeros((batch_size, 3, *imgsz))  # BCHW image
     # fuse is essential for porting weights to keras. TBD
@@ -55,17 +35,9 @@ def run(
     _ = ref_model(im)  # inference
     ref_model.info()
     ref_model_seq = ref_model.model
-    # ref_model = ref_model.model
-    # TensorFlow model
-    im = tf.zeros((batch_size, *imgsz, 3))  # BHWC image
-    # tf_model = TFModel(cfg=ref_model.yaml, ref_model_seq=ref_model_seq, nc=ref_model.nc, imgsz=imgsz)
-    # _ = tf_model.predict(im)  # inference
 
     # Keras model
-    im = keras.Input(shape=(*imgsz, 3), batch_size=None) # assume input is dataset - no batch size to be specified
-    # keras_model = keras.Model(inputs=im, outputs=tf_model.predict(im))
-    keras_model=build_model(cfg=ref_model.yaml,  imgsz=imgsz, ref_model_seq=ref_model_seq)
-
+    keras_model=build_model(cfg=ref_model.yaml, nl=nl,na=na, imgsz=imgsz, ref_model_seq=ref_model_seq)
     keras_model.summary()
 
     LOGGER.info(f'Source Weights: {weights}')
@@ -85,16 +57,16 @@ def parse_opt():
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[640], help='inference size h,w')
     parser.add_argument('--tf_weights_dir', type=str, default='./keras_weights/rrcoco.h5', help='produced weights target location')
     parser.add_argument('--tf_model_dir', type=str, default='./keras_model', help='produced weights target location')
+    parser.add_argument('--nl', type=str, default=3, help='number of grid layers') # todo move to a cfg file
+    parser.add_argument('--na', type=str, default=3, help='number of anchors per layer') # todo move to a cfg file
 
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(vars(opt))
     return opt
 
-
 def main(opt):
     run(**vars(opt))
-
 
 if __name__ == '__main__':
     opt = parse_opt()
