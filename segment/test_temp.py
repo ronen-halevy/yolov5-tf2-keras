@@ -51,12 +51,56 @@ ckpt = torch.load(weights, map_location='cpu')  # load checkpoint to CPU to avoi
 ref_model = ckpt['model']
 
 from models.build_model import build_model
+from models.build_model import Decoder
+
+
+
 # Keras model
 imgsz=[640,640]
 na=3
 nl=3
 keras_model = build_model(cfg=ref_model.yaml, nl=nl, na=na, imgsz=imgsz, ref_model_seq=ref_model.model)
 keras_model.summary()
+##
+images_path='/home/ronen/devel/PycharmProjects/datasets/coco128-seg-short/images/train2017/000000000034.jpg'
+im0 = tf.image.decode_image(open(images_path, 'rb').read(), channels=3, dtype=tf.float32)
+img = tf.image.resize_with_pad(
+        im0,
+        target_height=imgsz[0],
+        target_width=imgsz[1],
+    )
+
+#input :
+img = tf.expand_dims(img, axis=0)
+
+
+# pred:
+# pred, proto, _ = keras_model.predict(im)  # model returns pred, proto, train_out:
+# train_out = keras_model(img)
+train_out, proto = keras_model(img)
+
+# decode
+if True:
+    nc = 80  # todo config
+    nm = 32  # todo config
+    data_cfg_file='/home/ronen/devel/PycharmProjects/tf_yolov5/data/coco128-seg-short.yaml'
+
+    import yaml
+    with open(data_cfg_file, encoding='ascii', errors='ignore') as f:
+        data_config = yaml.safe_load(f)  # model dict
+
+
+        anchors=data_config['anchors']
+
+
+    decoder = Decoder(nc, nm, anchors, imgsz)
+    preds = []
+
+    for layer_idx, train_out_layer in enumerate(train_out):
+        p = decoder.decoder(train_out_layer, layer_idx)
+        preds.append(p)
+        pred = tf.concat(preds, axis=1)
+
 
 # train:
 import yaml  # for torch hub
@@ -69,8 +113,8 @@ model, save = parse_model(model_yaml, ch=[ch])  # model, savelist
 
 y, dt = [], []  # outputs
 batch_size=1
-x = torch.rand(batch_size, 3, 640, 640)#.to(device)
-
+x =im= torch.rand(batch_size, 3, 640, 640)#.to(device)
+x =  torch.permute(torch.from_numpy(img.numpy()), (0,3, 1, 2))
 for m in model:
         if m.f != -1:  # if not from previous layer
             x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
@@ -78,9 +122,7 @@ for m in model:
         y.append(x if m.i in save else None)  # save output
 
 pass
-im = torch.rand(batch_size, 3, 640, 640)#.to(device)
-x, xx = model(im)
-
+#############################ends
 filters=32
 kernel_size=7
 stride=2
