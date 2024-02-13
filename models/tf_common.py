@@ -91,14 +91,19 @@ def _parse_conv(x, decay, filters, kernel_size=1, stride=1, p=None, bn=1, activa
                                kernel_size=kernel_size,
                                strides=(stride, stride),
                                padding='SAME' if stride == 1 else 'VALID',
-                               use_bias=not hasattr(w, 'bn'),
+                               use_bias=False,
                                kernel_initializer=tf.keras.initializers.RandomNormal(
                                    stddev=0.01) if w is None else tf.keras.initializers.Constant(
                                    w.conv.weight.permute(2, 3, 1, 0).numpy()),
                                bias_initializer='zeros' if w is None else 'zeros' if hasattr(w, 'bn') else
                                tf.keras.initializers.Constant(w.conv.bias.numpy()))(x)
     if bn:
-        x = tf.keras.layers.BatchNormalization(momentum=0.03)(x)
+        x = tf.keras.layers.BatchNormalization(momentum=0.1,
+                                               beta_initializer='zeros' if w is None else tf.keras.initializers.Constant(w.bn.bias.numpy()),#'zeros',
+                                               gamma_initializer='ones' if w is None else tf.keras.initializers.Constant(w.bn.weight.numpy()),#'ones',
+                                               moving_mean_initializer='zeros' if w is None else tf.keras.initializers.Constant(w.bn.running_mean.numpy()),#'zeros',
+                                               moving_variance_initializer='ones' if w is None else tf.keras.initializers.Constant(w.bn.running_var.numpy())#,'ones',
+                                               )(x)
     if activation:
         x = tf.keras.activations.swish(x)
     return x
