@@ -234,12 +234,12 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     t0 = time.time()
     nw = max(round(hyp['warmup_epochs'] * nb), 100)  # number of lr warmup iterations, max(3 epochs, 100 iterations)
     warmup_bias_lr=hyp['warmup_bias_lr']
-    optimizer = tf.keras.optimizers.SGD(learning_rate= LRSchedule( hyp['lr0'], hyp['lrf'], nb, nw, warmup_bias_lr, epochs,False), ema_momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
+    optimizer = tf.keras.optimizers.Adam(learning_rate= LRSchedule( hyp['lr0'], hyp['lrf'], nb, nw, warmup_bias_lr, epochs,False), ema_momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
     # optimizer = tf.keras.optimizers.SGD(learning_rate= 0.01, ema_momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
 
     # train loop:
     for epoch in range(epochs):
-        LOGGER.info(('\n' + '%11s' * 8) % ('Epoch', 'totloss', 'box_loss', 'mask_loss', 'obj_loss','cls_loss','Instances', 'Size'))
+        LOGGER.info(('\n' + '%11s' * 9) % ('Epoch','gpu_mem', 'box_loss', 'mask_loss', 'obj_loss','cls_loss','Instances', 'Size', 'lr'))
         pbar = tqdm(train_loader, total=nb, bar_format=TQDM_BAR_FORMAT)  # progress bar
 
         mloss = tf.zeros([4], dtype=tf.float32)  # mean losses
@@ -256,17 +256,19 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                 # model forward, with training=True, outputs a tuple:2 - preds list:3 & proto. Details:
                 # preds shapes: [b,na,gyi,gxi,xywh+conf+cls+masks] where na=3,gy,gx[i=1:3]=size/8,/16,/32,masks:32 words
                 # proto shape: [b,32,size/4,size/4]
-                pred = keras_model(b_images)
+                pred = keras_model(b_images, training=True) # Reaining=True essential for bn adaptation.
                 loss, loss_items = compute_loss(pred, targets, b_masks)  # returns: sum(loss),  [lbox, lseg, lobj, lcls]
             grads = tape.gradient(loss, keras_model.trainable_variables)
             optimizer.apply_gradients(
                     zip(grads, keras_model.trainable_variables))
             mloss = (mloss * batch_idx + loss_items) / (batch_idx + 1)  # update mean losses
-            totloss = (loss * batch_idx + loss) / (batch_idx + 1)  # update mean losses
+
+            gpu_devices = tf.config.list_physical_devices('GPU')
+            gpu_mem = f'{tf.config.experimental.get_memory_usage("GPU:0") / 1E9 if gpu_devices else 0:.3g}G'
 
             pbar.set_description(('%11s' * 2 + '%11.4g' * 6) %
-                                 (f'{epoch}/{epochs - 1}', totloss.numpy(), *mloss.numpy(), targets.shape[0], b_images.shape[1]))
-            #
+                                 (f'{epoch}/{epochs - 1}', gpu_mem, *mloss.numpy(), targets.shape[0], b_images.shape[1]))
+                                     #
             # Mosaic plots
             if plots:
                 if ni < 3:
