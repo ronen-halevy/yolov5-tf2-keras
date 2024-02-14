@@ -280,11 +280,11 @@ class LoadImagesAndLabelsAndMasks:
             masks = tf.fill([img.shape[0] // self.downsample_ratio, img.shape[1] // self.downsample_ratio], 0).astype(
                 tf.float32)  # np.zeros(img_size, dtype=np.uint8)
 
-        labels = xyxy2xywhn(labels, w=640, h=640, clip=True, eps=1e-3)  # return xywh normalized
+        labels = xyxy2xywhn(labels, w=640, h=640, clip=True, eps=1e-3)  # normalize xywh by image size wxh
         if self.augment:
             img, labels, masks = self.augmentation(img, labels, masks)
             img = img.astype(tf.float32) / 255
-        # set ragged labels tensor - support different nof labels per image:
+        # set ragged labels tensor. Reason: needed to pack all images [nti,5] tensors, where nti nof targets in image i
         labels = tf.RaggedTensor.from_tensor(labels)  # [nt,5], nt: nof objects in current image
         return img, labels, masks, tf.constant(self.im_files[index]), shapes
 
@@ -647,13 +647,13 @@ class LoadImagesAndLabelsAndMasks:
         # Merge downsampled masks after sorting by mask size and coloring:
         nh, nw = (size[0] // downsample_ratio, size[1] // downsample_ratio)  # downsample masks by 4
         masks = tf.squeeze(tf.image.resize(masks[..., None], [nh, nw]), axis=3)  # masks shape: [nt, 160, 160]
-        # sort masks by area.  reason: to select smallest area mask if masks overlap
+        # sort masks by area.  reason: to select largest area mask if masks overlap
         areas = tf.math.reduce_sum(masks, axis=[1, 2])  # shape: [nt]
         sorted_index = tf.argsort(areas, axis=-1, direction='DESCENDING', stable=False, name=None)  # shape: [nt]
         masks = tf.gather(masks, sorted_index, axis=0)  # sort masks by areas shape: [nt, 160,160]
         # color masks by index, before merge: 1 for larger, nt to smallest. 0 remains no mask:
-        mask_colors = tf.range(1, len(sorted_index) + 1, dtype=tf.float32) # masks colors 1:nt
+        mask_colors = tf.range(1, len(sorted_index) + 1, dtype=tf.float32) # masks colors range is 1:nt
 
         masks = tf.math.multiply(masks, tf.reshape(mask_colors, [-1, 1, 1]))  # set color values to mask pixels
-        masks = tf.reduce_max(masks, axis=0)  # merge overlaps: keep max color value  (i.e. smallest area mask)
+        masks = tf.reduce_max(masks, axis=0)  # merge overlaps: keep max color value  (i.e. largest area mask)
         return masks, sorted_index
