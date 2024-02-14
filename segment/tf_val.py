@@ -377,8 +377,7 @@ def run(
     # Print speeds
     t = tuple(x.t / seen * 1E3 for x in dt)  # speeds per image
     # if not training:
-    shape = (batch_size, 3, imgsz, imgsz)
-    LOGGER.info(f'Speed: %.1fms inference, %.1fms loss, %.1fms NMS per image at shape {shape}' % t)
+    LOGGER.info(f'Speed: %.1fms inference, %.1fms loss, %.1fms NMS per image at shape {(batch_size, 3, imgsz)}' % t)
 
     # Plots
     if plots:
