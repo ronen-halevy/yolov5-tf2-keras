@@ -89,14 +89,14 @@ def plot_images_and_masks(images, targets, masks, paths=None, fname='images.jpg'
 
             # Plot masks
             if len(masks):
-                # if overlap multi targets, separate to nti masks. if non-overlap or max 1 target, pick image i masks
-                if tf.reduce_max(masks) > 1.0:  # if masks overlap. if overlap but l.e. 1 masks,  & more than 1 masks: separate image i mask to mask per target
+                # if overlap & multi targets, masks[idseparate to nti masks. if non-overlap or max 1 target, pick image idx masks
+                if tf.reduce_max(masks) > 1.0:  #  in overlap mode mask contains all image's targets masks colored 1:n
                     image_masks = masks[[i]]  # (1, 640, 640)
                     nti = len(ti) # nof targets in image i
                     index = np.arange(nti).reshape(nti, 1, 1) + 1 # shape: [nl,1,1]
                     image_masks = np.repeat(image_masks, nti, axis=0) # dup masks per nof labels, shape: [nl,160,160]
                     image_masks = np.where(image_masks == index, 1.0, 0.0) # Each mask dup holds a single target mask
-                else: # in non-overlapping mode uses a mask per target, select all image i masks by idx (bool kuat):
+                else: # non-overlap mode or a single target image: mask[i] holds a single target colored by is.
                     image_masks = masks[idx] # take masks which belong to current image #todo - test overlap with single mask
 
                 im = np.asarray(annotator.im).copy()
@@ -130,20 +130,20 @@ def plot_results_with_masks(file="path/to/results.csv", dir="", best=True):
                               0.1 * data.values[:, 11])
             s = [x.strip() for x in data.columns]
             x = data.values[:, 0]
-            for i, j in enumerate([1, 2, 3, 4, 5, 6, 9, 10, 13, 14, 15, 16, 7, 8, 11, 12]):
+            for idx, j in enumerate([1, 2, 3, 4, 5, 6, 9, 10, 13, 14, 15, 16, 7, 8, 11, 12]):
                 y = data.values[:, j]
                 # y[y == 0] = np.nan  # don't show zero values
-                ax[i].plot(x, y, marker=".", label=f.stem, linewidth=2, markersize=2)
+                ax[idx].plot(x, y, marker=".", label=f.stem, linewidth=2, markersize=2)
                 if best:
                     # best
-                    ax[i].scatter(index, y[index], color="r", label=f"best:{index}", marker="*", linewidth=3)
-                    ax[i].set_title(s[j] + f"\n{round(y[index], 5)}")
+                    ax[idx].scatter(index, y[index], color="r", label=f"best:{index}", marker="*", linewidth=3)
+                    ax[idx].set_title(s[j] + f"\n{round(y[index], 5)}")
                 else:
                     # last
-                    ax[i].scatter(x[-1], y[-1], color="r", label="last", marker="*", linewidth=3)
-                    ax[i].set_title(s[j] + f"\n{round(y[-1], 5)}")
+                    ax[idx].scatter(x[-1], y[-1], color="r", label="last", marker="*", linewidth=3)
+                    ax[idx].set_title(s[j] + f"\n{round(y[-1], 5)}")
                 # if j in [8, 9, 10]:  # share train and val loss y axes
-                #     ax[i].get_shared_y_axes().join(ax[i], ax[i - 5])
+                #     ax[idx].get_shared_y_axes().join(ax[idx], ax[idx - 5])
         except Exception as e:
             print(f"Warning: Plotting error for {f}: {e}")
     ax[1].legend()
