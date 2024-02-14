@@ -647,7 +647,7 @@ class LoadImagesAndLabelsAndMasks:
         # Merge downsampled masks after sorting by mask size and coloring:
         nh, nw = (size[0] // downsample_ratio, size[1] // downsample_ratio)  # downsample masks by 4
         masks = tf.squeeze(tf.image.resize(masks[..., None], [nh, nw]), axis=3)  # masks shape: [nt, 160, 160]
-        # sort masks by area.  reason: to select largest area mask if masks overlap
+        # DESCENDING sort masks by area.  reason: smaller mask area will get larger color, so it will survive if overlap
         areas = tf.math.reduce_sum(masks, axis=[1, 2])  # shape: [nt]
         sorted_index = tf.argsort(areas, axis=-1, direction='DESCENDING', stable=False, name=None)  # shape: [nt]
         masks = tf.gather(masks, sorted_index, axis=0)  # sort masks by areas shape: [nt, 160,160]
@@ -655,5 +655,5 @@ class LoadImagesAndLabelsAndMasks:
         mask_colors = tf.range(1, len(sorted_index) + 1, dtype=tf.float32) # masks colors range is 1:nt
 
         masks = tf.math.multiply(masks, tf.reshape(mask_colors, [-1, 1, 1]))  # set color values to mask pixels
-        masks = tf.reduce_max(masks, axis=0)  # merge overlaps: keep max color value  (i.e. largest area mask)
+        masks = tf.reduce_max(masks, axis=0)  # merge overlaps: keep max color value (i.e. smaller mask areas)
         return masks, sorted_index
