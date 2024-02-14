@@ -266,8 +266,8 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
             gpu_devices = tf.config.list_physical_devices('GPU')
             gpu_mem = f'{tf.config.experimental.get_memory_usage("GPU:0") / 1E9 if gpu_devices else 0:.3g}G'
 
-            pbar.set_description(('%11s' * 2 + '%11.4g' * 6) %
-                                 (f'{epoch}/{epochs - 1}', gpu_mem, *mloss.numpy(), targets.shape[0], b_images.shape[1]))
+            pbar.set_description(('%11s' * 2 + '%11.4g' * 7) %
+                                 (f'{epoch}/{epochs - 1}', gpu_mem, *mloss.numpy(), targets.shape[0], b_images.shape[1], optimizer.lr))
                                      #
             # Mosaic plots
             if plots:
