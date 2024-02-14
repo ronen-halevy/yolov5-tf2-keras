@@ -89,29 +89,32 @@ def plot_images_and_masks(images, targets, masks, paths=None, fname='images.jpg'
 
             # Plot masks
             if len(masks):
-                # if overlap & multi targets, masks[idseparate to nti masks. if non-overlap or max 1 target, pick image idx masks
+                # if overlap & multi targets, separate masks[i] to nti masks. else, pick image's  idx masks
                 if tf.reduce_max(masks) > 1.0:  #  in overlap mode mask contains all image's targets masks colored 1:n
                     image_masks = masks[[i]]  # (1, 640, 640)
                     nti = len(ti) # nof targets in image i
                     index = np.arange(nti).reshape(nti, 1, 1) + 1 # shape: [nl,1,1]
                     image_masks = np.repeat(image_masks, nti, axis=0) # dup masks per nof labels, shape: [nl,160,160]
-                    image_masks = np.where(image_masks == index, 1.0, 0.0) # Each mask dup holds a single target mask
+                    image_masks = np.where(image_masks == index, 1.0, 0.0) # image_masks holds nti masks colored 1 or 0
                 else: # non-overlap mode or a single target image: mask[i] holds a single target colored by is.
                     image_masks = masks[idx] # take masks which belong to current image #todo - test overlap with single mask
-
+                #  pick color by class value and draw overlay on the image:
                 im = np.asarray(annotator.im).copy()
                 for j, box in enumerate(boxes.T.tolist()):
-                    if labels or conf[j] > 0.25:  # 0.25 conf thresh
-                        color = colors(classes[j])
+                    if labels or conf[j] > 0.25:  # if labels (i.e. no conf column ) or 0.25 conf thresh
+                        color = colors(classes[j])  # pick color per class
                         mh, mw = image_masks[j].shape
-                        if mh != h or mw != w:
+                        if mh != h or mw != w: # is mask[j] downsampled? normally it is
+                            # resize mask[j], cast to bool:
                             mask = image_masks[j].astype(np.uint8)
                             mask = cv2.resize(mask, (w, h))
                             mask = mask.astype(bool)
-                        else:
+                        else: # no resize, just cast:
                             mask = image_masks[j].astype(bool)
                         with contextlib.suppress(Exception):
+                            # draw masks: mix image pixel and mask:
                             im[y:y + h, x:x + w, :][mask] = im[y:y + h, x:x + w, :][mask] * 0.4 + np.array(color) * 0.6
+                # convert numpy array to image:
                 annotator.fromarray(im)
     annotator.im.save(fname)  # save
 
