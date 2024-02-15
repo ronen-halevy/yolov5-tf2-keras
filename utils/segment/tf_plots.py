@@ -13,7 +13,7 @@ from ..tf_general import xywh2xyxy
 from ..tf_plots import Annotator, colors
 
 
-# @threaded
+@threaded
 def plot_images_and_masks(images, targets, masks, paths=None, fname='images.jpg', names=None):
     # Plot image grid with labels
     if isinstance(images, tf.Tensor):
