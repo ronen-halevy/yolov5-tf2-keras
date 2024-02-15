@@ -239,7 +239,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
     # train loop:
     for epoch in range(epochs):
-        LOGGER.info(('\n' + '%11s' * 9) % ('Epoch','gpu_mem', 'box_loss', 'mask_loss', 'obj_loss','cls_loss','Instances', 'Size', 'lr'))
+        LOGGER.info(('\n' + '%11s' * 9) % ('Epoch', 'box_loss', 'mask_loss', 'obj_loss','cls_loss','Instances', 'Size', 'lr','gpu_mem'))
         pbar = tqdm(train_loader, total=nb, bar_format=TQDM_BAR_FORMAT)  # progress bar
 
         mloss = tf.zeros([4], dtype=tf.float32)  # mean losses
@@ -266,8 +266,8 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
             gpu_devices = tf.config.list_physical_devices('GPU')
             gpu_mem = f'{tf.config.experimental.get_memory_usage("GPU:0") / 1E9 if gpu_devices else 0:.3g}G'
 
-            pbar.set_description(('%11s' * 2 + '%11.4g' * 7) %
-                                 (f'{epoch}/{epochs - 1}', gpu_mem, *mloss.numpy(), targets.shape[0], b_images.shape[1], optimizer.lr))
+            pbar.set_description(('%11s' * 1 + '%11.4g' * 7 + '%11s' * 1) %
+                                 (f'{epoch}/{epochs - 1}', *mloss.numpy(), targets.shape[0], b_images.shape[1], optimizer.lr, gpu_mem))
                                      #
             # Mosaic plots
             if plots:
