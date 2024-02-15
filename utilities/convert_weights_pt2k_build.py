@@ -1,6 +1,3 @@
-# YOLOv5 🚀 by Ultralytics, AGPL-3.0 license
-
-
 import argparse
 import sys
 from pathlib import Path
@@ -11,12 +8,8 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 
 import torch
-from models.experimental import MixConv2d, attempt_load
 from utils.general import LOGGER, make_divisible, print_args
-
-# from models.tf_model import TFModel
 from models.build_model import build_model
-
 
 def run(
         weights=ROOT / 'yolov5s-seg.pt',  # weights path
@@ -28,24 +21,21 @@ def run(
         tf_model_dir='.',
         **kwargs
 ):
-    # PyTorch model
-    im = torch.zeros((batch_size, 3, *imgsz))  # BCHW image
-    # fuse is essential for porting weights to keras. TBD
-    ref_model = attempt_load(weights, device=torch.device('cpu'), inplace=True, fuse=True)
-    _ = ref_model(im)  # inference
-    ref_model.info()
-    ref_model_seq = ref_model.model
+    # 1. load ref weights from pytorch weights file:
+    ckpt = torch.load(weights, map_location='cpu') # dict
+    ref_model = ckpt['model'] # object inherits from nn.BaseModel
+    ref_model_seq = ref_model.model # Sequential type model object
 
-    # Keras model
+    # 2. Constrict a Keras model, fed by ref model's weights
     keras_model=build_model(cfg=ref_model.yaml, nl=nl,na=na, imgsz=imgsz, ref_model_seq=ref_model_seq)
     keras_model.summary()
 
     LOGGER.info(f'Source Weights: {weights}')
     LOGGER.info('PyTorch, TensorFlow and Keras models successfully verified.\nUse export.py for TF model export.')
+    # save resultant weights:
     keras_model.save_weights(tf_weights_dir, overwrite=True)
     LOGGER.info(f'Keras Weights saved to {tf_weights_dir}')
-    # keras_model.trainable=True
-    # tf.keras.models.save_model(keras_model, tf_model_dir)
+    # save weights loaded model:
     keras_model.save(tf_model_dir)
     LOGGER.info(f'Keras Model saved to {tf_model_dir}')
     return keras_model
@@ -65,9 +55,6 @@ def parse_opt():
     print_args(vars(opt))
     return opt
 
-def main(opt):
-    run(**vars(opt))
-
 if __name__ == '__main__':
     opt = parse_opt()
-    main(opt)
+    run(**vars(opt))
