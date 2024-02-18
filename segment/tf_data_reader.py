@@ -255,8 +255,8 @@ class LoadImagesAndLabelsAndMasks:
                                                                          ragged_rank=1))
             labels = self.xywhn2xyxy(self.labels[index], w1, h1, padw, padh)
 
-            if self.augment:
-                img, labels, segments = self.random_perspective(img,
+        if self.augment:
+            img, labels, segments = self.random_perspective(img,
                                                                 labels,
                                                                 segments,
                                                                 degrees=self.hyp['degrees'],
@@ -266,8 +266,8 @@ class LoadImagesAndLabelsAndMasks:
                                                                 perspective=self.hyp['perspective'],
                                                                 border=[0, 0]
                                                                 )  # border to remove
-            else:
-                is_segment_ragged = True
+        else:
+            is_segment_ragged = True
 
         if segments.shape[0]:
             if self.overlap:# produce a single mask per image, with a color per target's mask:
@@ -430,7 +430,7 @@ class LoadImagesAndLabelsAndMasks:
                            shear=10,
                            perspective=0.0,
                            border=(0, 0),
-                           ninterp=1000  # segments vertices interpolation value
+                           upsample=1000  # segments vertices interpolation value
                            ):
 
         height = im.shape[0] + border[0] * 2  # shape(h,w,c)
@@ -469,8 +469,8 @@ class LoadImagesAndLabelsAndMasks:
         if n:
             # reample & add homogeneous coords & ragged->tensor (map_fn needed since segments ragged):
             # Note: before resample, segments are ragged (variable npoints per segment), accordingly tf.map_fn required:
-            segments = tf.map_fn(fn=lambda segment: self.resample_segments(segment, ninterp), elems=segments,
-                                 fn_output_signature=tf.TensorSpec(shape=[ninterp, 3], dtype=tf.float32,
+            segments = tf.map_fn(fn=lambda segment: self.resample_segments(segment, upsample), elems=segments,
+                                 fn_output_signature=tf.TensorSpec(shape=[upsample, 3], dtype=tf.float32,
                                                                    ))
             segments = tf.matmul(segments, tf.transpose(M).astype(tf.float32))  # affine transform
             segments = tf.gather(segments, [0, 1], axis=-1)
