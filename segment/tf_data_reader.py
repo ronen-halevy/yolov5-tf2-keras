@@ -432,6 +432,31 @@ class LoadImagesAndLabelsAndMasks:
                            border=(0, 0),
                            upsample=1000  # segments vertices interpolation value
                            ):
+        """
+
+        :param im:
+        :type im:
+        :param targets:
+        :type targets:
+        :param segments:
+        :type segments:
+        :param degrees:
+        :type degrees:
+        :param translate:
+        :type translate:
+        :param scale:
+        :type scale:
+        :param shear:
+        :type shear:
+        :param perspective:
+        :type perspective:
+        :param border:
+        :type border:
+        :param upsample:
+        :type upsample:
+        :return:
+        :rtype:
+        """
 
         height = im.shape[0] + border[0] * 2  # shape(h,w,c)
         width = im.shape[1] + border[1] * 2
@@ -537,21 +562,20 @@ class LoadImagesAndLabelsAndMasks:
             y_s = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=segments,
                             fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
                                                                     ragged_rank=1))
-            # 2.4 Concat current image's labels with other mosaic elements. if idx=0, (1st element), don't concat:
+            # 2.4 Concat current 4*image's labels with other mosaic elements. if idx=0, (1st element), don't concat:
             labels4 = tf.cond(tf.equal(idx, 0), true_fn=lambda: y_l, false_fn=lambda: tf.concat([labels4, y_l], axis=0))
-            # 2.5 Concat current image's segments with other mosaic elements. if idx=0, (1st element), don't concat:
+            # 2.5 Concat current 4*image's segments with other mosaic elements. if idx=0, (1st element), don't concat:
             segments4 = tf.cond(tf.equal(idx, 0), true_fn=lambda: y_s,
                                 false_fn=lambda: tf.concat([segments4, y_s], axis=0))
-        # 3 clip labels to mosaic boundaries:
+        # 3. clip labels and segments to mosaic boundaries:
         clipped_bboxes = tf.clip_by_value(
-            labels4[:, 1:], 0, 2 * float(w), name='labels4'
+            labels4[:, 1:], 0,  2 * self.imgsz[0], name='labels4'
         )
-        # +concat class and bbox:
-        labels4 = tf.concat([labels4[..., 0:1], clipped_bboxes], axis=-1)
-        # 4 clip segments to mosaic boundaries:
         segments4 = tf.clip_by_value(
             segments4, 0, 2 * self.imgsz[0], name='segments4'
         )
+        # 4. reconstruct labels by concat class and bbox:
+        labels4 = tf.concat([labels4[..., 0:1], clipped_bboxes], axis=-1)
 
         img4, labels4, segments4 = self.random_perspective(img4,
                                                            labels4,
