@@ -255,19 +255,19 @@ class LoadImagesAndLabelsAndMasks:
                                                                          ragged_rank=1))
             labels = self.xywhn2xyxy(self.labels[index], w1, h1, padw, padh)
 
-        if self.augment:
-            img, labels, segments = self.random_perspective(img,
-                                                                labels,
-                                                                segments,
-                                                                degrees=self.hyp['degrees'],
-                                                                translate=self.hyp['translate'],
-                                                                scale=self.hyp['scale'],
-                                                                shear=self.hyp['shear'],
-                                                                perspective=self.hyp['perspective'],
-                                                                border=[0, 0]
-                                                                )  # border to remove
-        else:
-            is_segment_ragged = True
+            if self.augment:
+                img, labels, segments = self.random_perspective(img,
+                                                                    labels,
+                                                                    segments,
+                                                                    degrees=self.hyp['degrees'],
+                                                                    translate=self.hyp['translate'],
+                                                                    scale=self.hyp['scale'],
+                                                                    shear=self.hyp['shear'],
+                                                                    perspective=self.hyp['perspective'],
+                                                                    border=[0, 0]
+                                                                    )  # border to remove
+            else:
+                is_segment_ragged = True
 
         if segments.shape[0]:
             if self.overlap:# produce a single mask per image, with a color per target's mask:
@@ -550,7 +550,7 @@ class LoadImagesAndLabelsAndMasks:
         labels4 = tf.concat([labels4[..., 0:1], clipped_bboxes], axis=-1)
         # 4 clip segments to mosaic boundaries:
         segments4 = tf.clip_by_value(
-            segments4, 0, 2 * 640, name='segments4'  # todo 640
+            segments4, 0, 2 * self.imgsz[0], name='segments4'
         )
 
         img4, labels4, segments4 = self.random_perspective(img4,
