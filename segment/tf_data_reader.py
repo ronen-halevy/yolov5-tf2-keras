@@ -76,7 +76,6 @@ class LoadImagesAndLabelsAndMasks:
 
         self.augmentation = Augmentation(hsv_h=hyp["hsv_h"], hsv_s=hyp["hsv_s"], hsv_v=hyp["hsv_v"],
                                          flipud=hyp["flipud"], fliplr=hyp["fliplr"])
-        # self.augmentation = Augmentation(hgain, sgain, vgain, flipud, fliplr)
 
     @property
     def __len__(self):
@@ -293,26 +292,35 @@ class LoadImagesAndLabelsAndMasks:
             yield self[i]
 
     def decode_resize(self, index, preserve_aspect_ratio=True, padding=False):
+        """
+        Reads, decodes and resizes an image from file.
+
+        :param index: index to list of images files path, int
+        :param preserve_aspect_ratio: If True, max(w,h) resized to imgsz. Bool
+        :param padding: Relevant if preserve_aspect_ratio=True. Bool
+        :return:
+        :rtype:
+        """
         filename = self.im_files[index]
         img_orig = tf.io.read_file(filename)
         # note: format result: [height,width,ch]
         img0 = tf.image.decode_image(img_orig, channels=3).astype(tf.float32) / 255 # read format:  [height,width,ch]
-        img_resized = img0  # init - to be resized
+        resized_img = img0  # init - to be resized
         r = self.imgsz[0] / max(img0.shape[:2])  # ratio, Note: assumed squared target imgsz
         padh = padw = 0
         if r != 1:  # don't resize if h or w equals  self.imgsz
-            img_resized = tf.image.resize(img0, self.imgsz, preserve_aspect_ratio=preserve_aspect_ratio) # shape: h,w,ch
-        resized_shape = img_resized.shape[:2]
+            resized_img = tf.image.resize(img0, self.imgsz, preserve_aspect_ratio=preserve_aspect_ratio) # shape: h,w,ch
+        resized_shape = resized_img.shape[:2]
         if padding:
-            padh = int((self.imgsz[1] - img_resized.shape[0]) / 2) # note: img_resized shape: [h,w,ch]
-            padw = int((self.imgsz[0] - img_resized.shape[1]) / 2)
+            padh = int((self.imgsz[1] - resized_img.shape[0]) / 2) # note: resized_img shape: [h,w,ch]
+            padw = int((self.imgsz[0] - resized_img.shape[1]) / 2)
 
-            img_resized = tf.image.pad_to_bounding_box(
-                img_resized, padh, padw, self.imgsz[1], self.imgsz[0]
+            resized_img = tf.image.pad_to_bounding_box(
+                resized_img, padh, padw, self.imgsz[1], self.imgsz[0]
             )
 
         return (
-            img_resized, img0.shape[:2], resized_shape,
+            resized_img, img0.shape[:2], resized_shape,
             (padw, padh))  # pad is 0 by def while aspect ratio not preserved
 
     def scatter_img_to_mosaic(self, dst_img, src_img, dst_xy):
@@ -336,28 +344,23 @@ class LoadImagesAndLabelsAndMasks:
         )
         return dst
 
-    def xywhn2xyxy(self, x, w, h, padw=0, padh=0):
-        #     """
-        #      transform scale and align bboxes: xywh to xyxy, scaled to image size, shift by padw,padh to location in mosaic
-        #     :param x: xywh normalized bboxes
-        #     :type x: float array, shape: [nboxes,4]
-        #     :param w: dest image width
-        #     :type w: int
-        #     :param h: dest image height
-        #     :type h: int
-        #     :param padw: shift of src image left end from mosaic left end
-        #     :type padw: float ]
-        #     :param padh: shift of src image upper end from mosaic upper end
-        #     :type padh: float
-        #     :return: scaled bboxes in xyxy coords, aligned to shifts in mosaic
-        #     :rtype: float array, shape: [nboxes, 4]
-        #     """
-        #     # Convert nx4 boxes from [x, y, w, h] normalized to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
+    def xywhn2xyxy(self, x, w, h, padw=0, padh=0, width=640, height=640):
+        """
+        Scale normalized (xc,yc,w,h) bbox to (xmin,ymin, xma,ymax) to real size bbox padded to uniform size
+        :param 5 entry array of clas id and normalized bbox: [classId, xc,yc,w,h], float
+        :param w: width of scaled bbox, float
+        :param h: height of scaled bbox, float
+        :param padw: padding for bbox width to fit
+        :param padh:
+        :type padh:
+        :return:
+        :rtype:
+        """
         xmin = tf.math.multiply(float(w), (x[..., 1:2] - x[..., 3:4] / 2)) + float(padw)  # top left x
         ymin = tf.math.multiply(float(h), (x[..., 2:3] - x[..., 4:5] / 2)) + float(padh)  # top left y
         xmax = tf.math.multiply(float(w), (x[..., 1:2] + x[..., 3:4] / 2)) + float(padw)  # bottom right x
         ymax = tf.math.multiply(float(h), (x[..., 2:3] + x[..., 4:5] / 2)) + float(padh)  # bottom right y
-        y = tf.concat([x[..., 0:1], xmin, ymin, xmax, ymax], axis=-1, name='concat')
+        y = tf.concat([x[..., 0:1], xmin, ymin, xmax, ymax], axis=-1, name='concat') # [class,x,y,x,y]
         return y
 
     def xyn2xy(self, x, w, h, padw=0, padh=0):
@@ -374,19 +377,6 @@ class LoadImagesAndLabelsAndMasks:
         x = x.to_tensor()
         xcoord=tf.gather(x, 0, axis=1)[...,None]
         ycoord =tf.gather(x, 1, axis=1)[...,None]
-        # print('\n xcoord1',xcoord1)
-        # print('\n ycoord1',ycoord1)
-        # xcoord=x[:, 0:1]
-        # ycoord=x[:, 1:2]
-
-        # xcoord = tf.math.multiply(float(640), xcoord)   # x coords - resized and shifted by pad val
-        # ycoord = tf.math.multiply(float(640), ycoord)   # y coords - resized and shifted by pad val
-        # y = tf.concat(
-        #     [xcoord[...,None], ycoord[...,None]], axis=-1, name='stack'
-        # )
-        # print('\n  x[:, 0:1]  x[:, 1:2]',x[:, 0:1] , x[:, 1:2])
-        #
-        # print('\n  x[:, 0:1]  x[:, 1:2]',x[:, 0:1],  x[:, 1:2])
         xcoord = tf.math.multiply(float(w), xcoord) + float(padw)  # x coords - resized and shifted by pad val
         ycoord = tf.math.multiply(float(h), ycoord) + float(padh)  # y coords - resized and shifted by pad val
         y = tf.concat(
@@ -397,15 +387,15 @@ class LoadImagesAndLabelsAndMasks:
 
         return y
 
-    def affaine_transform(self, img, M):
+    def affaine_transform(self, img, M, dsize):
         # img = cv2.warpAffine(img.numpy(), M[:2].numpy(), dsize=(1280, 1280), borderValue=(114, 114, 114))
-        img = cv2.warpAffine(np.asarray(img), M[:2].numpy(), dsize=(640, 640),
+        img = cv2.warpAffine(np.asarray(img), M[:2].numpy(), dsize=dsize.numpy(),
                              borderValue=(114. / 255, 114. / 255, 114. / 255))  # grey
 
         # img = tf.keras.preprocessing.image.apply_affine_transform(img,theta=0,tx=0,ty=0,shear=0,zx=1,zy=1,row_axis=0,col_axis=1,channel_axis=2,fill_mode='nearest',cval=0.0,order=1 )
         return img
 
-    def resample_segments(self, ninterp, seg_coords):
+    def resample_segments(self, seg_coords, ninterp):
         seg_coords = seg_coords.to_tensor()[..., 0:]
         seg_coords = tf.concat([seg_coords, seg_coords[0:1, :]], axis=0)  # close polygon's loop before interpolation
         x_ref_max = seg_coords.shape[0] - 1  # x max
@@ -439,12 +429,10 @@ class LoadImagesAndLabelsAndMasks:
                            scale=.1,
                            shear=10,
                            perspective=0.0,
-                           border=(0, 0)):
-        # targets = [cls, xyxy]
-        # random.seed(0)
-        # tf.random.set_seed(
-        #     0
-        # )  # ronen todo!!
+                           border=(0, 0),
+                           ninterp=1000  # segments vertices interpolation value
+                           ):
+
         height = im.shape[0] + border[0] * 2  # shape(h,w,c)
         width = im.shape[1] + border[1] * 2
 
@@ -476,52 +464,48 @@ class LoadImagesAndLabelsAndMasks:
             if perspective:
                 im = cv2.warpPerspective(im, M, dsize=(width, height), borderValue=(114, 114, 114))
             else:  # affine
-                im = tf.py_function(self.affaine_transform, [im, M], Tout=tf.float32)  # img shape[1280,1280,3] M:3x3
-        if True:  # if n: # Todo clean this
-            ninterp = 1000
+                im = tf.py_function(self.affaine_transform, [im, M, (width, height)], Tout=tf.float32)  # img shape[1280,1280,3] M:3x3
+        n = len(targets)
+        if n:
             # reample & add homogeneous coords & ragged->tensor (map_fn needed since segments ragged):
             # Note: before resample, segments are ragged (variable npoints per segment), accordingly tf.map_fn required:
-            segments = tf.map_fn(fn=lambda segment: self.resample_segments(ninterp, segment), elems=segments,
-                                 fn_output_signature=tf.TensorSpec(shape=[1000, 3], dtype=tf.float32,
+            segments = tf.map_fn(fn=lambda segment: self.resample_segments(segment, ninterp), elems=segments,
+                                 fn_output_signature=tf.TensorSpec(shape=[ninterp, 3], dtype=tf.float32,
                                                                    ))
             segments = tf.matmul(segments, tf.transpose(M).astype(tf.float32))  # affine transform
             segments = tf.gather(segments, [0, 1], axis=-1)
 
             bboxes = segments2boxes_exclude_outbound_points(segments)
-        indices = box_candidates(box1=tf.transpose(targets[..., 1:]) * s, box2=tf.transpose(bboxes),
+            indices = box_candidates(box1=tf.transpose(targets[..., 1:]) * s, box2=tf.transpose(bboxes),
                                  area_thr=0.01)
-        bboxes = bboxes[indices]
+            bboxes = bboxes[indices]
 
-        targets = targets[indices]
-        bboxes = tf.concat([targets[:, 0:1], bboxes], axis=-1)  # [cls, bboxes]
-        segments = segments[indices]
-        return im, bboxes, segments
+            targets = targets[indices]
+            targets = tf.concat([targets[:, 0:1], bboxes], axis=-1)  # [cls, bboxes]
+            segments = segments[indices]
+        return im, targets, segments
 
     def load_mosaic(self, index, ):  # filenames, size, y_labels, y_segments):
-        # labels4, segments4 = [], []
-        segments4 = None
-        labels4 = None
-        # randomly select mosaic center:
 
+        # 1. Mosaic Setup:
+        # 1.1 Randomly pick mosaic central ref point:
         xc = tf.random.uniform((), -self.mosaic_border[0], 2 * self.imgsz[0] + self.mosaic_border[0], dtype=tf.int32)
         yc = tf.random.uniform((), -self.mosaic_border[1], 2 * self.imgsz[1] + self.mosaic_border[1], dtype=tf.int32)
-
+        # 1.2. Randomly pick 3 more images from dataset's image list:
         indices = random.choices(self.indices, k=3)  # 3 additional image indices
         indices.insert(0, index)
         if self.debug:  # determine mosaic
             yc, xc = 496, 642
             indices = [0, 0, 0, 0]
-
+        # 1.3. construct empty 4 x size mosaic image template:
         img4 = tf.fill(
             (self.imgsz[0] * 2, self.imgsz[1] * 2, 3), 114 / 255
         )  # gray background
-
-        w, h = self.imgsz[0], self.imgsz[1]
-        # arrange mosaic 4:
-        # for idx in range(4):
+        # 2. loop on 4 images, arrange mosaic4:
         for idx, index in enumerate(indices):
-            img, _, _, _ = self.decode_resize(index)
-
+            # 2.1 load image
+            img, _, (h, w), _ = self.decode_resize(index)
+            # 2.2 place image in mosaic4 quarter:
             if idx == 0:  # top left mosaic dest zone,  bottom-right aligned src image fraction:
                 x1a, y1a, x2a, y2a = tf.math.maximum(xc - w, 0), tf.math.maximum(yc - h,
                                                                                  0), xc, yc  # xmin, ymin, xmax, ymax
@@ -540,28 +524,31 @@ class LoadImagesAndLabelsAndMasks:
                                                                                           h)  # src image fraction
             else:
                 raise Exception('Too many images assigned for Mosaic-4')
+            img4 = self.scatter_img_to_mosaic(dst_img=img4, src_img=img[y1b:y2b, x1b:x2b,:], dst_xy=(x1a, x2a, y1a, y2a))
+            # 2.3  scale bbox and segmentsand, adapt coords to mosaic structure placement shift:
+            padw = x1a - x1b  # image's x offset from mosaic's axis origin
+            padh = y1a - y1b  # image's y offset from mosaic's axis origin
 
-            img4 = self.scatter_img_to_mosaic(dst_img=img4, src_img=img[y1b:y2b, x1b:x2b], dst_xy=(x1a, x2a, y1a, y2a))
-            padw = x1a - x1b  # shift of src scattered image from mosaic left end. Used for bbox and segment alignment.
-            padh = y1a - y1b  # shift of src scattered image from mosaic top end. Used for bbox and segment alignment.
-
-            # arrange boxes & segments: scale normalized coords and shift location to mosaic zone by padw, padh:
-            y_l = self.xywhn2xyxy(self.labels[index], w, h, padw, padh)
-            # map_fn since segments is a ragged tensor:
+            # Scale bbox coordinates to fit in mosaic structure: result::[cls,xmin,ymin,xmax,ymax]:
+            y_l = self.xywhn2xyxy(self.labels[index], w, h, padw, padh,self.imgsz[0], self.imgsz[1])
+            # Convert segments from list to ragged tensor. Note: images segments non-uniform size requires ragged tanser
             segments = tf.ragged.constant(self.segments[index])
+            # Scale segments coordinates to fit in mosaic structure: result::[nt, None, 2]:
             y_s = tf.map_fn(fn=lambda t: self.xyn2xy(t, w, h, padw, padh), elems=segments,
                             fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
                                                                     ragged_rank=1))
-            # concat 4 mosaic elements together. idx=0 is the first concat element:
+            # 2.4 Concat current image's labels with other mosaic elements. if idx=0, (1st element), don't concat:
             labels4 = tf.cond(tf.equal(idx, 0), true_fn=lambda: y_l, false_fn=lambda: tf.concat([labels4, y_l], axis=0))
-            segments4 = tf.cond(segments4 is None, true_fn=lambda: y_s,
+            # 2.5 Concat current image's segments with other mosaic elements. if idx=0, (1st element), don't concat:
+            segments4 = tf.cond(tf.equal(idx, 0), true_fn=lambda: y_s,
                                 false_fn=lambda: tf.concat([segments4, y_s], axis=0))
-
+        # 3 clip labels to mosaic boundaries:
         clipped_bboxes = tf.clip_by_value(
             labels4[:, 1:], 0, 2 * float(w), name='labels4'
         )
+        # +concat class and bbox:
         labels4 = tf.concat([labels4[..., 0:1], clipped_bboxes], axis=-1)
-
+        # 4 clip segments to mosaic boundaries:
         segments4 = tf.clip_by_value(
             segments4, 0, 2 * 640, name='segments4'  # todo 640
         )
