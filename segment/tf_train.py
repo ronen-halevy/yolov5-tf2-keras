@@ -37,7 +37,7 @@ from utils.downloads import is_url
 
 from utils.tf_general import (LOGGER, TQDM_BAR_FORMAT,  check_file,
                              check_yaml, colorstr,
-                            increment_path,print_args, check_dataset,print_mutation, yaml_save)
+                            increment_path,print_args, check_dataset,print_mutation, yaml_save, get_latest_run)
 
 from segment.tb import GenericLogger
 from utils.tf_plots import plot_evolve, plot_labels
@@ -54,9 +54,6 @@ from utils.tf_utils import (EarlyStopping)
 
 import tensorflow as tf
 from tensorflow import keras
-#  for deterministic keras model - debug usage:
-# tf.keras.utils.set_random_seed(1)
-# tf.config.experimental.enable_op_determinism()
 
 import numpy as np
 from models.tf_model import TFModel#  todo remove old TFmodel
@@ -136,34 +133,17 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
     ch=3 # nof input data channels. used by build model.
     new_model=True
-    if not new_model:#  todo remove old TFmodel
-        tf_model = TFModel(cfg=cfg,
-                           ref_model_seq=None, nc=nc, imgsz=imgsz, training=True)
-        im = keras.Input(shape=(None, None, ch), batch_size=None if dynamic else batch_size)
-        keras_model = tf.keras.Model(inputs=im, outputs=tf_model.predict(im), name='train')
 
-        val_tf_model = TFModel(cfg=cfg,
-                           ref_model_seq=None, nc=nc, imgsz=imgsz, training=False)
-        im_val = keras.Input(shape=(None,None, ch), batch_size=None if dynamic else batch_size)
-
-        val_keras_model = tf.keras.Model(inputs=im_val, outputs=val_tf_model.predict(im_val), name='validation')
-        grids =[ [x.shape[2], x.shape[2] ]for x in keras_model.predict(tf.zeros([1,*imgsz, ch]))[0]]
-        stride = [imgsz[0]/grid[0] for grid in grids]
-        grids = tf.constant(grids)
-    else:
-        keras_model=build_model(cfg,  nl, na, imgsz=imgsz)
-        val_keras_model = build_model(cfg,nl,na, imgsz=imgsz)
-        decoder = Decoder(nc, nm, anchors, imgsz)
-        # extract 3 layers grid shapes strides:
-        grids =[[80,80],[40,40],[20,20]]
-        stride = [8.,16.,32.]
-        grids = tf.constant(grids)#  todo arranmge configl
+    keras_model=build_model(cfg,  nl, na, imgsz=imgsz)
+    val_keras_model = build_model(cfg,nl,na, imgsz=imgsz)
+    decoder = Decoder(nc, nm, anchors, imgsz)
+    # extract 3 layers grid shapes strides:
+    grids =[[80,80],[40,40],[20,20]]
+    stride = [8.,16.,32.]
+    grids = tf.constant(grids)#  todo arranmge configl
 
 
-    # keras_model.compile()
     print(val_keras_model.summary())
-    # tf_model.run_eagerly = True
-    # pred = keras_model(im)  # forward
     best_fitness, start_epoch = 0.0, 0
 
     if pretrained:
@@ -183,8 +163,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     nbs = 64  # nominal batch size
     accumulate = max(round(nbs / batch_size), 1)  # accumulate loss before optimizing
     hyp['weight_decay'] *= batch_size * accumulate / nbs  # scale weight_decay # see notes: https://github.com/ultralytics/yolov5/issues/6757 https://github.com/ultralytics/yolov5/discussions/2452
-    # optimizer = smart_optimizer(model, opt.optimizer, hyp['lr0'], hyp['momentum'], hyp['weight_decay'])
-
 
     # Scheduler   # todo check scheduler issue:
     # if opt.cos_lr:
@@ -198,7 +176,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # Resume - TBD todo
     # nc = tf_model.nc  # number of classes
     if debug:
-        dataset = LoadImagesAndLabelsAndMasks(train_path, imgsz, mask_ratio, mosaic, augment, hyp, overlap)
+        dataset = LoadImagesAndLabelsAndMasks(train_path, imgsz, mask_ratio, mosaic, augment, hyp, overlap, debug)
         dbg_entries=len(dataset)
         for idx in range(dbg_entries):
             ds=dataset[idx]
@@ -360,39 +338,40 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}")
         logger.log_images(files, 'Results', epoch + 1)
         logger.log_images(sorted(save_dir.glob('val*.jpg')), 'Validation', epoch + 1)
-    # # torch.cuda.empty_cache()
+
     return results
 
 
 def main(opt, callbacks=Callbacks()):
-    # Checks
-    # if RANK in {-1, 0}:
+
     print_args(vars(opt))
         # check_git_status()
         # check_requirements(ROOT / 'requirements.txt')
 
     # Resume
-    if opt.resume and not opt.evolve:  # resume from specified or most recent last.pt
-        last = Path(check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run())
+    if opt.resume: # resume from specified or most recent last.h5
+        last = Path(check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run('../runs'))
         opt_yaml = last.parent.parent / 'opt.yaml'  # train options yaml
         opt_data = opt.data  # original dataset
-        if opt_yaml.is_file():
-            with open(opt_yaml, errors='ignore') as f:
-                d = yaml.safe_load(f)
-        else:
-            d = torch.load(last, map_location='cpu')['opt']
-        opt = argparse.Namespace(**d)  # replace
-        opt.cfg, opt.weights, opt.resume = '', str(last), True  # reinstate
-        if is_url(opt_data):
+        cfg = opt.cfg
+        with open(opt_yaml, errors='ignore') as f:
+            d = yaml.safe_load(f)
+        import argparse
+        opt = argparse.Namespace(**d)  # dict to a Namespace object
+        opt.weights, opt.resume = str(last), True  # reinstate
+        opt.cfg = opt.cfg if (isinstance(opt.cfg, str) and '.yaml' in opt.cfg) else cfg
+        #### todo check cfg empty!!!!
+        opt.weights, opt.resume = str(last), True  # reinstate
+        if is_url(opt_data): # if url then download
             opt.data = check_file(opt_data)  # avoid HUB resume auth timeout
     else:
         opt.data, opt.cfg, opt.hyp, opt.weights, opt.project = \
             check_file(opt.data), check_yaml(opt.cfg), check_yaml(opt.hyp), str(opt.weights), str(opt.project)  # checks
         assert len(opt.cfg) or len(opt.weights), 'either --cfg or --weights must be specified'
-        if opt.evolve:
-            if opt.project == str(ROOT / 'runs/train-seg'):  # if default project name, rename to runs/evolve-seg
-                opt.project = str(ROOT / 'runs/evolve-seg')
-            opt.exist_ok, opt.resume = opt.resume, False  # pass resume to exist_ok and disable resume
+        # if opt.evolve:
+        #     if opt.project == str(ROOT / 'runs/train-seg'):  # if default project name, rename to runs/evolve-seg
+        #         opt.project = str(ROOT / 'runs/evolve-seg')
+        #     opt.exist_ok, opt.resume = opt.resume, False  # pass resume to exist_ok and disable resume
         if opt.name == 'cfg':
             opt.name = Path(opt.cfg).stem  # use model.yaml as name
         opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))
