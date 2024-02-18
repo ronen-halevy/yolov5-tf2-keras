@@ -294,9 +294,9 @@ def build_model(cfg, nl,na, imgsz,ref_model_seq=None):
     d = deepcopy(model_cfg)
     nc, gd, gw, mlist = d['nc'], d['depth_multiple'], d['width_multiple'], d['backbone'] + d[
         'head']
-    inputs = Input(shape=(640, 640, 3))
+    inputs = Input(shape=(None, None, 3))
     ch = [3]
-    decay_factor = 0.01
+    decay_factor = 0.01 # todo use or eliminate
     layers = parse_model(inputs, nl,na, nc, gd, gw, mlist, ch, imgsz, decay_factor, ref_model_seq=ref_model_seq)
     model = Model(inputs, layers[-1])
 
