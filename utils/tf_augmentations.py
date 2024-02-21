@@ -299,9 +299,9 @@ def mixup(im, labels, im2, labels2):
 def box_candidates(box1, box2, wh_thr=2, ar_thr=100, area_thr=0.1, eps=1e-16):  # box1(4,n), box2(4,n)
     """
      Produce a bool filter array for augmented bboxes, by passing through 3 threshold tests:
-     1. Augmented box sides lengths should be bound by threshold : (w2 > wh_thr) & (h2 > wh_thr):
-     2 .Augmented to original bboxes areas ratio should be bound by threshold:  (w2 * h2 / (w1 * h1 + eps) > area_thr
-     2. Augmented bboxes aspect ratio and its inverse should be bound by threshold:  max(ar, 1/ar) < ar_thr
+     1. Augmented bbox size threshold: (w2 > wh_thr) & (h2 > wh_thr):
+     2 .Augmented to original bboxes areas ratio:  (w2 * h2 / (w1 * h1 + eps) > area_thr
+     3.apect ratio and its inverse bounded by threshold:  max(ar, 1/ar) < ar_thr
 
     :param box1: transposed bboxes before augmentation. [xmin,ymin,xmax,ymax], shape: [4, nt], float
     :param box2: transposed bboxes after augmentation. shape: [4, nt], float
