@@ -297,15 +297,31 @@ def mixup(im, labels, im2, labels2):
 
 
 def box_candidates(box1, box2, wh_thr=2, ar_thr=100, area_thr=0.1, eps=1e-16):  # box1(4,n), box2(4,n)
-    # Compute candidate boxes: box1 before augment, box2 after augment, wh_thr (pixels), aspect_ratio_thr, area_ratio
+    """
+     Produce a bool filter array for augmented bboxes, by passing through 3 threshold tests:
+     1. Augmented box sides lengths should be bound by threshold : (w2 > wh_thr) & (h2 > wh_thr):
+     2 .Augmented to original bboxes areas ratio should be bound by threshold:  (w2 * h2 / (w1 * h1 + eps) > area_thr
+     2. Augmented bboxes aspect ratio and its inverse should be bound by threshold:  max(ar, 1/ar) < ar_thr
+
+    :param box1: transposed bboxes before augmentation. [xmin,ymin,xmax,ymax], shape: [4, nt], float
+    :param box2: transposed bboxes after augmentation. shape: [4, nt], float
+    :param wh_thr: minimal bboxes w and h size threshold for augmented bbox.
+    :param ar_thr: max threshold for aspect ratio and inverse aspect ratios of augmented bboxes.
+    :param area_thr: min thshold for bbox2/bbox1
+    :param eps: epsilon to prevent by zero division
+    :return:
+        :inbound:  bool array for filtering bboxes which passed all criterias threshold tests, bool, shape: [nt]
+    """
     w1, h1 = box1[2] - box1[0], box1[3] - box1[1]
     w2, h2 = box2[2] - box2[0], box2[3] - box2[1]
     ar = tf.math.maximum(w2 / (h2 + eps), h2 / (w2 + eps))  # aspect ratio
-    # return (w2 > wh_thr) & (h2 > wh_thr) & (w2 * h2 / (w1 * h1 + eps) > area_thr) & (ar < ar_thr)  # candidates
+    # 1.  (w2 > wh_thr) & (h2 > wh_thr)
     wh_bounded = tf.math.logical_and(tf.math.greater(w2 , wh_thr), tf.math.greater(h2 ,wh_thr))
+    # 2. (w2 * h2 / (w1 * h1 + eps) > area_thr
     area_bounded = tf.math.greater(w2 * h2 / (w1 * h1 + eps), area_thr)
+    # 3. (ar < ar_thr)
     ar_bounded = tf.math.less(ar, ar_thr)
-    inbound =  tf.math.logical_and(tf.math.logical_and(wh_bounded,area_bounded),ar_bounded) # and all terms
+    inbound =  tf.math.logical_and(tf.math.logical_and(wh_bounded, area_bounded), ar_bounded) # and all terms
     return inbound
 
 

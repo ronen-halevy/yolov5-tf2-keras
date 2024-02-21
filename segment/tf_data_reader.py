@@ -68,7 +68,7 @@ class LoadImagesAndLabelsAndMasks:
         self.overlap=overlap
 
         self.mosaic_border = [-imgsz[0] // 2,
-                              -imgsz[1] // 2]  # mosaic center placed randimly at [-border, 2 * imgsz + border]
+                              -imgsz[1] // 2]  # mosaic center placed randomly at [-border, 2 * imgsz + border]
         self.imgsz = imgsz
         # self.augment, self.degrees, self.translate, self.scale, self.shear, self.perspective=augment, degrees, translate, scale, shear, perspective
         self.augment = augment
@@ -264,8 +264,7 @@ class LoadImagesAndLabelsAndMasks:
                                                                     scale=self.hyp['scale'],
                                                                     shear=self.hyp['shear'],
                                                                     perspective=self.hyp['perspective'],
-                                                                    border=[0, 0]
-                                                                    )  # border to remove
+                                                                    )
             else:
                 is_segment_ragged = True
 
@@ -387,8 +386,35 @@ class LoadImagesAndLabelsAndMasks:
 
         return y
 
+    def perspective_transform(self, img, M, dsize):
+        """
+        A wrapper for cv2.warpPerspective, which should be invoked by map_fn, to call a cv2 function by a tf.data.Dataset
+        pipeline.
+
+        :param img: input 3 channels image, float tensor
+        :param M: Transform Homogenouse matrix, shape: [3,3]: [[a00, a01,a02][a1,0,a11,a12][0,0,1]], float tensor
+        :param dsize: size of Affaine transform output. obtained by cropping image to fit desired dimensions. int
+        :return: img: transformed image, shape: [dsize[0], dsize[1], 3], float
+
+        :rtype:
+        """
+
+        img = cv2.warpPerspective(img, M, dsize=(dsize[0], dsize[1]), borderValue=(114, 114, 114))
+        return img
+
     def affaine_transform(self, img, M, dsize):
-        # img = cv2.warpAffine(img.numpy(), M[:2].numpy(), dsize=(1280, 1280), borderValue=(114, 114, 114))
+        """
+        A wrapper for cv2.warpAffine, which should be invoked by map_fn, to call a cv2 function by a tf.data.Dataset
+        pipeline.
+
+        :param img: input 3 channels image, float tensor
+        :param M: Transform Homogenouse matrix, shape: [3,3]: [[a00, a01,a02][a1,0,a11,a12][0,0,1]], float tensor
+        :param dsize: size of Affaine transform output. obtained by cropping image to fit desired dimensions. int
+        :return: img: transformed image, shape: [dsize[0], dsize[1], 3], float
+
+        :rtype:
+        """
+
         img = cv2.warpAffine(np.asarray(img), M[:2].numpy(), dsize=dsize.numpy(),
                              borderValue=(114. / 255, 114. / 255, 114. / 255))  # grey
 
@@ -396,6 +422,15 @@ class LoadImagesAndLabelsAndMasks:
         return img
 
     def resample_segments(self, seg_coords, ninterp):
+        """
+
+        :param seg_coords:
+        :type seg_coords:
+        :param ninterp:
+        :type ninterp:
+        :return:
+        :rtype:
+        """
         seg_coords = seg_coords.to_tensor()[..., 0:]
         seg_coords = tf.concat([seg_coords, seg_coords[0:1, :]], axis=0)  # close polygon's loop before interpolation
         x_ref_max = seg_coords.shape[0] - 1  # x max
@@ -433,37 +468,39 @@ class LoadImagesAndLabelsAndMasks:
                            upsample=1000  # segments vertices interpolation value
                            ):
         """
+        0. Create 5 transform matrices: Cent, Perspective, Rotate, Shear, Translate
+        1. Performs either perspective or affaine transform. Result is cropped to image's size-relevant for mosaic mode.
+        2. Apply transform on upsampled segments.
+        3. Produce bboxes from transformed segments.
+        4. Filter out target according to bbox thresholding criteria.
 
-        :param im:
-        :type im:
-        :param targets:
-        :type targets:
-        :param segments:
-        :type segments:
-        :param degrees:
-        :type degrees:
-        :param translate:
-        :type translate:
-        :param scale:
-        :type scale:
-        :param shear:
-        :type shear:
-        :param perspective:
-        :type perspective:
-        :param border:
-        :type border:
-        :param upsample:
-        :type upsample:
+        :param im: input image, shape: [h,w,3], tf.float32
+        :param targets: target labels, each a 5 words entries: [class, bbox], shape: [nt,5], tf.float32
+        :param segments: target segments polygons. Ragged tensor shape: [nt, None,2], nt:nof image's target, dim1: nof
+                segment vertices (varies per target), 2 (coords per vertex (x,y). ragged tensor , tf.float32
+        :param degrees: [-degrees,degrees] is the range of uniform random rotation value pick, float, degrees.
+        :param translate: [0.5-translate, 0.5+translate] is the range of uniform random translation (mult by w or h).
+        :param scale:[1-scale,1+scale] is the range of uniform random uniform scaling value
+        :param shear: [-shear,shear] is the range of uniform random shearing value pick, float.
+        :param perspective: [-perspective,perspective-] is the range of uniform random shearing value pick, float.
+        :param border: border for cropping the 2*2 expanded mosaic image. Output is cropped to (border
+        :type border: margins added by mosaic expansion. Will be cropped here. in mosaic4: [-imgo//2,-img0//2],
+            in REGULAR non-mosaic MODE: [0,0]:
+        :param upsample: Upsampled nof interpolated segments vertices, common to all segment. Typically 1000, int
         :return:
-        :rtype:
+            im: transformed, cropped to image size (in mosaic mode). shape:[h-2*border[0],w-2*border[1],3],tf.float
+            targets: transform matching bboxes, entries are [class, bbox],  shape: [nt,5]
+            segments: transformed segments, upsampled to a uniform size, so changed from ragged to regular tensors
         """
-
-        height = im.shape[0] + border[0] * 2  # shape(h,w,c)
+        # 0. Create 5 transform matrices: Cent, Perspective, Rotate, Shear, Translate
+        # Subtract borders offsets to set output size. Relevant to mosaic expanded image, otherwise borders are 0s:
+        height = im.shape[0] + border[0] * 2
         width = im.shape[1] + border[1] * 2
 
         # Center
         C = np.eye(3)
-        C[0, 2] = -im.shape[1] / 2  # x translation (pixels)
+        # C translation combined with T give [-320,-320] offset translation for mosaic4 or [0,0] for regular non-mosaic:
+        C[0, 2] = -im.shape[1] / 2  # x translation by half (pixels)
         C[1, 2] = -im.shape[0] / 2  # y translation (pixels)
 
         # Perspective
@@ -483,24 +520,38 @@ class LoadImagesAndLabelsAndMasks:
         T = tf.tensor_scatter_nd_update(tf.eye(3), [[0, 2], [1, 2]], transn)  # x perspective (about y)
 
         # Combined rotation matrix
-        M = T @ S @ R @ P @ C  # order of operations (right to left) is IMPORTANT
+        M = T @ S @ R @ P @ C  # shape: [3,3], order of operations (right to left) is IMPORTANT
 
+        # 1. Performs either perspective or affaine transform. Result is cropped to image's size-relevant for mosaic mode.
+
+        # Transform if either M is not identity OR borders should be cropped (i.e. mosaic):
         if (border[0] != 0) or (border[1] != 0) or tf.math.reduce_any(M != tf.eye(3)):  # if image changed...
             if perspective:
-                im = cv2.warpPerspective(im, M, dsize=(width, height), borderValue=(114, 114, 114))
+                #  img shape: [1280,1280,3], Out shape: [width, height,3], obtained by image cropping:
+                im = tf.py_function(self.perspective_transform, [im, M, (width, height)], Tout=tf.float32)
             else:  # affine
-                im = tf.py_function(self.affaine_transform, [im, M, (width, height)], Tout=tf.float32)  # img shape[1280,1280,3] M:3x3
+                #  img shape: [1280,1280,3], Out shape: [width, height,3], obtained by image cropping:
+                im = tf.py_function(self.affaine_transform, [im, M, (width, height)], Tout=tf.float32)
         n = len(targets)
         if n:
-            # reample & add homogeneous coords & ragged->tensor (map_fn needed since segments ragged):
-            # Note: before resample, segments are ragged (variable npoints per segment), accordingly tf.map_fn required:
+            # 2. Apply transform on upsampled segments.
+
+            # reample & add homogeneous coords before transformation.
+            # Notes:
+            # 1. map_fn needed since segments are ragged.
+            # 2. Out segments are upsampled to uniform size, so converted to regular tensors
             segments = tf.map_fn(fn=lambda segment: self.resample_segments(segment, upsample), elems=segments,
                                  fn_output_signature=tf.TensorSpec(shape=[upsample, 3], dtype=tf.float32,
-                                                                   ))
-            segments = tf.matmul(segments, tf.transpose(M).astype(tf.float32))  # affine transform
-            segments = tf.gather(segments, [0, 1], axis=-1)
-
+                                                                   ))# in shape: [nt,None,2], out shape:[nt, upsample,3]
+            segments = tf.matmul(segments, tf.transpose(M).astype(tf.float32)) # affine transform. shape:[nt,upsample,3]
+            segments = tf.gather(segments, [0, 1], axis=-1) # From homogenouse to normal: discard bottom all 1's row
+            #  3. Produce bboxes from transformed segments:
             bboxes = segments2boxes_exclude_outbound_points(segments)
+
+            # bboxes = segment2box(segments)
+
+
+            # 4. Filter out target according to bbox thresholding criteria:
             indices = box_candidates(box1=tf.transpose(targets[..., 1:]) * s, box2=tf.transpose(bboxes),
                                  area_thr=0.01)
             bboxes = bboxes[indices]
