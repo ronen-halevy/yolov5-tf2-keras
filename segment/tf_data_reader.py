@@ -12,7 +12,7 @@ import contextlib
 import math
 
 
-from utils.tf_general import xyxy2xywhn, segments2boxes_exclude_outbound_points
+from utils.tf_general import xyxy2xywhn, segments2bboxes_batch
 from utils.tf_augmentations import box_candidates
 from utils.segment.tf_augmentations import Augmentation
 
@@ -546,7 +546,7 @@ class LoadImagesAndLabelsAndMasks:
             segments = tf.matmul(segments, tf.transpose(M).astype(tf.float32)) # affine transform. shape:[nt,upsample,3]
             segments = tf.gather(segments, [0, 1], axis=-1) # From homogenouse to normal: discard bottom all 1's row
             #  3. Produce bboxes from transformed segments:
-            bboxes = segments2boxes_exclude_outbound_points(segments)
+            bboxes = segments2bboxes_batch(segments)
 
             # bboxes = segment2box(segments)
 

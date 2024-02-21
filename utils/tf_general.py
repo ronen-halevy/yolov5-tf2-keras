@@ -832,6 +832,49 @@ def segments2boxes_exclude_outbound_points(segments, width=640, height=640):
     bbox = tf.where(ind, bbox, [0., 0., 0., 0.])
     return bbox
 
+
+def segments2bboxes_batch(segments, width=640, height=640):
+    """
+    Convert segment polygons to bounding boxes labels, applying inside-image constraint.
+
+    :param segments:
+    :type segments:
+    :param width:
+    :type width:
+    :param height:
+    :type height:
+    :return:
+    :rtype:
+    """
+    # 1. Locate out of region entries, i.e. entries with negative or above image dimenssions coords.
+
+    ge = tf.math.logical_or(tf.math.less(segments[...,0:1], 0), tf.math.less(segments[...,1:2], 0))
+    le = tf.math.logical_or(tf.math.greater(segments[...,0:1], width), tf.math.greater(segments[...,1:2], height))
+    out_of_region = tf.math.logical_or(ge, le).astype(tf.float32) # values 0 or 1, shape: [nt, nvertices, 1]
+    # 2. Find bbox xmin,ymin coords
+    # 2.1 De-priorities selection of Negative out-of-region coords as xmin, ymin, by adding a large bias
+    bias = 10000
+    bias_vector = out_of_region*bias # bias is 0 for in region coords, and large otherwise.
+    segments_x = segments[..., 0:1] + bias_vector # Add large bias to out of range x coords.
+    segments_y = segments[..., 1:2] + bias_vector # Add large bias to out of range y coords.
+    # 2.2 find xmin, ymin
+    xmin= tf.math.reduce_min(segments_x,axis=1)
+    ymin = tf.math.reduce_min(segments_y, axis=1)
+    # 3. Find bbox max coords
+    # 3.1 De-priorities selection of positive out-of-region coords xmax, ymax, by substractinb a large bias:
+    segments_x = segments[..., 0:1] - 2*bias_vector # substact large bias to out of range x coords.
+    segments_y = segments[..., 1:2] - 2*bias_vector # substact large bias to out of range y coords.
+    # 3.2 find max coords:
+    xmax= tf.math.reduce_max(segments_x,axis=1)
+    ymax = tf.math.reduce_max(segments_y, axis=1)
+    # 4 concat bboxes:
+    bbox = tf.concat([xmin, ymin, xmax, ymax], axis=1) # shape: [nt,4]
+    # 5 handle edge case of all segment's vertices out of region, which led to biased vertices selection. set 0s bbox:
+
+    ind = tf.logical_and(tf.math.greater(bbox, 0), tf.math.less(bbox, bias/2)) # thresh at bias/2 should be good
+    bbox = tf.where(ind, bbox, [0., 0., 0., 0.]) # if all segments are out of region, then set bbox to 0s
+    return bbox
+
 def segments2boxes(segments):
     # Convert segment labels to box labels, i.e. (cls, xy1, xy2, ...) to (cls, xywh)
     boxes = []
