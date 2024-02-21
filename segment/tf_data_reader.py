@@ -243,12 +243,13 @@ class LoadImagesAndLabelsAndMasks:
             img, labels, segments = self.load_mosaic(index)
             shapes = tf.zeros([3, 2], float)  # for mAP rescaling. Dummy same shape (keep generator's spec) for mosaic
         else:
-            (img, (h0, w0), (h1, w1), pad) = self.decode_resize(index, padding=True)
-            shapes = tf.constant(((float(h0), float(w0)), (h1 / h0, w1 / w0), pad))  # for mAP rescaling.
-            # set raggged  as objects' segments sizes differ. (unlike augment mode, where segments interpolated to 1000)
+            (img, (h0, w0), (h1, w1)) =  self.load_image(index)
+            img,  (padw, padh) = self.letterbox(img)
+
+            shapes = tf.constant(((float(h0), float(w0)), (h1 / h0, w1 / w0), (padw, padh)))  # for mAP rescaling.
+            # set raggged  as objects' segments sizes differ. (unlike augment (dw, dh), where segments interpolated to 1000)
             segments = tf.ragged.constant(
                 self.segments[index])  # image_i segments ragged tensor: "shape": [nti,v_ij,2], vij: object j vertices
-            padw, padh = pad[0], pad[1]
             # map loops on all segments, scale normalized coordibnates to fit mage scaling:
             segments = tf.map_fn(fn=lambda t: self.xyn2xy(t, w1, h1, padw, padh), elems=segments,
                                  fn_output_signature=tf.RaggedTensorSpec(shape=[None, 2], dtype=tf.float32,
@@ -290,7 +291,7 @@ class LoadImagesAndLabelsAndMasks:
         for i in self.indices:
             yield self[i]
 
-    def decode_resize(self, index, preserve_aspect_ratio=True, padding=False):
+    def load_image(self, index, preserve_aspect_ratio=True):
         """
         Reads, decodes and resizes an image from file.
 
@@ -306,20 +307,23 @@ class LoadImagesAndLabelsAndMasks:
         img0 = tf.image.decode_image(img_orig, channels=3).astype(tf.float32) / 255 # read format:  [height,width,ch]
         resized_img = img0  # init - to be resized
         r = self.imgsz[0] / max(img0.shape[:2])  # ratio, Note: assumed squared target imgsz
-        padh = padw = 0
         if r != 1:  # don't resize if h or w equals  self.imgsz
             resized_img = tf.image.resize(img0, self.imgsz, preserve_aspect_ratio=preserve_aspect_ratio) # shape: h,w,ch
         resized_shape = resized_img.shape[:2]
-        if padding:
-            padh = int((self.imgsz[1] - resized_img.shape[0]) / 2) # note: resized_img shape: [h,w,ch]
-            padw = int((self.imgsz[0] - resized_img.shape[1]) / 2)
 
-            resized_img = tf.image.pad_to_bounding_box(
-                resized_img, padh, padw, self.imgsz[1], self.imgsz[0]
-            )
+        return resized_img, img0.shape[:2], resized_shape  # im, hw_original, hw_resized
+
+    def letterbox(self, img):
+        padh = int((self.imgsz[1] - img.shape[0]) / 2) # note: img shape: [h,w,ch]
+        padw = int((self.imgsz[0] - img.shape[1]) / 2)
+
+        # prob? orig adds pad to both sides - check that
+        img = tf.image.pad_to_bounding_box(
+                img, padh, padw, self.imgsz[1], self.imgsz[0]
+        )
 
         return (
-            resized_img, img0.shape[:2], resized_shape,
+            img,
             (padw, padh))  # pad is 0 by def while aspect ratio not preserved
 
     def scatter_img_to_mosaic(self, dst_img, src_img, dst_xy):
@@ -580,7 +584,10 @@ class LoadImagesAndLabelsAndMasks:
         # 2. loop on 4 images, arrange mosaic4:
         for idx, index in enumerate(indices):
             # 2.1 load image
-            img, _, (h, w), _ = self.decode_resize(index)
+            # img, _, (h, w), _ = self.decode_resize(index)
+            (img, _, (h, w)) =  self.load_image(index)
+
+
             # 2.2 place image in mosaic4 quarter:
             if idx == 0:  # top left mosaic dest zone,  bottom-right aligned src image fraction:
                 x1a, y1a, x2a, y2a = tf.math.maximum(xc - w, 0), tf.math.maximum(yc - h,
