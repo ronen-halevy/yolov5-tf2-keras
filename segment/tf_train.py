@@ -25,6 +25,8 @@ from pathlib import Path
 
 import yaml
 from tqdm import tqdm
+import pathlib
+import argparse
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
@@ -147,6 +149,9 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     best_fitness, start_epoch = 0.0, 0
 
     if pretrained:
+        # if resume:
+        #     start_epoch = opt,start_epoch if 'start_epoch' in opt else 0
+        #     best_fitness, start_epoch, epochs = smart_resume(weights, epochs, resume)
         keras_model.load_weights(weights)
 
     # keras_model.trainable = False # freeze
@@ -349,21 +354,27 @@ def main(opt, callbacks=Callbacks()):
         # check_requirements(ROOT / 'requirements.txt')
 
     # Resume
-    if opt.resume: # resume from specified or most recent last.h5
+    if opt.resume:
+        # 1. fetch weights file specified by opt.resume, ptherwise fetch weights from latest logging dir:
         last = Path(check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run('../runs'))
-        opt_yaml = last.parent.parent / 'opt.yaml'  # train options yaml
-        opt_data = opt.data  # original dataset
-        cfg = opt.cfg
-        with open(opt_yaml, errors='ignore') as f:
-            d = yaml.safe_load(f)
-        import argparse
-        opt = argparse.Namespace(**d)  # dict to a Namespace object
-        opt.weights, opt.resume = str(last), True  # reinstate
-        opt.cfg = opt.cfg if (isinstance(opt.cfg, str) and '.yaml' in opt.cfg) else cfg
-        #### todo check cfg empty!!!!
-        opt.weights, opt.resume = str(last), True  # reinstate
-        if is_url(opt_data): # if url then download
-            opt.data = check_file(opt_data)  # avoid HUB resume auth timeout
+        LOGGER.info(f'Resuming with {last} ')
+        # 2. Replace current opt config with resume config file contents, if exists:
+        if pathlib.Path.exists(last.parent.parent/ 'opt.yaml'):
+            with open(last.parent.parent / 'opt.yaml', errors='ignore') as f:
+                opt_dict = yaml.safe_load(f)
+            opt = argparse.Namespace(**opt_dict)  # dict to a Namespace object
+            # store resume weights:
+            opt.weights = last
+            opt.data = check_file(opt.data )  # if url then download url to file
+            # import csv
+            # if pathlib.Path.exists(last.parent.parent / 'results.csv'):
+            #     with open(last.parent.parent / 'results.csv') as file_obj:
+            #         reader_obj = csv.DictReader(file_obj)
+            #         for row in reader_obj: # iterate till las row, to fetch last epoch index
+            #             pass
+            #     # opt.start_epoch = row['epoch']+1
+
+
     else:
         opt.data, opt.cfg, opt.hyp, opt.weights, opt.project = \
             check_file(opt.data), check_yaml(opt.cfg), check_yaml(opt.hyp), str(opt.weights), str(opt.project)  # checks
