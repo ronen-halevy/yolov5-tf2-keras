@@ -239,8 +239,8 @@ def print_args(args: Optional[dict] = None, show_file=True, show_func=False):
 
 
 def get_latest_run(search_dir='.'):
-    # Return path to most recent 'last.pt' in /runs (i.e. to --resume from)
-    last_list = glob.glob(f'{search_dir}/**/last*.h5', recursive=True)
+    # Return path to most recent 'last.h5' in /runs (i.e. to --resume from)
+    last_list = glob.glob(f'{search_dir}/**/last.h5', recursive=True)
     return max(last_list, key=os.path.getctime) if last_list else ''
 
 
@@ -447,8 +447,7 @@ def check_file(file, suffix=''):
             LOGGER.info(f'Found {url} locally at {file}')  # file already exists
         else:
             LOGGER.info(f'Downloading {url} to {file}...')
-            # torch.hub.download_url_to_file(url, file)
-            urllib.request.urlretrieve(url, f)
+            urllib.request.urlretrieve(url, file)
 
             assert Path(file).exists() and Path(file).stat().st_size > 0, f'File download failed: {url}'  # check
         return file
