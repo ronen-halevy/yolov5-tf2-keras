@@ -137,7 +137,9 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     new_model=True
 
     keras_model=build_model(cfg,  nl, na, imgsz=imgsz)
-    val_keras_model = build_model(cfg,nl,na, imgsz=imgsz)
+    print(keras_model.summary())
+
+    # val_keras_model = build_model(cfg,nl,na, imgsz=imgsz)
     decoder = Decoder(nc, nm, anchors, imgsz)
     # extract 3 layers grid shapes strides:
     grids =[[80,80],[40,40],[20,20]]
@@ -145,7 +147,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     grids = tf.constant(grids)#  todo arranmge configl
 
 
-    print(val_keras_model.summary())
     best_fitness, start_epoch = 0.0, 0
 
     if pretrained:
@@ -187,7 +188,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
             ds=dataset[idx]
     create_dataloader=DataLoader()
     train_loader, labels, nb = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp, overlap)
-    val_path=train_path # todo debug need a chang2
     create_dataloader_val=DataLoader()
     val_loader, _ ,val_nb = create_dataloader_val(val_path, batch_size, imgsz, mask_ratio, mosaic=False, augment=False, hyp=hyp, overlap=overlap)
 
@@ -260,7 +260,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                     files = sorted(save_dir.glob('train*.jpg'))
                     logger.log_images(files, 'Mosaics', epoch)
         # end batch ------------------------------------------------------------------------------------------------
-        val_keras_model.set_weights(keras_model.get_weights())
         final_epoch = (epoch + 1 == epochs) or stopper.possible_stop
         if not noval or final_epoch:  # Calculate mAP
             # results, list[12] - mp_bbox, mr_bbox, map50_bbox, map_bbox, mp_mask, mr_mask, map50_mask, map_mask,  box_loss, obj_loss, cls_loss, mask_loss
@@ -271,7 +270,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                                             imgsz=imgsz,
                                             nb=val_nb,
                                             half=False, # half precision model
-                                            model=val_keras_model, # todo use ema
+                                            model=keras_model, # todo use ema
                                             decoder=decoder.decoder if new_model else None,
                                             single_cls=single_cls,
                                             save_dir=save_dir,
@@ -295,15 +294,11 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         # Save model
         if (not nosave) or (final_epoch and not evolve):  # if save
             # Save last, best
-            keras_model.save_weights(
-                last)
+            keras_model.save_weights(last)
             if best_fitness == fi:
-                keras_model.save_weights(
-                    best)
-                # torch.save(ckpt, best)
+                keras_model.save_weights(best)
             if opt.save_period > 0 and epoch % opt.save_period == 0:
-                keras_model.save_weights(
-                    w / f'epoch{epoch}.tf')
+                keras_model.save_weights(w / f'epoch{epoch}.tf')
                 logger.log_model(w / f'epoch{epoch}.pt')
             # callbacks.run('on_model_save', last, epoch, final_epoch, best_fitness, fi)
 
@@ -316,14 +311,13 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # end training -----------------------------------------------------------------------------------------------------
     # if RANK in {-1, 0}:
     LOGGER.info(f'\n{epochs - start_epoch + 1} epochs completed in {(time.time() - t0) / 3600:.3f} hours.')
-    val_keras_model.load_weights(best)
     results, _, _ = validate.run(val_loader,
                                     data_dict,
                                     batch_size=batch_size,
                                     imgsz=imgsz,
                                     nb=val_nb,
                                     half=False,  # half precision model
-                                    model=val_keras_model,  # todo use ema
+                                    model=keras_model,  # todo use ema
                                     decoder=decoder.decoder,
                                     single_cls=single_cls,
                                     save_dir=save_dir,
@@ -354,7 +348,7 @@ def main(opt, callbacks=Callbacks()):
         # check_requirements(ROOT / 'requirements.txt')
 
     # Resume
-    if opt.resume:
+    if opt.resume and not opt.evolve:  # resume from specified or most recent configuration, hypermarams and weights
         # 1. fetch weights file specified by opt.resume, ptherwise fetch weights from latest logging dir:
         last = Path(check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run('../runs'))
         LOGGER.info(f'Resuming with {last} ')
@@ -383,6 +377,10 @@ def main(opt, callbacks=Callbacks()):
         #     if opt.project == str(ROOT / 'runs/train-seg'):  # if default project name, rename to runs/evolve-seg
         #         opt.project = str(ROOT / 'runs/evolve-seg')
         #     opt.exist_ok, opt.resume = opt.resume, False  # pass resume to exist_ok and disable resume
+        if opt.evolve:
+            if opt.project == str(ROOT / "runs/train-segt"):  # if default project name, rename to runs/evolve-seg
+                opt.project = str(ROOT / "runs/evolve-seg")
+            opt.exist_ok, opt.resume = opt.resume, False  # pass resume to exist_ok and disable resume
         if opt.name == 'cfg':
             opt.name = Path(opt.cfg).stem  # use model.yaml as name
         opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))
@@ -477,7 +475,7 @@ def main(opt, callbacks=Callbacks()):
                 hyp[k] = round(hyp[k], 5)  # significant digits
 
             # Train mutation
-            results = train(hyp.copy(), opt, device, callbacks)
+            results = train(hyp.copy(), opt,  callbacks)
             callbacks = Callbacks()
             # Write mutation results
             print_mutation(KEYS[4:16], results, hyp.copy(), save_dir, opt.bucket)
