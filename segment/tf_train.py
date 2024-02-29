@@ -73,9 +73,9 @@ WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 
 
 def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
-    save_dir, epochs, batch_size, pretrained, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze, mask_ratio, augment, mosaic, debug = \
+    save_dir, epochs, batch_size, pretrained, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze, mask_ratio, augment, mosaic, anchors_data, debug = \
         Path(opt.save_dir), opt.epochs, opt.batch_size, opt.pretrained, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
-        opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze, opt.mask_ratio, opt.augment, opt.mosaic, opt.debug
+        opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze, opt.mask_ratio, opt.augment, opt.mosaic, opt.anchors_data, opt.debug
     if debug:
         tf.config.run_functions_eagerly(True)
     # callbacks.run('on_pretrain_routine_start')
@@ -129,20 +129,19 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # Model
     dynamic = False
 
-    anchors = data_dict['anchors']
-    nl = len(anchors)  # number of detection layers
-    na = len(anchors[0]) // 2  # number of anchors
-
-    ch=3 # nof input data channels. used by build model.
-    new_model=True
+    # read anchors:
+    with open(anchors_data, 'r') as stream:
+        anchors = yaml.safe_load(stream)['anchors']
+    na=3 # nof anchors per layer
+    anchors = tf.reshape(anchors, [-1, na,2]) # shape: [nl,na,2]
+    nl =anchors.shape[0]
 
     keras_model=build_model(cfg,  nl, na, imgsz=imgsz)
     print(keras_model.summary())
 
-    # val_keras_model = build_model(cfg,nl,na, imgsz=imgsz)
     decoder = Decoder(nc, nm, anchors, imgsz)
     # extract 3 layers grid shapes strides:
-    grids =[[80,80],[40,40],[20,20]]
+    grids =[[80,80],[40,40],[20,20]] # todo grids and strides from config
     stride = [8.,16.,32.]
     grids = tf.constant(grids)#  todo arranmge configl
 
@@ -151,8 +150,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
     if pretrained:
         # if resume:
-        #     start_epoch = opt,start_epoch if 'start_epoch' in opt else 0
-        #     best_fitness, start_epoch, epochs = smart_resume(weights, epochs, resume)
+        #     best_fitness, start_epoch, epochs =smart_resume(last, epochs)
         keras_model.load_weights(weights)
 
     # keras_model.trainable = False # freeze
@@ -187,6 +185,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         for idx in range(dbg_entries):
             ds=dataset[idx]
     create_dataloader=DataLoader()
+    # val_path=train_path
     train_loader, labels, nb = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp, overlap)
     create_dataloader_val=DataLoader()
     val_loader, _ ,val_nb = create_dataloader_val(val_path, batch_size, imgsz, mask_ratio, mosaic=False, augment=False, hyp=hyp, overlap=overlap)
@@ -203,7 +202,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
 
 
-    anchors = tf.reshape(anchors, [len(anchors), -1, 2]) # shape: [nl, np, 2]
     anchors = tf.cast(anchors, tf.float32) / tf.reshape(stride, (-1, 1, 1)) # scale by stride to nl grid layers
 
     nl = anchors.shape[0] # number of layers (output grids)
@@ -220,6 +218,9 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     optimizer = tf.keras.optimizers.Adam(learning_rate= LRSchedule( hyp['lr0'], hyp['lrf'], nb, nw, warmup_bias_lr, epochs,False), ema_momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
     # optimizer = tf.keras.optimizers.SGD(learning_rate= 0.01, ema_momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
 
+    LOGGER.info(f'Image sizes {imgsz} train, {imgsz} val\n'
+                f"Logging results to {colorstr('bold', save_dir)}\n"
+                f'Starting training for {epochs} epochs...')
     # train loop:
     for epoch in range(epochs):
         LOGGER.info(('\n' + '%11s' * 9) % ('Epoch', 'box_loss', 'mask_loss', 'obj_loss','cls_loss','Instances', 'Size', 'lr','gpu_mem'))
@@ -271,7 +272,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                                             nb=val_nb,
                                             half=False, # half precision model
                                             model=keras_model, # todo use ema
-                                            decoder=decoder.decoder if new_model else None,
+                                            decoder=decoder.decoder,
                                             single_cls=single_cls,
                                             save_dir=save_dir,
                                             plots=True,
@@ -356,17 +357,13 @@ def main(opt, callbacks=Callbacks()):
         if pathlib.Path.exists(last.parent.parent/ 'opt.yaml'):
             with open(last.parent.parent / 'opt.yaml', errors='ignore') as f:
                 opt_dict = yaml.safe_load(f)
-            opt = argparse.Namespace(**opt_dict)  # dict to a Namespace object
-            # store resume weights:
-            opt.weights = last
-            opt.data = check_file(opt.data )  # if url then download url to file
-            # import csv
-            # if pathlib.Path.exists(last.parent.parent / 'results.csv'):
-            #     with open(last.parent.parent / 'results.csv') as file_obj:
-            #         reader_obj = csv.DictReader(file_obj)
-            #         for row in reader_obj: # iterate till las row, to fetch last epoch index
-            #             pass
-            #     # opt.start_epoch = row['epoch']+1
+
+        opt = argparse.Namespace(**opt_dict)  # convert dict to a Namespace object
+        opt.weights, opt.resume, opt.pretrained = str(last), True, True  # reinstate
+
+        # store resume weights:
+        opt.weights = last
+        opt.data = check_file(opt.data )  # if url then download url to file
 
 
     else:
