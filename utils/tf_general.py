@@ -1018,16 +1018,17 @@ def print_mutation(keys, results, hyp, save_dir, bucket, prefix=colorstr('evolve
     with open(evolve_csv, 'a') as f:
         f.write(s + ('%20.5g,' * n % vals).rstrip(',') + '\n')
 
-    # Save yaml
+    # Save hyperparamets in yaml
     with open(evolve_yaml, 'w') as f:
         data = pd.read_csv(evolve_csv, skipinitialspace=True)
         data = data.rename(columns=lambda x: x.strip())  # strip keys
-        i = np.argmax(fitness(data.values[:, :4]))  #
+        # select hyper[params data of max fitness entry:
+        idx = np.argmax(fitness(data.values[:, :4]))  #
         generations = len(data)
-        f.write('# YOLOv5 Hyperparameter Evolution Results\n' + f'# Best generation: {i}\n' +
+        f.write('# YOLOv5 Hyperparameter Evolution Results\n' + f'# Best generation: {idx}\n' +
                 f'# Last generation: {generations - 1}\n' + '# ' + ', '.join(f'{x.strip():>20s}' for x in keys[:7]) +
-                '\n' + '# ' + ', '.join(f'{x:>20.5g}' for x in data.values[i, :7]) + '\n\n')
-        yaml.safe_dump(data.loc[i][7:].to_dict(), f, sort_keys=False)
+                '\n' + '# ' + ', '.join(f'{x:>20.5g}' for x in data.values[idx, :7]) + '\n\n')
+        yaml.safe_dump(data.loc[idx][7:].to_dict(), f, sort_keys=False)
 
     # Print to screen
     LOGGER.info(prefix + f'{generations} generations finished, current result:\n' + prefix +
