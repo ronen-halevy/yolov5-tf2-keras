@@ -15,11 +15,11 @@ def parse_opt():
     parser.add_argument('--cfg', type=str, default='../models/segment/yolov5s-seg.yaml', help='model.yaml path')
     shapes=True
     if shapes:
-        parser.add_argument('--weights', type=str, default=ROOT / 'segment/saved_weights/best.h5', #'/home/ronen/Downloads/best5.h5',#'/home/ronen/Downloads/best5.h5','segment/saved_weights/best177.h5',#
+        parser.add_argument('--weights', type=str, default=ROOT / '/home/ronen/devel/PycharmProjects/tf_yolov5/runs/train-segt/exp238/weights/best.h5',
                             help='initial weights path')
         parser.add_argument('--data', type=str, default=ROOT / 'data/shapes-seg.yaml', help='dataset.yaml path')
     else:
-        parser.add_argument('--weights', type=str, default=ROOT / 'utilities/keras_weights/yolov5s-seg.tf',
+        parser.add_argument('--weights', type=str, default=ROOT / '/home/ronen/devel/PycharmProjects/tf_yolov5/utilities/keras_weights/yolov5s-seg.tf',
                             help='initial weights path')
         parser.add_argument('--data', type=str, default=ROOT / 'data/coco128-seg-short.yaml', help='dataset.yaml path')
 
@@ -55,8 +55,8 @@ def parse_opt():
     parser.add_argument('--seed', type=int, default=0, help='Global training seed')
     parser.add_argument('--local_rank', type=int, default=-1, help='Automatic DDP Multi-GPU argument, do not modify')
     parser.add_argument('--augment', action='store_true', help='enable training dataset augmentation')
-    parser.add_argument('--mosaic', action='store_true', help='enable training mosaic dataset. mosaic requires augment enabled (tbd-change that?)')
-
+    parser.add_argument('--mosaic', action='store_false', help='enable training mosaic dataset. mosaic requires augment enabled (tbd-change that?)')
+    parser.add_argument('--anchors_data', type=str, default='/home/ronen/devel/PycharmProjects/shapes-dataset/create_anchors/output/anchors.yaml', help='anchors yaml file')
     # Instance Segmentation Args
     parser.add_argument('--mask-ratio', type=int, default=4, help='Downsample the truth masks to saving memory')
     parser.add_argument('--overlap', action='store_false', help='Overlap masks (train faster at slightly less mAP-tbd)')
