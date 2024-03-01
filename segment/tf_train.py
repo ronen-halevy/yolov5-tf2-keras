@@ -149,6 +149,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     best_fitness, start_epoch = 0.0, 0
 
     if pretrained or resume:
+        LOGGER.info(f'Loading pretrained weights from {colorstr("bold", weights)} ')
         keras_model.load_weights(weights)
     # if resume: # Todo - in addition to picking weights, pick data from resumed log
     #     best_fitness, start_epoch, epochs = opt.best_fitness, opt.start_epoch, opt.epochs
@@ -384,7 +385,7 @@ def main(opt, callbacks=Callbacks()):
     if opt.resume and not opt.evolve:  # resume from specified or most recent configuration, hypermarams and weights
         # 1. fetch weights file specified by opt.resume, ptherwise fetch weights from latest logging dir:
         last = Path(check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run('../runs'))
-        LOGGER.info(f'Resuming with {last} ')
+        LOGGER.info(f'Resuming with {colorstr("bold", last)} ')
         # 2. Replace current opt config with resume config file contents, if exists:
         if pathlib.Path.exists(last.parent.parent/ 'opt.yaml'):
             with open(last.parent.parent / 'opt.yaml', errors='ignore') as f:
