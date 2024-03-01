@@ -148,10 +148,11 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
     best_fitness, start_epoch = 0.0, 0
 
-    if pretrained:
-        # if resume:
-        #     best_fitness, start_epoch, epochs =smart_resume(last, epochs)
+    if pretrained or resume:
         keras_model.load_weights(weights)
+    # if resume: # Todo - in addition to picking weights, pick data from resumed log
+    #     best_fitness, start_epoch, epochs = opt.best_fitness, opt.start_epoch, opt.epochs
+
 
     # keras_model.trainable = False # freeze
     # Freeze
@@ -291,7 +292,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         # callbacks.run('on_fit_epoch_end', log_vals, epoch, best_fitness, fi)
         # Log val metrics and media
         metrics_dict = dict(zip(KEYS, log_vals))
-        logger.log_metrics(metrics_dict, epoch)
+        logger.log_metrics(metrics_dict, epoch) # log results to csv
         # Save model
         if (not nosave) or (final_epoch and not evolve):  # if save
             # Save last, best
@@ -329,7 +330,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                                     mask_downsample_ratio=mask_ratio,
                                     overlap=overlap)
 
-    logger.log_metrics(metrics_dict, epochs)
+    logger.log_metrics(metrics_dict, epochs) # log to csv
 
     if plots:
         plot_results_with_masks(file=save_dir / 'results.csv')  # save results.png
@@ -341,6 +342,37 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
     return results
 
+# todo - pick data from resumed run:
+# # import csv
+# # import pandas as pd
+# #
+# #
+# def smart_resume(last, epochs):
+#
+#     # extract start epoch from resume csv file:
+#     try:
+#         with open(last.parent.parent / 'results.csv', errors='ignore') as f:
+#             header = [h.strip() for h in f.readline().split(',')]
+#             reader_obj = csv.DictReader(f, fieldnames=header)
+#             for row in reader_obj:  # iterate till las row, to fetch last epoch index
+#                 pass
+#             epoch= int(row['epoch'].strip())
+#             start_epoch =epoch + 1
+#             if opt.epochs < start_epoch:
+#                 LOGGER.info(
+#                     f"{opt.weights} has been already trained for {epoch} epochs. Fine-tuning for {opt.epochs} more epochs.")
+#                 opt.epochs += epoch  # finetune additional epochs
+#         # find best fitness of all generations:
+#         import pandas as pd
+#
+#         data = pd.read_csv(last.parent.parent / 'results.csv', skipinitialspace=True)
+#         data = data.rename(columns=lambda x: x.strip())  # strip keys
+#         best_fitness = np.amax(fitness(data.values))
+#     except Exception as e:
+#         best_fitness = 0
+#         start_epoch = 0
+#
+#     return best_fitness, start_epoch, epochs
 
 def main(opt, callbacks=Callbacks()):
 
@@ -359,12 +391,18 @@ def main(opt, callbacks=Callbacks()):
                 opt_dict = yaml.safe_load(f)
 
         opt = argparse.Namespace(**opt_dict)  # convert dict to a Namespace object
-        opt.weights, opt.resume, opt.pretrained = str(last), True, True  # reinstate
+        opt.weights, opt.resume = str(last), True  # reinstate
 
         # store resume weights:
         opt.weights = last
         opt.data = check_file(opt.data )  # if url then download url to file
 
+        # # todo fetch from csv resume best_fitness, start_epoch & epochs:
+        # best_fitness, start_epoch, epochs = smart_resume(last,  opt.epochs)
+        # opt.epochs = epochs
+        # opt.start_epoch = start_epoch
+        # opt.best_fitness = best_fitness
+        # opt.resume_source = last.parent.parent
 
     else:
         opt.data, opt.cfg, opt.hyp, opt.weights, opt.project = \
@@ -381,8 +419,6 @@ def main(opt, callbacks=Callbacks()):
         if opt.name == 'cfg':
             opt.name = Path(opt.cfg).stem  # use model.yaml as name
         opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))
-
-
 
     # Train
     if not opt.evolve:
