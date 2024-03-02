@@ -31,11 +31,11 @@ class DataLoader(object):
             dataset_loader = tf.data.Dataset.from_generator(dataset.iter,
                                                  output_signature=(
                                                      tf.TensorSpec(shape=[imgsz[0], imgsz[1], 3], dtype=tf.float32, ),
-                                                     tf.RaggedTensorSpec(shape=[None, 5], dtype=tf.float32,
+                                                     (tf.RaggedTensorSpec(shape=[None, 5], dtype=tf.float32,
                                                                          ragged_rank=1),
                                                      tf.TensorSpec(shape=[160, 160], dtype=tf.float32),
                                                      tf.TensorSpec(shape=(), dtype=tf.string),
-                                                                   tf.TensorSpec(shape=[3,2], dtype=tf.float32)
+                                                                   tf.TensorSpec(shape=[3,2], dtype=tf.float32))
                                                  )
                                                  )
         else: # a mask per target, nti masks per image i, deploying a ragged tensor accordingly.
@@ -43,11 +43,11 @@ class DataLoader(object):
                                                             output_signature=(
                                                                 tf.TensorSpec(shape=[imgsz[0], imgsz[1], 3],
                                                                               dtype=tf.float32, ),
-                                                                tf.RaggedTensorSpec(shape=[None, 5], dtype=tf.float32,
+                                                                (tf.RaggedTensorSpec(shape=[None, 5], dtype=tf.float32,
                                                                                     ragged_rank=1),
                                                                 tf.RaggedTensorSpec(shape=[None, 160, 160], dtype=tf.float32,  ragged_rank=1),
                                                                 tf.TensorSpec(shape=(), dtype=tf.string),
-                                                                tf.TensorSpec(shape=[3, 2], dtype=tf.float32)
+                                                                tf.TensorSpec(shape=[3, 2], dtype=tf.float32))
                                                             )
                                                             )
 

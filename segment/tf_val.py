@@ -218,10 +218,16 @@ def run(
     jdict, stats = [], []
     # callbacks.run('on_val_start')
     pbar = tqdm(dataloader, total=nb, desc=s, bar_format=TQDM_BAR_FORMAT, colour='green')  # progress bar
-    # batch loop on gt dataloader entries. batch size: b
-    # shape: batch_targets, shape:[Nt,6], batch_masks, shape:[b,h/4,w/4], paths of img src, shape:[b]
-    # shapes: shape0, shape old/shape new, pad:[b,3,2]
-    for batch_i, (batch_im, b_targets,  batch_masks, paths, shapes) in enumerate(pbar):# dataset batch by batch loop
+
+    # batch loop on gt dataloader entries. batch size is b:
+    for batch_i, (batch_im, y_train) in enumerate(pbar):# dataset batch by batch loop
+        # y_train is unpacked to 4 elements:
+        # batch_targets, shape:[Nt,6],
+        # b_masks, shape:[b,h/4,w/4],
+        # paths of img src, shape:[b]
+        # shapes: (shape0, shape old/shape new, paddings), shape :[b,3,2]
+        b_targets, b_masks, paths, shapes = y_train # b_targets, shape:[Nt,6], b_masks shape:[b,h/4,w/4], paths of img src, shape:[b]
+
         # if non-overlap=mask per target, tensor is ragged, shape:[b,None,160,160], otherwise shape is [b, 160,160]
         if not overlap: # convert ragged shape [b,nti,160,160] to tensor [b*nti,160,160]
             b_masks = tf.reshape(b_masks.flat_values, [-1, 160, 160])  # flatten ragged tensor shape: [bnt, 160,160]
@@ -247,7 +253,7 @@ def run(
 
         with dt[1]:
             # Loss:
-            loss += compute_loss((batch_targets, batch_masks),(train_out, protos))[1]  # [lbox, lseg, lobj, lcls]
+            loss += compute_loss((batch_targets, b_masks),(train_out, protos))[1]  # [lbox, lseg, lobj, lcls]
 
         # NMS
         tbboxes = batch_targets[:, 2:] * (width, height, width, height) # scale tbbox
@@ -288,7 +294,7 @@ def run(
             # Masks
             midx = [si] # mask idx
             # gt masks:
-            gt_masks = batch_masks[midx] # ground truth masks for the si-th pred. shape: [1,h/4. w/4] i.e. [1,160,160]
+            gt_masks = b_masks[midx] # ground truth masks for the si-th pred. shape: [1,h/4. w/4] i.e. [1,160,160]
 
             # pred masks: calc mask=mask@proto and crop to dounsampled by 4 predicted bbox bounderies:
             pred_masks = process(proto, pred[:, 6:], pred[:, :4], shape=batch_im[si].shape[:2]) # shape: [Npi, h/4,w/4]
@@ -342,7 +348,7 @@ def run(
             if len(plot_masks):
                 plot_masks = tf.concat(plot_masks, axis=0) # concat batch preds' top 15 masks. shape:[Np*15, h/4,w/4]
             # plot targets
-            plot_images_and_masks(batch_im, batch_targets, batch_masks, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names) # targets
+            plot_images_and_masks(batch_im, batch_targets, b_masks, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names) # targets
             # plot preds
             plot_images_and_masks(batch_im, arrange_pred, plot_masks, paths,
                                   save_dir / f'val_batch{batch_i}_pred.jpg', names)

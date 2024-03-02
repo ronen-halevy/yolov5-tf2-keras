@@ -229,7 +229,13 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         pbar = tqdm(train_loader, total=nb, bar_format=TQDM_BAR_FORMAT)  # progress bar
 
         mloss = tf.zeros([4], dtype=tf.float32)  # mean losses
-        for batch_idx, (b_images,  b_targets, b_masks, paths, shapes) in enumerate(pbar):
+        for batch_idx, (b_images, y_train ) in enumerate(pbar):
+            # y_train is unpacked to 4 elements:
+            # batch_targets, shape:[Nt,6],
+            # b_masks, shape:[b,h/4,w/4],
+            # paths of img src, shape:[b]
+            # shapes: (shape0, shape old/shape new, paddings), shape :[b,3,2]
+            b_targets, b_masks, paths, shapes=y_train
             ni = batch_idx + nb * epoch  # number batches (since train start), used to scheduke debug plots and logs
             # if non-overlap=mask per target, tensor is ragged, shape:[b,None,160,160], otherwise shape is [b, 160,160]
             if not overlap:  # convert ragged shape [b,nti,160,160] to tensor [b*nti,160,160]

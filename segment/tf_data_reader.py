@@ -285,7 +285,7 @@ class LoadImagesAndLabelsAndMasks:
             img = img.astype(tf.float32) / 255
         # set ragged labels tensor. Reason: needed to pack all images [nti,5] tensors, where nti nof targets in image i
         labels = tf.RaggedTensor.from_tensor(labels)  # [nt,5], nt: nof objects in current image
-        return img, labels, masks, tf.constant(self.im_files[index]), shapes
+        return img, (labels, masks, tf.constant(self.im_files[index]), shapes)
 
     def iter(self):
         for i in self.indices:
