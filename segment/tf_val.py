@@ -247,7 +247,7 @@ def run(
 
         with dt[1]:
             # Loss:
-            loss += compute_loss((train_out, protos), batch_targets, batch_masks)[1]  # [lbox, lseg, lobj, lcls]
+            loss += compute_loss((batch_targets, batch_masks),(train_out, protos))[1]  # [lbox, lseg, lobj, lcls]
 
         # NMS
         tbboxes = batch_targets[:, 2:] * (width, height, width, height) # scale tbbox

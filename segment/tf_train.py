@@ -243,7 +243,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                 # preds shapes: [b,na,gyi,gxi,xywh+conf+cls+masks] where na=3,gy,gx[i=1:3]=size/8,/16,/32,masks:32 words
                 # proto shape: [b,32,size/4,size/4]
                 pred = keras_model(b_images, training=True) # Reaining=True essential for bn adaptation.
-                loss, loss_items = compute_loss(pred, targets, b_masks)  # returns: sum(loss),  [lbox, lseg, lobj, lcls]
+                loss, loss_items = compute_loss((targets, b_masks),pred)  # returns: sum(loss),  [lbox, lseg, lobj, lcls]
             grads = tape.gradient(loss, keras_model.trainable_variables)
             optimizer.apply_gradients(
                     zip(grads, keras_model.trainable_variables))

@@ -236,7 +236,7 @@ class ComputeLoss:
         return lbox, lseg, lobj, lcls
 
     # @tf.function
-    def __call__(self, preds, targets, masks):
+    def __call__(self, y_true, y_pred):
         """
         Calc batch loss
         :param preds: model output. 2 tupple: preds[0]: list[3] per grid layer,shape:[b,na,gy,gx,4+1+nc+nm], gs=80,40,20
@@ -248,7 +248,8 @@ class ComputeLoss:
         2. concatenated loss: (lbox, lseg, lobj, lcls) shape: [b,4]
         """
         # step 1: unpack preds:
-        p, proto = preds
+        targets, masks = y_true
+        p, proto = y_pred
         # p = [preds[0], preds[1], preds[2]]
         # proto = preds[3]
         bs, nm, mask_h, mask_w = proto.shape  # batch size, number of masks, mask height, mask width
