@@ -375,7 +375,7 @@ class ComputeLoss:
         offsets = offsets[j]  # filter valid offsets . shape: [valid dup nt, 2]
         return t, offsets
     # @tf.function
-    def build_targets_per_layer(self, shape, targets,anchors):
+    def build_targets_per_layer(self, grid_shape, targets,anchors):
         """
 
         :param grids: grid's shape - [80,80] or [40,40] or [20,20] for layers 0-2, int32
@@ -394,9 +394,9 @@ class ComputeLoss:
         # 2.a scale tbbox to grid, and threshold wh to annchor ratio:
         # shape = grids[i]  # anchors scale, shape: [na,2], grids[i]: [gy[i],gx[i]], shape[2]
         # update gain columns 2,3,4,5 by grid dims gsx[i],gsy[i] where gs are [[80,80],[40,40],[20,20]] for i=0:2
-        gain = tf.concat([tf.ones([2]), shape[[1, 0, 1, 0]].astype(tf.float32), tf.ones([2])],
+        gain = tf.concat([ tf.ones([2]), grid_shape[[1, 0, 1, 0]].astype(tf.float32), tf.ones([2])],
                          axis=0)  # [1,1,gy,gx,gy,gx,1,1]
-        # gain = tf.tensor_scatter_nd_update(gain, [[2],[3],[4],[5]], tf.constant(shape)[[1, 0, 1, 0]].astype(tf.float32))
+        # gain = tf.tensor_scatter_nd_update(gain, [[2],[3],[4],[5]], tf.constant(grid_shape)[[1, 0, 1, 0]].astype(tf.float32))
         # scale targets normalized bbox to grid dimensions, to math pred scales:
         t = tf.math.multiply(targets, gain)  # scale targets bbox coords to grid scale. shape(na,nt,8)
         if targets.shape[0]: # if  targets
@@ -415,7 +415,7 @@ class ComputeLoss:
         gij = (gxy - offsets).astype(
             tf.int32)  # grid's square left corners. gij=gxy-offs giving left corner of grid square, shape: [nt,2]
         gij = tf.clip_by_value(gij, [0, 0],
-                               [shape[0] - 1, shape[1] - 1])  # clip grid indices to grid bounderies, shape: [nt,2]
+                               [grid_shape[0] - 1, grid_shape[1] - 1])  # clip grid indices to grid bounderies, shape: [nt,2]
         gi, gj = tf.transpose(gij)
         ind = tf.concat([bi.astype(tf.int32), ai.astype(tf.int32), gj[...,None], gi[...,None]],
                         axis=1)  # [batch ind,anchor ind, box center], shape: [nt,4]
@@ -458,7 +458,7 @@ class ComputeLoss:
             # in mask overlap mode, ti used as mask colors,values 1:ti:
             ti = []  # target list of np entries. each holds na dups of range(nti), nti: nof objs in ith sample. shape: [na,nti]
             for idx in range(batch_size):  # loop on preds in batch,
-                num = tf.math.reduce_sum((targets[:, 0:1] == idx).astype(tf.float32))  # nof all targets in image idx
+                num = tf.math.reduce_sum(tf.cast((targets[:, 0:1] == idx), tf.float32))  # nof all targets in image idx
                 # entry shape:(na, nti). 1 based range(num) entries
                 ti.append(tf.tile(tf.range(start=1, limit=num+1, dtype=tf.float32)[None], [na, 1]) ) #  shape: [na,nti]
 
