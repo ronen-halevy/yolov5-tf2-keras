@@ -54,7 +54,7 @@ class DataLoader(object):
         dataset_loader=dataset_loader.batch(batch_size, num_parallel_calls=tf.data.AUTOTUNE) # batch dataset
 
         nb = math.ceil( len(dataset)/batch_size) # returns nof batch separately
-        return dataset_loader, tf.concat(dataset.labels, 0), nb # labels tensor - returned for debug
+        return dataset_loader, nb
 
 #
 

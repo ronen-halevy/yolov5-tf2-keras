@@ -188,9 +188,9 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
             ds=dataset[idx]
     create_dataloader=DataLoader()
     # val_path=train_path
-    train_loader, labels, nb = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp, overlap)
+    train_loader,  nb = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp, overlap)
     create_dataloader_val=DataLoader()
-    val_loader, _ ,val_nb = create_dataloader_val(val_path, batch_size, imgsz, mask_ratio, mosaic=False, augment=False, hyp=hyp, overlap=overlap)
+    val_loader ,val_nb = create_dataloader_val(val_path, batch_size, imgsz, mask_ratio, mosaic=False, augment=False, hyp=hyp, overlap=overlap)
 
     # train_ds=SimpleDataset(imgsz, hyp, overlap, train_path, mask_ratio, mosaic, augment,batch_size)
     # val_ds=SimpleDataset(imgsz, hyp, overlap, train_path, mask_ratio, mosaic, augment,batch_size)
