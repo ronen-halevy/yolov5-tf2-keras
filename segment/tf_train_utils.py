@@ -33,12 +33,4 @@ def flatten_btargets(b_targets, shape0):
     imidxs=imidxs[..., None].astype(tf.float32)
     targets = tf.concat([imidxs, targets], axis=-1)
 
-    # imidxs = []
-    # for idx, target in enumerate(b_targets):
-    #     imidx = tf.fill([target.shape[0]], idx)
-    #     imidxs.append(imidx)
-    # imidxs = tf.concat(imidxs,axis=0)
-    # targets = tf.concat([imidxs[...,None].astype(tf.float32), targets], axis=-1)
-
-
     return targets
