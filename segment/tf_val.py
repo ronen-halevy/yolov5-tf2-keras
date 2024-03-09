@@ -52,7 +52,7 @@ from utils.tf_plots import output_to_target, plot_val_study
 # from utils.segment.dataloaders import create_dataloader
 from utils.segment.tf_general import mask_iou, process_mask, process_mask_native, scale_image
 from utils.segment.tf_metrics import Metrics, ap_per_class_box_and_mask
-from utils.segment.tf_plots import plot_images_and_masks
+from utils.segment.tf_plots import plot_images_and_masks, plot_images_and_masks2
 # from utils.torch_utils import de_parallel, select_device, smart_inference_mode
 from .nms import non_max_suppression
 from tf_train_utils import flatten_btargets
@@ -348,10 +348,17 @@ def run(
             if len(plot_masks):
                 plot_masks = tf.concat(plot_masks, axis=0) # concat batch preds' top 15 masks. shape:[Np*15, h/4,w/4]
             # plot targets
-            plot_images_and_masks(batch_im, batch_targets, b_masks, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names) # targets
+            # plot_images_and_maskso(batch_im, batch_targets, b_masks, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names) # targets
+
+            plot_images_and_masks2(batch_im, batch_targets, b_masks, paths, names, 'val_batch',batch_i) # targets
+
+
+
             # plot preds
-            plot_images_and_masks(batch_im, arrange_pred, plot_masks, paths,
-                                  save_dir / f'val_batch{batch_i}_pred.jpg', names)
+            # plot_images_and_maskso(batch_im, arrange_pred, plot_masks, paths, save_dir / f'val_batch{batch_i}_pred.jpg', names)
+
+            plot_images_and_masks2(batch_im, arrange_pred, plot_masks, paths, names, 'val_pred',batch_i) # targets
+
 
     # end dataset batches loop
     # callbacks.run('on_val_batch_end')

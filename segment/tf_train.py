@@ -50,7 +50,7 @@ from tf_data_reader import LoadImagesAndLabelsAndMasks
 
 from tf_loss import ComputeLoss
 from utils.segment.tf_metrics import KEYS, fitness
-from utils.segment.tf_plots import plot_images_and_masks, plot_results_with_masks
+from utils.segment.tf_plots import plot_images_and_masks, plot_images_and_masks2, plot_results_with_masks
 from utils.tf_utils import (EarlyStopping)
 
 
@@ -106,6 +106,9 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         yaml_save(save_dir / 'hyp.yaml', hyp)
         yaml_save(save_dir / 'opt.yaml', vars(opt))
 
+    import wandb
+    wandb.init(project='tf_yolov5', name="train-val", config={'opt': vars(opt),'hyp':hyp })
+
     # Loggers
     data_dict = None
     # if RANK in {-1, 0}:
@@ -124,7 +127,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     train_path, val_path = data_dict['train'], data_dict['val']
 
     nc = 1 if single_cls else int(data_dict['nc'])  # number of classes
-    names = {0: 'item'} if single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
+    class_names = {0: 'item'} if single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
     # is_coco = isinstance(val_path, str) and val_path.endswith('coco/val2017.txt')  # COCO dataset
     # Model
     dynamic = False
@@ -223,7 +226,11 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     LOGGER.info(f'Image sizes {imgsz} train, {imgsz} val\n'
                 f"Logging results to {colorstr('bold', save_dir)}\n"
                 f'Starting training for {epochs} epochs...')
+
+    # keras_model.compile(optimizer='sgd', loss=compute_loss)
+    # keras_model.fit(train_loader, epochs=500, verbose=1)
     # train loop:
+
     for epoch in range(epochs):
         LOGGER.info(('\n' + '%11s' * 9) % ('Epoch', 'box_loss', 'mask_loss', 'obj_loss','cls_loss','Instances', 'Size', 'lr','gpu_mem'))
         pbar = tqdm(train_loader, total=nb, bar_format=TQDM_BAR_FORMAT)  # progress bar
@@ -241,8 +248,9 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
             if not overlap:  # convert ragged shape [b,nti,160,160] to tensor [b*nti,160,160]
                 b_masks = tf.reshape(b_masks.flat_values, [-1, 160,160]) # flatten ragged tensor shape: [b, 160,160]
 
-            # Flatten batched targets ragged tensor shape: [b, nti,5] to tensor & concat im_idx, to shape:[nt,imidx+cls+xywh] i.e. [nt,6]
-            targets = flatten_btargets(b_targets, tf.shape(b_images)[0])
+            # Flatten batched targets ragged tensor from shape [b, nti,5] to shape:[nt,imidx+cls+xywh] i.e. [nt,6],
+            # ready gor loss calc:
+            targets = flatten_btargets(b_targets, tf.shape(b_images)[0]) # shape: [bnt, 6] entry: [bi, cls,bbox]
 
             with tf.GradientTape() as tape:
                 # model forward, with training=True, outputs a tuple:2 - preds list:3 & proto. Details:
@@ -264,7 +272,9 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
             # Mosaic plots
             if plots:
                 if ni < 3:
-                    plot_images_and_masks(b_images,  targets, b_masks, paths, save_dir / f'train_batch{ni}.jpg')
+                    plot_images_and_masks2(b_images,  targets, b_masks, paths, class_names, f'train_batch', ni)
+                    # plot_images_and_masks(b_images,  targets, b_masks, paths, save_dir / f'train_batch{ni}.jpg')
+
                 if ni == 10:
                     files = sorted(save_dir.glob('train*.jpg'))
                     logger.log_images(files, 'Mosaics', epoch)
@@ -530,6 +540,7 @@ def main(opt, callbacks=Callbacks()):
 
 
 def run(**kwargs):
+
     # Usage: import train; train.run(data='coco128.yaml', imgsz=320, weights='yolov5m.pt')
     opt = parse_opt()
     for k, v in kwargs.items():
@@ -537,5 +548,6 @@ def run(**kwargs):
     main(opt)
 
 if __name__ == '__main__':
+
     opt = parse_opt()
     main(opt)
