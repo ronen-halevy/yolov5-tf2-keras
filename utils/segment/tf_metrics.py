@@ -195,9 +195,7 @@ KEYS = [
     'val/seg_loss',  # val loss
     'val/obj_loss',
     'val/cls_loss',
-    'x/lr0',
-    'x/lr1',
-    'x/lr2',]
+    'x/lr']
 
 BEST_KEYS = [
     'best/epoch',
