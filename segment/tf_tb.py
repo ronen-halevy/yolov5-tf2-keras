@@ -12,6 +12,8 @@ import tensorflow as tf
 from utils.tf_general import LOGGER, colorstr
 import cv2
 import wandb
+import matplotlib.pyplot as plt
+import numpy as np
 # from utils.loggers.clearml.clearml_utils import ClearmlLogger
 # from utils.loggers.wandb.wandb_utils import WandbLogger
 # from utils.plots import plot_images, plot_labels, plot_results
@@ -97,6 +99,44 @@ class GenericLogger:
         # if self.wandb:
         #     wandb.run.config.update(params, allow_val_change=True)
 
+    def plot_metrics_results_table(self,  best=True):
+        """
+        Plots a mosaic of the metric results table, a plot per column.
+        :param data: results table, pandas dataframe
+        :param best: List either best or last result on plots' titles, mark point in plot with asterisk. type: Bool
+        :return: No return
+        """
+        # set mosaic figure: 2 rows 8 coumns:
+        data =self.res_table.get_dataframe()
+        fig, ax = plt.subplots(2, 8, figsize=(18, 6), tight_layout=True)
+        ax = ax.ravel()
+        # Find index of best table's entry, which maximizes weighted box and mask mAp metrics:
+        index = np.argmax(0.9 * data.values[:, 8] + 0.1 * data.values[:, 7] + 0.9 * data.values[:, 12] +
+                          0.1 * data.values[:, 11])
+        # strip columns' title names:
+        s = [x.strip() for x in data.columns]
+        # strip index column:
+        x = data.values[:, 0]
+        # loop on table's columns
+        for idx, j in enumerate([1, 2, 3, 4, 5, 6, 9, 10, 13, 14, 15, 16, 7, 8, 11, 12]):
+            y = data.values[:, j]
+            # plot x,y graph:
+            ax[idx].plot(x, y, marker=".", label='f.stem', linewidth=2, markersize=2)
+            if best:
+                # best: mark best points with '*'
+                ax[idx].scatter(index, y[index], color="r", label=f"best:{index}", marker="*", linewidth=3)
+                # Set best value in title:
+                ax[idx].set_title(s[j] + f"\n{round(y[index], 5)}")
+            else:
+                # last: mark last points with '*'
+                ax[idx].scatter(x[-1], y[-1], color="r", label="last", marker="*", linewidth=3)
+                # Set best value in title:
+                ax[idx].set_title(s[j] + f"\n{round(y[-1], 5)}")
+
+        ax[1].legend()
+        f=wandb.Image(fig)
+        wandb.log({"ddddd": f})
+        plt.close()
 
 
 def web_project_name(project):

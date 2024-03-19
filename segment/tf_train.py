@@ -351,10 +351,12 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # log results to talbe:
     log_vals = list(mloss.numpy()) + list(results) + [float(optimizer.learning_rate)]
     metrics_dict = dict(zip( KEYS, log_vals))
-    logger.log_metrics(metrics_dict, epoch) # log to csv
+    logger.log_metrics(metrics_dict, epoch) # log metrics to table
 
     if plots:
-        plot_results_with_masks(file=save_dir / 'results.csv')  # save results.png
+        plot_results_with_masks(file=save_dir / 'results.csv')  # save results.png # todo old remove
+        logger.plot_metrics_results_table() # plot metric results
+
         files = ['results.png', 'confusion_matrix.png', *(f'{x}_curve.png' for x in ('F1', 'PR', 'P', 'R'))]
         files = [(save_dir / f) for f in files if (save_dir / f).exists()]  # filter
         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}")
