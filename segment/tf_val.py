@@ -47,7 +47,7 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 from utils.tf_general import (LOGGER, NUM_THREADS, TQDM_BAR_FORMAT, Profile,
                              coco80_to_coco91_class, colorstr, increment_path,
                             print_args, scale_boxes, xywh2xyxy, xyxy2xywh)
-from utils.tf_metrics import ConfusionMatrix, box_iou
+from utils.tf_metrics import ConfusionMatrix, box_iou, plot_confusion_matrix, find_matched_classes # todo remove old confusion matrix
 from utils.tf_plots import output_to_target, plot_val_study
 # from utils.segment.dataloaders import create_dataloader
 from utils.segment.tf_general import mask_iou, process_mask, process_mask_native, scale_image
@@ -220,6 +220,8 @@ def run(
     pbar = tqdm(dataloader, total=nb, desc=s, bar_format=TQDM_BAR_FORMAT, colour='green')  # progress bar
 
     # batch loop on gt dataloader entries. batch size is b:
+    matched_gt_classes = []  # accumulates matched_gt_classes over batches loop, used by confusion matrix
+    matched_pred_classes = []  # accumulates pred_classes over batches loop, used by confusion matrix
     for batch_i, (batch_im, y_train) in enumerate(pbar):# dataset batch by batch loop
         # y_train is unpacked to 4 elements:
         # batch_targets, shape:[Nt,6],
@@ -261,14 +263,14 @@ def run(
         batch_targets = tf.concat([batch_targets[:, 0:2], tbboxes], axis=-1) # re-concat targets [si, cl, bbox]
         # lb =  []  # for autolabelling
         plot_masks = []  # batch masks for plotting
+        list_preds = []
         # Calc stats - a list of size contains tp-bbox and tp-masks.  ize list of bboxes and masks mAp
         # svae text and json and plots per prediction according to config flags.
-        list_preds=[]
         for si, (pred, proto) in enumerate(zip(preds, protos)): # loop on preds batch - image by image
             with dt[2]: # nof outputs limitted by max_det:
                 b, h, w, ch = tf.cast(batch_im.shape, tf.float32)  # dataset images shape: batch,height,width,channel
                 pbboxes = pred[..., :4] * [w, h, w, h]  # xywh scale pred bboxes
-                pred = tf.concat([pbboxes, pred[..., 4:]], axis=-1) # pack scaled preds [back. shape: [Nt, 4+1+1+32]
+                pred = tf.concat([pbboxes, pred[..., 4:]], axis=-1) # pack scaled preds. shape: [Nt, 4+1+1+32]
                 pred=non_max_suppression(pred, conf_thres, iou_thres, multi_label=False, agnostic=single_cls, max_det=max_det) #shape:[Nt, 38] (xyxy+conf+cls+32masks)
 
             # scale nms selected pred boxes:
@@ -284,11 +286,14 @@ def run(
             correct_bboxes = tf.zeros([npr, niou], dtype=tf.bool)  # init boxes-tp
             seen += 1 # loop counter
             # if no nms selected preds and/or no related tlabels, store zero'ed stats:
-            if npr == 0:# if no nms selected preds remained
+            if npr == 0:# if no preds survived nms
                 if nl: # ntlabels not 0, i.e. expected targets for this bn. store zerod stats.
                     stats.append((correct_masks, correct_bboxes, *tf.zeros((2, 0)), labels[:, 0]))
                     if plots:
-                        confusion_matrix.process_batch(detections=None, labels=labels[:, 0])
+                        res = find_matched_classes(preds, labels, nc) # arrange for class id confusion matrix plot
+                        matched_gt_classes += list(res[0].numpy())
+                        matched_pred_classes += list(res[1])
+                        # confusion_matrix.process_batch(detections=None, labels=labels[:, 0]) # todo remove old confusion
                 continue
 
             # Masks
@@ -318,12 +323,15 @@ def run(
                 # Find masks tp (true positive) preds. result type: bool shape: [Npi, nMap] , where nmAp=10:
                 correct_masks = process_batch(predn, labelsn, iouv, pred_masks, gt_masks, overlap=overlap, masks=True)
                 if plots:
-                    confusion_matrix.process_batch(predn, labelsn)
+                    # confusion_matrix.process_batch(predn, labelsn) # todo remove old confusion
+                    res = find_matched_classes(predn, labelsn, nc)# arrange for class id confusion matrix plot
+                    matched_gt_classes+=list(res[0].numpy())
+                    matched_pred_classes+=list(res[1])
 
             #  append per current pred: [tp-bbox, tp-masks, pclass, pconf, tclass]:
             stats.append((correct_masks, correct_bboxes, pred[:, 4], pred[:, 5], labels[:, 0]))
 
-            pred_masks = tf.cast(pred_masks, dtype=tf.uint8) # shaoe: [Npi, h/4,w/4]
+            pred_masks = tf.cast(pred_masks, dtype=tf.uint8) # shape: [Npi, h/4,w/4]
             if plots and batch_i < 3: # plot masks of first 3 examples
                 plot_masks.append(pred_masks[:15])  # filter top 15 pred objects to plot
 
@@ -347,17 +355,10 @@ def run(
             arrange_pred = tf.concat(list_preds, axis=0) if list_preds else tf.constant([]) # flattened preds arry (preds indexed by si_tag).shape: [Np,7]
             if len(plot_masks):
                 plot_masks = tf.concat(plot_masks, axis=0) # concat batch preds' top 15 masks. shape:[Np*15, h/4,w/4]
-            # plot targets
-            # plot_images_and_maskso(batch_im, batch_targets, b_masks, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names) # targets
-
-            plot_images_and_masks2(batch_im, batch_targets, b_masks, paths, names, 'val_batch',batch_i) # targets
-
-
-
-            # plot preds
-            # plot_images_and_maskso(batch_im, arrange_pred, plot_masks, paths, save_dir / f'val_batch{batch_i}_pred.jpg', names)
-
-            plot_images_and_masks2(batch_im, arrange_pred, plot_masks, paths, names, 'val_pred',batch_i) # targets
+            # plot validation targets:
+            plot_images_and_masks2(batch_im, batch_targets, b_masks, paths, names, f'val_batch{batch_i}',batch_i) # targets
+            # plot predictions:
+            plot_images_and_masks2(batch_im, arrange_pred, plot_masks, paths, names, f'val_pred_{batch_i}',batch_i) # targets
 
 
     # end dataset batches loop
@@ -391,7 +392,9 @@ def run(
 
     # Plots
     if plots:
-        confusion_matrix.plot(save_dir=save_dir, names=list(names.values()))
+        # confusion_matrix.plot(save_dir=save_dir, names=list(names.values())) # todo remove ald plot
+        # plot confusion matrix. Note: # add 'background' class id for fp, Miss Detection
+        plot_confusion_matrix(matched_gt_classes, matched_pred_classes, list(names.values()) + ['background'])
     # callbacks.run('on_val_end')
 
     mp_bbox, mr_bbox, map50_bbox, map_bbox, mp_mask, mr_mask, map50_mask, map_mask = metrics.mean_results()

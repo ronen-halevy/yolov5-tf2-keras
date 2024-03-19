@@ -124,6 +124,154 @@ def compute_ap(recall, precision):
     return ap, mpre, mrec
 
 
+def find_iou_matched_preds(labels, preds, iou_thresh=0.45):
+    """
+    Finds matching between preds and gt entries based on best bbox iou values.
+    Preds entries are first thresholded by conf threshold then best iou matches are selected as follows:
+     - concat [thresholded [label_idx, pred_idx], iou(
+     and by bbox iou thresholds, and them
+    Best iou unique couples are
+
+    :param preds: Model predictions. shape: [np, 7], entry structure:  [si,cls,xywh,conf] where si: prediction index in batch
+    :param labels: dataset's gt labels. shape: [nt, 5], entry structure: [class, x, y, w, h]
+
+    :param preds: Model predictions. shape: [np, 7], entry structure:  [si,cls,xywh,conf] where si: prediction index in batch
+    :param labels: dataset's gt labels. shape: [nt, 5], entry structure: [cls, x, y, w, h]
+    :param iou_thresh: bbox iou threshold, float
+    :return:
+        m0:matched labels indices shape:[nt_threshold], int
+        m1:matched dets indices, shape[nt_threshold], int
+    :rtype:
+    """
+
+    # 2. Compute iou between all nl labels boxes and np pred boxes:
+    iou = box_iou(labels[:, 1:], preds[:, :4])  # iou(tbbox, pbbox) , Shape [nl,np]
+    # 3 Theshold results:
+    x = tf.where(iou > iou_thresh)  # thresh. survived [label_idx, pred_idx] . shape: [N, 2],
+    if x.shape[0]:  # if any matches survived thresh:
+        # 4. arrange matches:  [N_survivors, (iou,index_label,index_pred)]
+        matches = tf.concat([x.astype(tf.float32), iou[x[:, 0], x[:, 1]][:, None]],
+                            axis=1)  # concat (label_idx, pred_idx,iou), shape:[N,3]
+        if x[0].shape[0] > 1: # if multiple survivors, cancel duplicates if any:
+            # 5. remove duplicates: each label or detection may belong to a single match entry. Filter unique:
+            matches = matches[tf.argsort(matches[:, 2])[
+                              ::-1]]  # sort by iou and reverse, since unique takes first occurance. shape[N,3]
+            matches = matches[np.unique(matches[:, 1], return_index=True)[1]]  # keep unique preds matches
+            matches = matches[
+                tf.argsort(matches[:, 2])[::-1]]  # sort by iou and reverse, since unique takes first occurance
+            matches = matches[np.unique(matches[:, 0], return_index=True)[1]]  # take unique targets. shape[Nf,3]
+    else:
+        matches = tf.zeros((0, 3), dtype=tf.float32)
+
+    # n = matches.shape[0] > 0
+    m0, m1, _ = matches.transpose().astype(tf.int32)  # m0:matched labels indices, m1:matched dets indices, shape[N]
+    return m0,m1
+
+def find_matched_classes(preds, labels, nc):
+    """
+    Finds matching between ground truth class_id labels entries and predicted class_id enitres. Matches are unique,
+    selection done according the best bbox iou matcing.
+    :param preds: Model predictions. shape: [np, 7], entry structure:  [si,cls,xywh,conf] where si: prediction index in batch
+    :param labels: dataset's gt labels. shape: [nt, 5], entry structure: [class, x, y, w, h]
+    :param nc: Number of classes. Used as class_id for unmatched prediction (i.e. background) value used as a replacement in the absence of a matched prediction.
+    :return:
+    gt_classes: list size: nt+n_fd (fd: false detection). Related gt_+labels of fd are set to nc
+    matched_pred_class_ids: list size: nt+n_fd, where a miss prediction is filled with nc.
+
+
+    0. prepare gt_class and matched_pred_class_ids arrays, initiated latter with mc values (i.e 'miss detected')
+    1 Threshold preds using conf and iou thresholds    :
+    2. find_iou_matched_preds: return matched entries indices to labels and predictions.
+    3. 4 scatter matched predicted class ids to related matched labels location:
+    4. Add false detection to matched prediction list and fill matched_labels_list peer entries with nc
+
+    """
+
+    # 0.1 extract labels from preds:
+    gt_classes = labels[:, 0].astype(tf.int32)
+    # 0.2 init matced predicted class id array, filled with nc representing 'miss detection' values:
+    matched_pred_class_ids =  np.full(gt_classes.shape, nc)
+    # exit if no preds:
+    if preds is None:
+        return gt_classes, matched_pred_class_ids, preds
+
+    # 1. Threshold preds: filter preds according to predicted conf bbox iou thresholds:
+    conf_thresh = 0.25
+    thresholded_preds = preds[preds[..., 4] > conf_thresh]  # threshold preds
+    # 2.  find_iou_matched_preds
+    lmatched_idx, dmatched_idx = find_iou_matched_preds(labels, thresholded_preds, iou_thresh=0.45)
+
+    # 3 scatter matched predicted class ids to related matched labels location:
+    detection_classes = thresholded_preds[:, 5].astype(tf.int32) # exrtact predicted class ids:
+    matched_pred_class_ids[lmatched_idx]=detection_classes[dmatched_idx] #
+
+    # Add false detection to matched prediction list and fill matched_labels_list peer entries with nc:
+    n = lmatched_idx.shape[0]
+    if n: # false detections are added to matrix only if any matches (following ultralytics
+        # extract false detection by deleting matched detections from list:
+        detection_classes_fd=np.delete(detection_classes, dmatched_idx) # remove matched from detection list
+        # add the false class id to the preds ids list:
+        matched_pred_class_ids = np.concatenate([matched_pred_class_ids, detection_classes_fd])
+        # add false detections as 'backrounds' to labels class ids:
+        label_clssses_fd = np.full(len(detection_classes_fd), nc)
+        gt_classes = np.concatenate([gt_classes, label_clssses_fd])
+
+    return gt_classes, matched_pred_class_ids
+
+import wandb # todo move wandb parts to file
+import seaborn as sn
+
+
+def plot_confusion_matrix(labels, preds, class_names):
+    """ Plots a confusuion plot for any 2 entry lists: labels and preds. Plot confusion matrix for labels vs preds.
+     Confusion matrix is an ncxnc matrix, where an entry at (x=m,y=n) counts occurrences of label=m.prediction=n
+
+    :param labels: list of labels, len: n_match, int
+    :param preds: list of preds len: n_match, int
+    :param class_names: list of classnames len:nc, string.
+    :return: No returns
+    """
+
+    labels = np.array(labels)
+    preds = np.array(preds)
+
+    # 1. Construct an empty confusion ncxnc matrix:
+    matrix = tf.zeros([len(class_names), len(class_names)])
+    # 2. Arrange 2d indices of matching label-preds couples:
+    indices = tf.concat([labels[..., None], preds[..., None]], axis=1)
+    # 3 Scatter 1s to each lael-pred index. Use scatter_add to accumulate hits of identical indices.
+    matrix=tf.tensor_scatter_nd_add(matrix, indices, tf.ones(indices.shape[0]))
+
+    # normalize if required - todo tbd:
+    normalize=False
+    array = matrix / ((matrix.sum(0).reshape(1, -1) + 1E-9) if normalize else 1)  # normalize columns
+    # array[array < 0.005] = np.nan  # don't annotate (would appear as 0.00)
+
+    # arrange plot:
+    fig, ax = plt.subplots(1, 1, figsize=(12, 9), tight_layout=True)
+    nc =  len(class_names)  # number of classes, names
+    sn.set(font_scale=1.0 if nc < 50 else 0.8)  # for label size
+    labels = (0 < nc < 99)  # apply names to ticklabels
+    ticklabels = class_names  if labels else 'auto'
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')  # suppress empty matrix RuntimeWarning: All-NaN slice encountered
+        sn.heatmap(array,
+                   ax=ax,
+                   annot=nc < 30, # annotate cells with data values
+                   annot_kws={
+                       'size': 8},
+                   cmap='Blues',
+                   fmt='.2f',
+                   square=True,
+                   vmin=0.0, # min color
+                   xticklabels=ticklabels,
+                   yticklabels=ticklabels).set_facecolor((1, 1, 1))
+    ax.set_xlabel('True')
+    ax.set_ylabel('Predicted')
+    ax.set_title('Confusion Matrix')
+    wandb.log({"plot": wandb.Image(fig)})
+
+
 class ConfusionMatrix:
     # Updated version of https://github.com/kaanakan/object_detection_confusion_matrix
     def __init__(self, nc, conf=0.25, iou_thres=0.45):
@@ -132,7 +280,7 @@ class ConfusionMatrix:
         self.conf = conf
         self.iou_thres = iou_thres
 
-    def process_batch(self, detections, labels):
+    def process_batch(self, detections, labels): # todo todel
         """
         Updates confusion matrix, with matching detection/label entries:
         1. Threshold detections using conf.
@@ -165,9 +313,9 @@ class ConfusionMatrix:
             if x[0].shape[0] > 1:
                 # 5. remove duplicates: each label or detection may belong to a single match entry. Filter unique:
                 matches = matches[tf.argsort(matches[:, 2])[::-1]] #sort by iou since unique takes last occurance.
-                matches = matches[tf.unique(matches[:, 1])[1]] # keep unique preds
-                # matches = matches[tf.argsort(matches[:, 2])[::-1]] #sort by iou, since unique takes last occurance
-                matches = matches[tf.unique(matches[:, 0])[1]]# take unique targets.
+                matches = matches[np.unique(matches[:, 1], return_index=True)[1]]  # keep unique preds matches
+                matches = matches[tf.argsort(matches[:, 2])[::-1]] #sort by iou, since unique takes last occurance
+                matches = matches[np.unique(matches[:, 0], return_index=True)[1]]  # take unique targets. shape[Nf,3]
         else:
             matches = tf.zeros((0, 3),dtype=tf.float32)
 
@@ -195,7 +343,7 @@ class ConfusionMatrix:
         return tp[:-1], fp[:-1]  # remove background class
 
     @TryExcept('WARNING ⚠️ ConfusionMatrix plot failure')
-    def plot(self, normalize=True, save_dir='', names=()):
+    def plot(self, normalize=True, save_dir='', names=()): #todo todel
         import seaborn as sn
 
         array = self.matrix / ((self.matrix.sum(0).reshape(1, -1) + 1E-9) if normalize else 1)  # normalize columns
