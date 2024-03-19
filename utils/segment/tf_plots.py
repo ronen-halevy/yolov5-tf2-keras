@@ -85,7 +85,7 @@ def plot_images_and_masks(images, targets, masks, paths=None, fname='images.jpg'
                 # elif scale < 1:  # absolute coords need scale if image scales
                 #     boxes *= scale
             # concat bboxes while adding subimage's origin offset in mosaic to bbox coords:
-            bboxes = tf.concat([boxes[[0]] , boxes[[1]] , boxes[[2]] , boxes[[3]] ], axis=0)
+            boxes = tf.concat([boxes[[0]] + x, boxes[[1]] +y, boxes[[2]] +x, boxes[[3]] +y], axis=0)
 
             # loop on boxes, annotate with class name, conf and color:
             for j, box in enumerate(tf.transpose(boxes).tolist()):
@@ -135,7 +135,7 @@ def plot_images_and_masks2(images, targets, masks, paths=None, class_names=None,
      Max number of images in plots' grid  is limmited to [4x4 = 16].
 
     :param images:  batch of images. shape:[b,640,640,3], tf.float32 [0,1]. Note: pixels can be either normalized or not
-    :param targets: batch's targets. shape: [nt,6] entry: [bi,cls,bbox (normalized)], tf.float32
+    :param targets: batch's targets. shape: [nt,6] entry: [nt, bi+cls+normalized_bbox]], tf.float32
     :type masks: shape: [b,160,160], tf.flaot32
     :param paths: path to images, used for labels. shape: [b] tf str
     :param fname: output file name
@@ -207,14 +207,14 @@ def plot_images_and_masks2(images, targets, masks, paths=None, class_names=None,
                     image_masks = np.sum(image_masks, axis=0) # shape: [160,160]
 
 
-            mh, mw = image_masks.shape[0:2]
-            if mh != h or mw != w:  # is mask[j] downsampled? normally it is
-                mask = cv2.resize(image_masks.astype(np.uint8), (w, h))  # .astype(np.uint8)
-            mosaic_mask[y:y + h, x:x + w]=mask
-            # concat mosaoic images to a single list:
-            batch_classes = batch_classes + list(classes)
-            batch_confs = batch_confs + list(confs)
-    # offset class ids to 1 based:
+                mh, mw = image_masks.shape[0:2]
+                if mh != h or mw != w:  # is mask[j] downsampled? normally it is
+                    mask = cv2.resize(image_masks.astype(np.uint8), (w, h))  # .astype(np.uint8)
+                mosaic_mask[y:y + h, x:x + w]=mask
+                # concat mosaoic images to a single list:
+                batch_classes = batch_classes + list(classes)
+                batch_confs = batch_confs + list(confs)
+                # offset class ids to 1 based:
     mask_class_names = {key+1: value for key, value in class_names.items()}
 
     masked_image = wandb.Image(
