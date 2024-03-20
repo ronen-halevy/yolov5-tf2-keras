@@ -290,10 +290,10 @@ def run(
                 if nl: # ntlabels not 0, i.e. expected targets for this bn. store zerod stats.
                     stats.append((correct_masks, correct_bboxes, *tf.zeros((2, 0)), labels[:, 0]))
                     if plots:
-                        res = find_matched_classes(preds, labels, nc) # arrange for class id confusion matrix plot
+                        res = find_matched_classes(preds=None, labels=labels, nc=nc) #  missed detections case
                         matched_gt_classes += list(res[0].numpy())
                         matched_pred_classes += list(res[1])
-                        # confusion_matrix.process_batch(detections=None, labels=labels[:, 0]) # todo remove old confusion
+                        confusion_matrix.process_batch(detections=None, labels=labels[:, 0]) # todo remove old confusion
                 continue
 
             # Masks
@@ -392,7 +392,7 @@ def run(
 
     # Plots
     if plots:
-        # confusion_matrix.plot(save_dir=save_dir, names=list(names.values())) # todo remove ald plot
+        confusion_matrix.plot(save_dir=save_dir, names=list(names.values())) # todo remove ald plot
         # plot confusion matrix. Note: # add 'background' class id for fp, Miss Detection
         plot_confusion_matrix(matched_gt_classes, matched_pred_classes, list(names.values()) + ['background'])
     # callbacks.run('on_val_end')

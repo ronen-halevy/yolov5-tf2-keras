@@ -193,7 +193,7 @@ def find_matched_classes(preds, labels, nc):
     matched_pred_class_ids =  np.full(gt_classes.shape, nc)
     # exit if no preds:
     if preds is None:
-        return gt_classes, matched_pred_class_ids, preds
+        return gt_classes, matched_pred_class_ids
 
     # 1. Threshold preds: filter preds according to predicted conf bbox iou thresholds:
     conf_thresh = 0.25
@@ -222,7 +222,7 @@ import wandb # todo move wandb parts to file
 import seaborn as sn
 
 
-def plot_confusion_matrix(labels, preds, class_names):
+def plot_confusion_matrix(labels, preds, class_names, normalize=False):
     """ Plots a confusuion plot for any 2 entry lists: labels and preds. Plot confusion matrix for labels vs preds.
      Confusion matrix is an ncxnc matrix, where an entry at (x=m,y=n) counts occurrences of label=m.prediction=n
 
@@ -238,14 +238,13 @@ def plot_confusion_matrix(labels, preds, class_names):
     # 1. Construct an empty confusion ncxnc matrix:
     matrix = tf.zeros([len(class_names), len(class_names)])
     # 2. Arrange 2d indices of matching label-preds couples:
-    indices = tf.concat([labels[..., None], preds[..., None]], axis=1)
+    indices = tf.concat([ preds[..., None], labels[..., None]], axis=1)
     # 3 Scatter 1s to each lael-pred index. Use scatter_add to accumulate hits of identical indices.
-    matrix=tf.tensor_scatter_nd_add(matrix, indices, tf.ones(indices.shape[0]))
+    matrix=tf.tensor_scatter_nd_add(matrix, indices, tf.ones(indices.shape[0])).numpy()
 
     # normalize if required - todo tbd:
-    normalize=False
     array = matrix / ((matrix.sum(0).reshape(1, -1) + 1E-9) if normalize else 1)  # normalize columns
-    # array[array < 0.005] = np.nan  # don't annotate (would appear as 0.00)
+    array[array < 0.005] = np.nan  # don't annotate (appears as a neutralize background color) (relevant for normalize=True)
 
     # arrange plot:
     fig, ax = plt.subplots(1, 1, figsize=(12, 9), tight_layout=True)
