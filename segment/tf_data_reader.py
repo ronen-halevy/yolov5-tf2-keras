@@ -50,18 +50,16 @@ class LoadImagesAndLabelsAndMasks:
 
         self.label_files = self._img2label_paths(self.im_files)  # labels
 
-        self.image_files = []
         self.labels = []
         self.segments = []
         for idx, (im_file, label_file) in enumerate(zip(self.im_files, self.label_files)):
             # extract class, bbox and segment from label file entry:
             image_file, label, segment = self._create_entry(idx, im_file, label_file)
-            self.image_files.append(image_file)
             self.labels.append(label)
             self.segments.append(
                 segment)  # list[nlabels], entries (not rectangular):list[nti] of [n_v_ij,2], where nti: nobjects in imagei, n_v_ij,2:nvertices in objecrtj of imagei
 
-        self.indices = range(len(self.image_files))
+        self.indices = range(len(self.im_files))
         self.mosaic = mosaic
         self.debug = debug
         self.hyp = hyp
@@ -79,7 +77,7 @@ class LoadImagesAndLabelsAndMasks:
 
     @property
     def __len__(self):
-        return len(self.image_files)
+        return len(self.im_files)
 
     def exif_size(self, img):
         # Returns exif-corrected PIL size
