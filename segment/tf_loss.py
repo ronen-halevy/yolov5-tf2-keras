@@ -309,22 +309,8 @@ class ComputeLoss:
 
         return mask_loss
 
-    # @tf.function
-    def anchors_thresholding(self, t, anchors):
-        """
-        Threshold bbox width and height to anchors ratio. Filter out target entries with ratio above threshold.
-        Envoked by build targets method
-        :param t:  targets bbox coords scaled to grid dimenssions. shape(na,nt,8), dim 2: [imidx+cls+xywh+ai+ti], float
-        :param anchors: anchors of a single grid layer, shape: [na,2], th.int32
-        :return: t: survived targets, shape(na,nt_filtered,8),float
-        """
-        r = (t[..., 4:6] / anchors[:, None, :].astype(tf.float32))  # wh/anchors ratio. shape: [na, nt,2]
-        j = tf.math.reduce_max(tf.math.maximum(r, 1 / r),
-                               axis=-1) < self.anchor_t  # thresh bbox width to anchor ratio, bool shape: [na, nt]
-        t = t[j]  # filter out unmatched to anchors targets. shape:  [nt, 8] where nt changed to nt_filtered
-        return t
 
-    # @tf.function
+    @tf.function
     def duplicate_bbox(self, t, gxy, grid_dims):
         """
         Duplicate bboxes to adjacent grid bboxes.
@@ -396,12 +382,18 @@ class ComputeLoss:
         # update gain columns 2,3,4,5 by grid dims gsx[i],gsy[i] where gs are [[80,80],[40,40],[20,20]] for i=0:2
         gain = tf.concat([ tf.ones([2]), grid_shape[[1, 0, 1, 0]].astype(tf.float32), tf.ones([2])],
                          axis=0)  # [1,1,gy,gx,gy,gx,1,1]
-        # gain = tf.tensor_scatter_nd_update(gain, [[2],[3],[4],[5]], tf.constant(grid_shape)[[1, 0, 1, 0]].astype(tf.float32))
         # scale targets normalized bbox to grid dimensions, to math pred scales:
-        t = tf.math.multiply(targets, gain)  # scale targets bbox coords to grid scale. shape(na,nt,8)
+        t = tf.math.multiply(targets, gain[None,None, :])  # scale targets bbox coords to grid scale. shape(na,nt,8)
         if targets.shape[0]: # if  targets
-            #  filtering targets by bbox-width to anchor ratio thresholding:
-            t = self.anchors_thresholding(t, anchors)
+            # 2.a1: anchors matching:  Keep only targets which wh to anchors ratio below r:
+            r = (t[..., 4:6] / anchors[:, None, :].astype(tf.float32))  # targets' wh/anchors ratio. shape: [na, nt,2]
+            j = tf.math.reduce_max(tf.math.maximum(r, 1 / r),
+                                   axis=-1) < self.anchor_t  # thresh bbox width to anchor ratio, bool shape: [na, nt]
+            # filter out unmatched to anchors targets. shape:  [nt, 8] where nt changed to nt_filtered
+            j = tf.where(
+                j)  # indices of wh matching anchors entries shape:[m,2], where m is nof anchors matching targets
+            t = tf.gather_nd(t, j)  # pick anchors matching entries
+
             # 2.b duplicate targets to adjacent grid squares. reason: xy preds transformed to px,y=sigmoid()*2-0.5,
             gxy = t[:, 2:4]  # take bbox centers to determine entry duplication. shape: [nt,2]
             t, offsets = self.duplicate_bbox(t, gxy, gain[[2, 3]])
