@@ -269,6 +269,7 @@ def plot_confusion_matrix(labels, preds, class_names, normalize=False):
     ax.set_ylabel('Predicted')
     ax.set_title('Confusion Matrix')
     wandb.log({"plot": wandb.Image(fig)})
+    plt.close
 
 
 class ConfusionMatrix:
