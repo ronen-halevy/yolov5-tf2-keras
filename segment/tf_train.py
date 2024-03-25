@@ -45,7 +45,7 @@ from utils.tf_general import (LOGGER, TQDM_BAR_FORMAT,  check_file,
 from segment.tf_tb import GenericLogger
 from utils.tf_plots import plot_evolve, plot_labels
 from tf_dataloaders import DataLoader
-from simple_dataset import SimpleDataset
+# from simple_dataset import SimpleDataset
 
 from tf_data_reader import LoadImagesAndLabelsAndMasks
 
@@ -132,25 +132,16 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     dynamic = False
 
     # read anchors:
-    # with open(anchors_data, 'r') as stream:
-    #     anchors = yaml.safe_load(stream)['anchors']
+    with open(anchors_data, 'r') as stream:
+        anchors = yaml.safe_load(stream)['anchors']
     na=3 # nof anchors per layer
-    # anchors = tf.reshape(anchors, [-1, na,2]) # shape: [nl,na,2]
-    # nl =anchors.shape[0]
-    # todo patch to old anchors
-
-    # todo - fix anchors config!!!!!!
-    with open(cfg) as f:
-        model_cfg = yaml.load(f, Loader=yaml.FullLoader)  # model dict
-    # from copy import deepcopy
-    # d = deepcopy(model_cfg)
-    anchors = model_cfg['anchors']
-    anchors = tf.reshape(anchors, [-1,na,2])
-    nl = anchors.shape[0]
+    anchors = tf.reshape(anchors, [-1, na,2]) # shape: [nl,na,2]
+    nl =anchors.shape[0]
 
     keras_model=build_model(cfg,  nl, na, imgsz=imgsz)
     print(keras_model.summary())
 
+    # decoder = Decoder(nc, nm, anchors, imgsz)
     # extract 3 layers grid shapes strides:
     grids =[[80,80],[40,40],[20,20]] # todo grids and strides from config
     strides = [8.,16.,32.]
@@ -213,6 +204,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     if not resume:
         if not opt.noautoanchor:
             anchors=check_anchors(dataset, strides, anchors, thr=hyp['anchor_t'], imgsz=imgsz[0])  # run AutoAnchor
+            LOGGER.info(f'{anchors}')
         # if plots:
         #     plot_labels(labels, names, save_dir)  # todo implement this!!
 
