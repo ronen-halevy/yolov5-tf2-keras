@@ -291,7 +291,7 @@ def run(
                     stats.append((correct_masks, correct_bboxes, *tf.zeros((2, 0)), labels[:, 0]))
                     if plots:
                         res = find_matched_classes(preds=None, labels=labels, nc=nc) #  missed detections case
-                        matched_gt_classes += list(res[0].numpy())
+                        matched_gt_classes += list(res[0])
                         matched_pred_classes += list(res[1])
                         confusion_matrix.process_batch(detections=None, labels=labels[:, 0]) # todo remove old confusion
                 continue
@@ -325,9 +325,8 @@ def run(
                 if plots:
                     # confusion_matrix.process_batch(predn, labelsn) # todo remove old confusion
                     res = find_matched_classes(predn, labelsn, nc)# arrange for class id confusion matrix plot
-                    matched_gt_classes+=list(res[0].numpy())
+                    matched_gt_classes+=list(res[0])
                     matched_pred_classes+=list(res[1])
-
             #  append per current pred: [tp-bbox, tp-masks, pclass, pconf, tclass]:
             stats.append((correct_masks, correct_bboxes, pred[:, 4], pred[:, 5], labels[:, 0]))
 
