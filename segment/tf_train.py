@@ -67,6 +67,7 @@ from optimizer import LRSchedule
 
 from tf_config import parse_opt
 from tf_train_utils import flatten_btargets
+from utils.tf_autoanchor import check_anchors
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
@@ -131,19 +132,28 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     dynamic = False
 
     # read anchors:
-    with open(anchors_data, 'r') as stream:
-        anchors = yaml.safe_load(stream)['anchors']
+    # with open(anchors_data, 'r') as stream:
+    #     anchors = yaml.safe_load(stream)['anchors']
     na=3 # nof anchors per layer
-    anchors = tf.reshape(anchors, [-1, na,2]) # shape: [nl,na,2]
-    nl =anchors.shape[0]
+    # anchors = tf.reshape(anchors, [-1, na,2]) # shape: [nl,na,2]
+    # nl =anchors.shape[0]
+    # todo patch to old anchors
+
+    # todo - fix anchors config!!!!!!
+    with open(cfg) as f:
+        model_cfg = yaml.load(f, Loader=yaml.FullLoader)  # model dict
+    # from copy import deepcopy
+    # d = deepcopy(model_cfg)
+    anchors = model_cfg['anchors']
+    anchors = tf.reshape(anchors, [-1,na,2])
+    nl = anchors.shape[0]
 
     keras_model=build_model(cfg,  nl, na, imgsz=imgsz)
     print(keras_model.summary())
 
-    decoder = Decoder(nc, nm, anchors, imgsz)
     # extract 3 layers grid shapes strides:
     grids =[[80,80],[40,40],[20,20]] # todo grids and strides from config
-    stride = [8.,16.,32.]
+    strides = [8.,16.,32.]
     grids = tf.constant(grids)#  todo arranmge configl
 
 
@@ -186,32 +196,33 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         dataset = LoadImagesAndLabelsAndMasks(train_path, imgsz, mask_ratio, mosaic, augment, hyp, overlap, debug)
         dbg_entries=len(dataset)
         for idx in range(dbg_entries):
-            ds=dataset[idx]
+            ds=dataset[idx][1]
     create_dataloader=DataLoader()
     # val_path=train_path
-    train_loader,  nb = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp, overlap)
+    train_loader,  nb, dataset = create_dataloader(train_path, batch_size, imgsz, mask_ratio, mosaic, augment, hyp, overlap)
     create_dataloader_val=DataLoader()
-    val_loader ,val_nb = create_dataloader_val(val_path, batch_size, imgsz, mask_ratio, mosaic=False, augment=False, hyp=hyp, overlap=overlap)
+    val_loader ,val_nb,_ = create_dataloader_val(val_path, batch_size, imgsz, mask_ratio, mosaic=False, augment=False, hyp=hyp, overlap=overlap)
 
     # train_ds=SimpleDataset(imgsz, hyp, overlap, train_path, mask_ratio, mosaic, augment,batch_size)
     # val_ds=SimpleDataset(imgsz, hyp, overlap, train_path, mask_ratio, mosaic, augment,batch_size)
     # train_loader=train_ds.train_loader
     # val_loader=val_ds.train_loader
     # val_nb=nb = train_ds.nb
-    # # if not resume:
-    #     if plots:
-    #         plot_labels(labels, names, save_dir)
+    anchors = tf.cast(anchors, tf.float32) / tf.reshape(strides, (-1, 1, 1)) # scale by stride to nl grid layers
 
+    if not resume:
+        if not opt.noautoanchor:
+            anchors=check_anchors(dataset, strides, anchors, thr=hyp['anchor_t'], imgsz=imgsz[0])  # run AutoAnchor
+        # if plots:
+        #     plot_labels(labels, names, save_dir)  # todo implement this!!
 
-
-
-    anchors = tf.cast(anchors, tf.float32) / tf.reshape(stride, (-1, 1, 1)) # scale by stride to nl grid layers
+    decoder = Decoder(nc, nm, anchors, imgsz)
 
     nl = anchors.shape[0] # number of layers (output grids)
     na = anchors.shape[1]  # number of anchors
 
-    # grids = tf.concat([imgsz[0]/tf.constant(stride)[...,None], imgsz[1]/tf.constant(stride)[...,None]], axis=-1)
-    compute_loss = ComputeLoss(na,nl,nc,nm, stride, grids, anchors, overlap, hyp['fl_gamma'], hyp['box'], hyp['obj'], hyp['cls'], hyp['anchor_t'], autobalance=False)  # init loss class
+    # grids = tf.concat([imgsz[0]/tf.constant(strides)[...,None], imgsz[1]/tf.constant(strides)[...,None]], axis=-1)
+    compute_loss = ComputeLoss(na,nl,nc,nm, strides, grids, anchors, overlap, hyp['fl_gamma'], hyp['box'], hyp['obj'], hyp['cls'], hyp['anchor_t'], autobalance=False)  # init loss class
     stopper, stop = EarlyStopping(patience=opt.patience), False
 
     # train_dataset = train_dataset.batch(batch_size)

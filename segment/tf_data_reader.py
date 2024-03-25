@@ -52,13 +52,16 @@ class LoadImagesAndLabelsAndMasks:
 
         self.labels = []
         self.segments = []
+
+        shapes = []
         for idx, (im_file, label_file) in enumerate(zip(self.im_files, self.label_files)):
             # extract class, bbox and segment from label file entry:
-            image_file, label, segment = self._create_entry(idx, im_file, label_file)
+            image_file, label, segment, im_shape = self._create_entry(idx, im_file, label_file)
             self.labels.append(label)
+            shapes.append(im_shape)
             self.segments.append(
                 segment)  # list[nlabels], entries (not rectangular):list[nti] of [n_v_ij,2], where nti: nobjects in imagei, n_v_ij,2:nvertices in objecrtj of imagei
-
+        self.shapes = np.array(shapes) # used by autoanchors
         self.indices = range(len(self.im_files))
         self.mosaic = mosaic
         self.debug = debug
@@ -170,7 +173,7 @@ class LoadImagesAndLabelsAndMasks:
         else:
             nm = 1  # label missing
             lb = np.zeros((0, 5), dtype=np.float32)
-        return im_file, lb, segments
+        return im_file, lb, segments, im.size
 
     def _img2label_paths(self, img_paths):
         # Define label paths as a function of image paths
