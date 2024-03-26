@@ -199,7 +199,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     # train_loader=train_ds.train_loader
     # val_loader=val_ds.train_loader
     # val_nb=nb = train_ds.nb
-    anchors = tf.cast(anchors, tf.float32) / tf.reshape(strides, (-1, 1, 1)) # scale by stride to nl grid layers
+    anchors = tf.cast(anchors, tf.float32) / tf.reshape(strides, (-1, 1, 1)) # scale 3 layers anchors by layer's strides
 
     if not resume:
         if not opt.noautoanchor:
@@ -273,8 +273,8 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
             # Mosaic plots
             if plots:
                 if ni < 3:
-                    plot_images_and_masks2(b_images,  targets, b_masks, paths, class_names, f'train_batch', ni)
-                    # plot_images_and_masks(b_images,  targets, b_masks, paths, save_dir / f'train_batch{ni}.jpg')
+                    # plot_images_and_masks2(b_images,  targets, b_masks, paths, class_names, f'train_batch', ni)
+                    plot_images_and_masks(b_images,  targets, b_masks, paths, save_dir / f'train_batch{ni}.jpg')
 
                 # if ni == 10: todo check that
                 #     files = sorted(save_dir.glob('train*.jpg'))

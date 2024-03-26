@@ -293,7 +293,7 @@ def run(
                         res = find_matched_classes(preds=None, labels=labels, nc=nc) #  missed detections case
                         matched_gt_classes += list(res[0])
                         matched_pred_classes += list(res[1])
-                        confusion_matrix.process_batch(detections=None, labels=labels[:, 0]) # todo remove old confusion
+                        # confusion_matrix.process_batch(detections=None, labels=labels[:, 0]) # todo remove old confusion
                 continue
 
             # Masks
@@ -355,9 +355,12 @@ def run(
             if len(plot_masks):
                 plot_masks = tf.concat(plot_masks, axis=0) # concat batch preds' top 15 masks. shape:[Np*15, h/4,w/4]
             # plot validation targets:
-            plot_images_and_masks2(batch_im, batch_targets, b_masks, paths, names, f'val_batch{batch_i}',batch_i) # targets
+            # plot_images_and_masks(batch_im, batch_targets, b_masks, paths, fname=f'val_batch{batch_i}', names=None)
+            plot_images_and_masks(batch_im, batch_targets, b_masks, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names) # targets
+            # plot_images_and_masks2(batch_im, batch_targets, b_masks, paths, names, f'val_batch{batch_i}',batch_i) # targets
             # plot predictions:
-            plot_images_and_masks2(batch_im, arrange_pred, plot_masks, paths, names, f'val_pred_{batch_i}',batch_i) # targets
+            plot_images_and_masks(batch_im, arrange_pred, plot_masks, paths, save_dir / f'val_pred_{batch_i}_labels.jpg', names) # targets
+            # plot_images_and_masks2(batch_im, arrange_pred, plot_masks, paths, names, f'val_pred_{batch_i}',batch_i) # targets
 
 
     # end dataset batches loop
@@ -391,9 +394,9 @@ def run(
 
     # Plots
     if plots:
-        confusion_matrix.plot(save_dir=save_dir, names=list(names.values())) # todo remove ald plot
+        # confusion_matrix.plot(save_dir=save_dir, names=list(names.values())) # todo remove ald plot
         # plot confusion matrix. Note: # add 'background' class id for fp, Miss Detection
-        plot_confusion_matrix(matched_gt_classes, matched_pred_classes, list(names.values()) + ['background'])
+        plot_confusion_matrix(matched_gt_classes, matched_pred_classes, list(names.values()) + ['background'], save_dir=save_dir)
     # callbacks.run('on_val_end')
 
     mp_bbox, mr_bbox, map50_bbox, map_bbox, mp_mask, mr_mask, map50_mask, map_mask = metrics.mean_results()

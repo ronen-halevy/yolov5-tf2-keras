@@ -222,7 +222,8 @@ import wandb # todo move wandb parts to file
 import seaborn as sn
 
 
-def plot_confusion_matrix(labels, preds, class_names, normalize=False):
+def plot_confusion_matrix(labels, preds, class_names, normalize=False, save_dir=''):
+
     """ Plots a confusuion plot for any 2 entry lists: labels and preds. Plot confusion matrix for labels vs preds.
      Confusion matrix is an ncxnc matrix, where an entry at (x=m,y=n) counts occurrences of label=m.prediction=n
 
@@ -268,8 +269,8 @@ def plot_confusion_matrix(labels, preds, class_names, normalize=False):
     ax.set_xlabel('True')
     ax.set_ylabel('Predicted')
     ax.set_title('Confusion Matrix')
-    wandb.log({"plot": wandb.Image(fig)})
-    plt.close
+    fig.savefig(Path(save_dir) / 'confusion_matrix.png', dpi=250)
+    plt.close(fig)
 
 
 class ConfusionMatrix:
@@ -312,7 +313,7 @@ class ConfusionMatrix:
             matches = tf.concat([x.astype(tf.float32), iou[x[:,0], x[:,1]][:, None] ], axis=1) # concat (cordx,cordy,iou) shape[N,3]
             if x[0].shape[0] > 1:
                 # 5. remove duplicates: each label or detection may belong to a single match entry. Filter unique:
-                matches = matches[tf.argsort(matches[:, 2])[::-1]] #sort by iou since unique takes last occurance.
+                matches = matches[tf.argsort(matches[:, 2])[::-1]] #sort by iou since unique takes last occurance. # todo np tf mix
                 matches = matches[np.unique(matches[:, 1], return_index=True)[1]]  # keep unique preds matches
                 matches = matches[tf.argsort(matches[:, 2])[::-1]] #sort by iou, since unique takes last occurance
                 matches = matches[np.unique(matches[:, 0], return_index=True)[1]]  # take unique targets. shape[Nf,3]
