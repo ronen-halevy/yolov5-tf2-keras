@@ -122,7 +122,8 @@ def plot_images_and_masks(images, targets, masks, paths=None, fname='images.jpg'
                             mask = image_masks[j].astype(bool)
                         with contextlib.suppress(Exception):
                             # draw masks: mix image pixel and mask:
-                            im[y:y + h, x:x + w, :][mask] = im[y:y + h, x:x + w, :][mask] * 0.4 + np.array(color) * 0.6
+                            opacity = 0.4
+                            im[y:y + h, x:x + w, :][mask] = im[y:y + h, x:x + w, :][mask] * opacity + np.array(color) * (1-opacity)
                 # convert numpy array to image:
                 annotator.fromarray(im)
     annotator.im.save(fname)  # save
