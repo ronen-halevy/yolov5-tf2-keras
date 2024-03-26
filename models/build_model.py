@@ -27,6 +27,17 @@ def make_divisible(x, divisor):
     return math.ceil(x / divisor) * divisor
 class Decoder:
     def __init__(self, nc, nm, anchors, imgsz):
+        """
+
+        :param nc:
+        :type nc:
+        :param nm:
+        :type nm:
+        :param anchors:
+        :type anchors:
+        :param imgsz:
+        :type imgsz:
+        """
         stride = tf.convert_to_tensor( [8, 16, 32], dtype=tf.float32)
         self.nc=nc
         self.no = 5 + nc + nm  # number of outputs per anchor
@@ -46,8 +57,6 @@ class Decoder:
             # layer_grid = layer_grid.transpose([0, 2, 3, 1, 4])  # shape: [1, ny, nx, 1, 2]
             self.grid.append(layer_grid)
 
-        # normalize 3 layers anchors by per layer strides:
-        anchors = tf.cast(anchors, dtype=tf.float16) / stride.reshape([self.nl, 1, 1]) # ahape: [nl.na,2]
         # rescale anchors by stride values and reshape to
         self.anchor_grid = anchors.reshape([self.nl, 1, self.na, 1, 2])
         self.anchor_grid = self.anchor_grid.transpose([0, 2, 1, 3,  4])  # shape: [nl, 1,1,na,2]
