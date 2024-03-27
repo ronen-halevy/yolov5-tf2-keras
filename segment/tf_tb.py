@@ -54,16 +54,22 @@ class GenericLogger:
 
 
     def log_metrics(self, metrics, epoch):
+        # Log metrics dictionary to all loggers
         if self.csv:
             keys, vals = list(metrics.keys()), list(metrics.values())
             n = len(metrics) + 1  # number of cols
             s = '' if self.csv.exists() else (('%23s,' * n % tuple(['epoch'] + keys)).rstrip(',') + '\n')  # header
             with open(self.csv, 'a') as f:
                 f.write(s + ('%23.5g,' * n % tuple([epoch] + vals)).rstrip(',') + '\n')
-        self.res_table.add_data(*([epoch] +list(metrics.values())))
-        # workaround wandb bug: log runs once after creating a table instance. So recreate an instance after add data:
-        self.res_table = wandb.Table(data=self.res_table.data, columns=self.res_table_cols)
-        wandb.log({"results-table": self.res_table})
+
+        # if self.tb:
+        for k, v in metrics.items():
+            # self.tb.add_scalar(k, v, epoch)
+            with self.test_summary_writer.as_default():
+                tf.summary.scalar(k, v, epoch)
+
+        # if self.wandb:
+        #     self.wandb.log(metrics, step=epoch)
 
 
     def log_images(self, files, name='Images', epoch=0):

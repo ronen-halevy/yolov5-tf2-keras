@@ -27,7 +27,6 @@ import yaml
 from tqdm import tqdm
 import pathlib
 import argparse
-import wandb
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
@@ -205,8 +204,9 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         if not opt.noautoanchor:
             anchors=check_anchors(dataset, strides, anchors, thr=hyp['anchor_t'], imgsz=imgsz[0])  # run AutoAnchor
             LOGGER.info(f'{anchors}')
-        # if plots:
-        #     plot_labels(labels, names, save_dir)  # todo implement this!!
+        if plots:
+            labels = tf.concat(dataset.labels, 0)
+            plot_labels(labels, class_names, save_dir)  # todo implement this!!
 
     decoder = Decoder(nc, nm, anchors, imgsz)
 
@@ -314,10 +314,9 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         # Save model
         if (not nosave) or (final_epoch and not evolve):  # if save
             # Save last, best weights:
-            keras_model.save_weights(os.path.join(wandb.run.dir, "last.h5"))
+            keras_model.save_weights(last)
             if best_fitness == fi:
                 keras_model.save_weights(best)
-                keras_model.save(os.path.join(wandb.run.dir, "best.h5"))
             if opt.save_period > 0 and epoch % opt.save_period == 0:
                 keras_model.save_weights(w / f'epoch{epoch}.tf')
                 logger.log_model(w / f'epoch{epoch}.pt')
@@ -358,8 +357,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
     if plots:
         plot_results_with_masks(file=save_dir / 'results.csv')  # save results.png # todo old remove
-        logger.plot_metrics_results_table() # plot metric results
-
         files = ['results.png', 'confusion_matrix.png', *(f'{x}_curve.png' for x in ('F1', 'PR', 'P', 'R'))]
         files = [(save_dir / f) for f in files if (save_dir / f).exists()]  # filter
         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}")
@@ -402,66 +399,86 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 #     return best_fitness, start_epoch, epochs
 
 def main(opt, callbacks=Callbacks()):
-    wandb_project = 'tf-yolov5'
-    wandb_name = 'train-val'
-
     print_args(vars(opt))
-        # check_git_status()
-        # check_requirements(ROOT / 'requirements.txt')
-
-    opt.data, opt.cfg, opt.hyp, opt.weights, opt.project = \
-            check_file(opt.data), check_yaml(opt.cfg), check_yaml(opt.hyp), str(opt.weights), str(opt.project)  # checks
 
     # Resume
-    if opt.resume and not opt.evolve:  # resume from specified or most recent configuration, hypermarams and weights
-        if isinstance(opt.resume, str):  # resume from a specified id. 'must' will throw an error if the run to be resumed does not exist
-            wandb.init(project=wandb_project, name=wandb_name, config={'opt': vars(opt)},id=opt.resume, resume="must", reinit=True) # reinit-add resumed config later
-        else: # assumed boo True - :
-            wandb.init(project=wandb_project, name=wandb_name, config={'opt': vars(opt)},resume=True, reinit=True)  # keep run_id,  reinit-add resumed config later
-
-        # 1. fetch weights file specified by opt.resume, ptherwise fetch weights from latest logging dir:
-        # last = Path(check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run('../runs'))
-        # LOGGER.info(f'Resuming with {colorstr("bold", last)} ')
-        # store resume weights:
-        opt.weights=wandb.restore("last.h5").name
-        LOGGER.info(f'Resuming with {colorstr("bold", opt.weight)} ')
-
-        # # todo fetch from csv resume best_fitness, start_epoch & epochs:
-        # best_fitness, start_epoch, epochs = smart_resume(last,  opt.epochs)
-        # opt.epochs = epochs
-        # opt.start_epoch = start_epoch
-        # opt.best_fitness = best_fitness
-        # opt.resume_source = last.parent.parent
-
+    if opt.resume and not opt.evolve:  # resume from specified or most recent last.pt
+        last = Path(check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run())
+        LOGGER.info(f'Resuming with {colorstr("bold", last)} ')
+        opt_yaml = last.parent.parent / 'opt.yaml'  # train options yaml
+        opt_data = opt.data  # original dataset
+        # if opt_yaml.is_file():
+        with open(opt_yaml, errors='ignore') as f:
+            d = yaml.safe_load(f)
+        # else:
+        #     d = torch.load(last, map_location='cpu')['opt']
+        opt = argparse.Namespace(**d)  # replace
+        opt.cfg, opt.weights, opt.resume = '', str(last), True  # reinstate
+        if is_url(opt_data):
+            opt.data = check_file(opt_data)  # avoid HUB resume auth timeout
     else:
-        # # store this id to use it later when resuming
-        id = wandb.util.generate_id()  # regenerate run_id
-        wandb.init(project=wandb_project, name=wandb_name, config={'opt': vars(opt)},id=id, resume="allow")
+        opt.data, opt.cfg, opt.hyp, opt.weights, opt.project = \
+            check_file(opt.data), check_yaml(opt.cfg), check_yaml(opt.hyp), str(opt.weights), str(opt.project)  # checks
+        assert len(opt.cfg) or len(opt.weights), 'either --cfg or --weights must be specified'
         if opt.evolve:
-        #     # todo consider separate evolve projects:
-            if opt.project == str(ROOT / "runs/train-segt"):  # if default project name, rename to runs/evolve-seg
-                opt.project = str(ROOT / "runs/evolve-seg")
+            if opt.project == str(ROOT / 'runs/train-seg'):  # if default project name, rename to runs/evolve-seg
+                opt.project = str(ROOT / 'runs/evolve-seg')
             opt.exist_ok, opt.resume, opt.pretrained = opt.resume, False, False  # pass resume to exist_ok and disable resume
         if opt.name == 'cfg':
             opt.name = Path(opt.cfg).stem  # use model.yaml as name
-        opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))
+    opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok)) # anyway save in new dir
 
-    # log hyp and data yamls, just for contents debug logging:
-    with open(opt.hyp, errors='ignore') as f:
-            hyp = yaml.safe_load(f)
-    with open(opt.data, errors='ignore') as f: # dataset input paths, anchors, namestbd)
-            data = yaml.safe_load(f)
-    wandb.config.update({ 'hyp': hyp, 'dataset':data})
-
-    assert len(opt.cfg) or len(opt.weights), 'either --cfg or --weights must be specified'
-    # if opt.evolve:
-        #     if opt.project == str(ROOT / 'runs/train-seg'):  # if default project name, rename to runs/evolve-seg
-        #         opt.project = str(ROOT / 'runs/evolve-seg')
-        #     opt.exist_ok, opt.resume = opt.resume, False  # pass resume to exist_ok and disable resume
-
-    # todo - check modify run dir bane - tbd!!
-    wandb.run.name = wandb.run.id
-    wandb.run.save()
+    # ##
+    # # Resume
+    # if opt.resume and not opt.evolve:  # resume from specified or most recent configuration, hypermarams and weights
+    #     # 1. take weights specified by opt.resume otherwise take last:
+    #     last = Path(check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run('../runs'))
+    #     LOGGER.info(f'Resuming with {colorstr("bold", last)} ')
+    #     # # 2. Replace current opt config with resume config file contents, if exists:
+    #     # if pathlib.Path.exists(last.parent.parent/ 'opt.yaml'):
+    #     #     with open(last.parent.parent / 'opt.yaml', errors='ignore') as f:
+    #     #         opt_dict = yaml.safe_load(f)
+    #
+    #     # opt = argparse.Namespace(**opt_dict)  # convert dict to a Namespace object
+    #     # store resume weights:
+    #     opt.weights = last
+    #     opt.data = check_file(opt.data )  # if url then download url to file
+    #
+    #     LOGGER.info(f'Resuming with {colorstr("bold", opt.weight)} ')
+    #
+    #     # # todo fetch from csv resume best_fitness, start_epoch & epochs:
+    #     # best_fitness, start_epoch, epochs = smart_resume(last,  opt.epochs)
+    #     # opt.epochs = epochs
+    #     # opt.start_epoch = start_epoch
+    #     # opt.best_fitness = best_fitness
+    #     # opt.resume_source = last.parent.parent
+    #
+    # # else:
+    # #     if opt.evolve:
+    # #     #     # todo consider separate evolve projects:
+    # #         if opt.project == str(ROOT / "runs/train-segt"):  # if default project name, rename to runs/evolve-seg
+    # #             opt.project = str(ROOT / "runs/evolve-seg")
+    # #         opt.exist_ok, opt.resume, opt.pretrained = opt.resume, False, False  # pass resume to exist_ok and disable resume
+    # if opt.name == 'cfg':
+    #     opt.name = Path(opt.cfg).stem  # use model.yaml as name
+    # opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok)) # anyway save in new dir
+    #
+    # # # log hyp and data yamls, just for contents debug logging:
+    # # with open(opt.hyp, errors='ignore') as f:
+    # #         hyp = yaml.safe_load(f)
+    # # with open(opt.data, errors='ignore') as f: # dataset input paths, anchors, namestbd)
+    # #         data = yaml.safe_load(f)
+    # # wandb.config.update({ 'hyp': hyp, 'dataset':data})
+    # #
+    # # assert len(opt.cfg) or len(opt.weights), 'either --cfg or --weights must be specified'
+    # # # if opt.evolve:
+    # #     #     if opt.project == str(ROOT / 'runs/train-seg'):  # if default project name, rename to runs/evolve-seg
+    # #     #         opt.project = str(ROOT / 'runs/evolve-seg')
+    # #     #     opt.exist_ok, opt.resume = opt.resume, False  # pass resume to exist_ok and disable resume
+    # #
+    # # # todo - check modify run dir bane - tbd!!
+    # # wandb.run.name = wandb.run.id
+    # # wandb.run.save()
 
     # Train
     if not opt.evolve:
@@ -469,7 +486,10 @@ def main(opt, callbacks=Callbacks()):
 
     # Evolve hyperparameters (optional)
     else:
-        opt.exist_ok, opt.resume = opt.resume, False  # pass resume to exist_ok and disable resume
+        #     # todo consider separate evolve projects:
+        if opt.project == str(ROOT / "runs/train-segt"):  # if default project name, rename to runs/evolve-seg
+            opt.project = str(ROOT / "runs/evolve-seg")
+        opt.exist_ok, opt.resume, opt.pretrained = opt.resume, False, False  # pass resume to exist_ok and disable resume
 
         # Hyperparameter evolution metadata (mutation scale 0-1, lower_limit, upper_limit)
         meta = {

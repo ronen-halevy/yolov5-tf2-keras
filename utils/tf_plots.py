@@ -399,18 +399,29 @@ def plot_val_study(file='', dir='', x=None):  # from utils.plots import *; plot_
 
 # @TryExcept()  # known issue https://github.com/ultralytics/yolov5/issues/5395
 def plot_labels(labels, names=(), save_dir=Path('')):
-    # plot dataset labels
+    """
+    Plot 2 plots and save to files:
+    1. Plot Labels Correlogram which provides an overview of relations between each bbox variables pairs
+    2. Plot 4 subplots:  classes histogram, bboxes wh, scattered x_center,y_center, scattered w,h.
+
+    :param labels: cls and normalized bbox: [cls, xc,yc,w,h] shape: [Nt,5]
+    :param names: class names dict
+    :param save_dir: output image path, str
+    :return: No return
+    """
+    # Arrange dataset labels
     LOGGER.info(f"Plotting labels to {save_dir / 'labels.jpg'}... ")
     c, b = labels[:, 0], labels[:, 1:].transpose()  # classes, boxes
     nc = int(c.max() + 1)  # number of classes
-    x = pd.DataFrame(b.transpose(), columns=['x', 'y', 'width', 'height'])
+    x = pd.DataFrame(b.transpose(), columns=['x', 'y', 'width', 'height'])# transpose: [Nt,4]->[4,Nt]
 
+    # 1. Plot Labels Correlogram
     # seaborn correlogram
-    sn.pairplot(x, corner=True, diag_kind='auto', kind='hist', diag_kws=dict(bins=50), plot_kws=dict(pmax=0.9))
+    sn.pairplot(x, corner=True, diag_kind='auto', kind='scatter', diag_kws=dict(bins=50))
     plt.savefig(save_dir / 'labels_correlogram.jpg', dpi=200)
     plt.close()
 
-    # matplotlib labels
+    # 2.1 plot labels histogram:
     matplotlib.use('svg')  # faster
     ax = plt.subplots(2, 2, figsize=(8, 8), tight_layout=True)[1].ravel()
     y = ax[0].hist(c, bins=np.linspace(0, nc, nc + 1) - 0.5, rwidth=0.8)
@@ -422,10 +433,12 @@ def plot_labels(labels, names=(), save_dir=Path('')):
         ax[0].set_xticklabels(list(names.values()), rotation=90, fontsize=10)
     else:
         ax[0].set_xlabel('classes')
+    # 2.2 plot scattered xc,yc
     sn.histplot(x, x='x', y='y', ax=ax[2], bins=50, pmax=0.9)
+    # 2.3 plotscattered w,h
     sn.histplot(x, x='width', y='height', ax=ax[3], bins=50, pmax=0.9)
 
-    # rectangles
+    #  2.4 plot w-h rectangles
     # labels[:, 1:3] = 0.5  # center
     c_xy = tf.fill(labels[:, 1:3].shape, 0.5)
     xywh = tf.concat([c_xy, labels[:, 3:]], axis=1)
