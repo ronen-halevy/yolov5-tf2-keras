@@ -34,7 +34,6 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
-from utils.callbacks import Callbacks
 from utils.downloads import is_url
 
 from utils.tf_general import (LOGGER, TQDM_BAR_FORMAT,  check_file,
@@ -73,13 +72,12 @@ RANK = int(os.getenv('RANK', -1))
 WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 
 
-def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
+def train(hyp, opt):  # hyp is path/to/hyp.yaml or hyp dictionary
     save_dir, epochs, batch_size, pretrained, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze, mask_ratio, augment, mosaic, anchors_data, debug = \
         Path(opt.save_dir), opt.epochs, opt.batch_size, opt.pretrained, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
         opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze, opt.mask_ratio, opt.augment, opt.mosaic, opt.anchors_data, opt.debug
     if debug:
         tf.config.run_functions_eagerly(True)
-    # callbacks.run('on_pretrain_routine_start')
     # todo to config:
     imgsz = [640, 640] # Todo ronen
     nm = 32 # todo TBD
@@ -299,7 +297,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                                             single_cls=single_cls,
                                             save_dir=save_dir,
                                             plots=True,
-                                            callbacks=callbacks,
                                             compute_loss=compute_loss,
                                             mask_downsample_ratio=mask_ratio,
                                             overlap=overlap)
@@ -311,7 +308,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
         if fi > best_fitness:
             best_fitness = fi
         log_vals = list(mloss.numpy()) + list(results) + [float(optimizer.learning_rate)]
-        # callbacks.run('on_fit_epoch_end', log_vals, epoch, best_fitness, fi)
         # Log metrics to table:
         metrics_dict = dict(zip(KEYS, log_vals))
         logger.log_metrics(metrics_dict, epoch) # log results to csv
@@ -324,7 +320,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
             if opt.save_period > 0 and epoch % opt.save_period == 0:
                 keras_model.save_weights(w / f'epoch{epoch}.tf')
                 logger.log_model(w / f'epoch{epoch}.pt')
-            # callbacks.run('on_model_save', last, epoch, final_epoch, best_fitness, fi)
 
         # EarlyStopping
 
@@ -348,7 +343,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
                                     save_dir=save_dir,
                                     verbose=True,
                                     plots=True,
-                                    callbacks=callbacks,
                                     compute_loss=compute_loss,
                                     mask_downsample_ratio=mask_ratio,
                                     overlap=overlap)
@@ -402,7 +396,7 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 #
 #     return best_fitness, start_epoch, epochs
 
-def main(opt, callbacks=Callbacks()):
+def main(opt):
     print_args(vars(opt))
 
     # Resume
@@ -487,7 +481,7 @@ def main(opt, callbacks=Callbacks()):
 
     # Train
     if not opt.evolve:
-        train(opt.hyp, opt, callbacks)
+        train(opt.hyp, opt)
 
     # Evolve hyperparameters (optional)
     else:
@@ -579,8 +573,7 @@ def main(opt, callbacks=Callbacks()):
                 hyp[k] = round(hyp[k], 5)  # significant digits
 
             # Train mutation
-            results = train(hyp.copy(), opt,  callbacks)
-            callbacks = Callbacks()
+            results = train(hyp.copy(), opt)
             # Write mutation results
             print_mutation(KEYS[4:16], results, hyp.copy(), save_dir, opt.bucket)
 

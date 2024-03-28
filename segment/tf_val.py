@@ -43,7 +43,6 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 # from models.common import DetectMultiBackend
 # from models.yolo import SegmentationModel
-# from utils.callbacks import Callbacks
 from utils.tf_general import (LOGGER, NUM_THREADS, TQDM_BAR_FORMAT, Profile,
                              coco80_to_coco91_class, colorstr, increment_path,
                             print_args, scale_boxes, xywh2xyxy, xyxy2xywh)
@@ -190,7 +189,6 @@ def run(
         overlap=False,
         mask_downsample_ratio=1,
         compute_loss=None,
-        callbacks=None,
 ):
     if save_json:
         # check_requirements('pycocotools>=2.0.6')
@@ -216,7 +214,6 @@ def run(
     metrics = Metrics()
     loss = tf.zeros([4] ) # 4 loss sources: [lbox, lseg, lobj, lcls]
     jdict, stats = [], []
-    # callbacks.run('on_val_start')
     pbar = tqdm(dataloader, total=nb, desc=s, bar_format=TQDM_BAR_FORMAT, colour='green')  # progress bar
 
     # batch loop on gt dataloader entries. batch size is b:
@@ -364,7 +361,6 @@ def run(
 
 
     # end dataset batches loop
-    # callbacks.run('on_val_batch_end')
     # Compute metrics.
     # Rearrange stats: list [Np] to list [5]. Details: stat entry (list of npreds entries: [tp_m,tp_b,conf,pcls,tclss]
 
@@ -397,7 +393,6 @@ def run(
         # confusion_matrix.plot(save_dir=save_dir, names=list(names.values())) # todo remove ald plot
         # plot confusion matrix. Note: # add 'background' class id for fp, Miss Detection
         plot_confusion_matrix(matched_gt_classes, matched_pred_classes, list(names.values()) + ['background'], save_dir=save_dir)
-    # callbacks.run('on_val_end')
 
     mp_bbox, mr_bbox, map50_bbox, map_bbox, mp_mask, mr_mask, map50_mask, map_mask = metrics.mean_results()
 
