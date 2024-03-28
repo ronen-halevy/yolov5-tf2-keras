@@ -111,8 +111,8 @@ def check_anchors(dataset, m_stride, m_anchors, thr=4.0, imgsz=640):
             m_anchors = tf.reshape(anchors, m_anchors.shape) #.clone().view_as(m_anchors)
 
             m_anchors=check_anchor_order(m_anchors, stride)  # must be in pixel-space (not grid-space)
-            m_anchors /= stride
-            s = f'{PREFIX}Done ✅ (optional: update model *.yaml to use these anchors in the future)'
+            s = f'{PREFIX}Done ✅ (optional: update model *.yaml to use these anchors in the future:\n{m_anchors})'
+            m_anchors /= stride # scale by strides to head
         else:
             s = f'{PREFIX}Done ⚠️ (original anchors better than new anchors, proceeding with original anchors)'
         LOGGER.info(s)
