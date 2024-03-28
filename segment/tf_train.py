@@ -89,25 +89,30 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     last, best = w / 'last.h5', w / 'best.h5'
 
     # Hyperparameters
-    if isinstance(hyp, str):
+    if isinstance(hyp, str): # dict in resume mode, otherwise str filename
         with open(hyp, errors='ignore') as f:
             hyp = yaml.safe_load(f)  # load hyps dict
     LOGGER.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
-    opt.hyp = hyp.copy()  # for saving hyps to checkpoints
+    opt.hyp = hyp  #  saving for debug or a future resume mode
+
+    if isinstance(cfg, str): # dict in resume mode, otherwise str filename
+        with open(cfg, errors='ignore') as f:
+            cfg = yaml.safe_load(f)  # load cfg model dict
+    opt.cfg = cfg  #  saving for debug or a future resume mode
 
     # affine params:
     # degrees,translate,scale,shear,perspective = hyp['degrees'],hyp['translate'], hyp['scale'],hyp['shear'],hyp['perspective']
     # augmentation params:
     # hgain, sgain, vgain, flipud, fliplr =hyp['hsv_h'],hyp['hsv_s'],hyp['hsv_v'],hyp['flipud'],hyp['fliplr']
-    results = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls)
+    results = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls) for noval case
 
 
     # Save run settings
     if not evolve:
-        yaml_save(save_dir / 'hyp.yaml', hyp)
+        # save files for debug and resume:
+        # yaml_save(save_dir / 'hyp.yaml', hyp)
         yaml_save(save_dir / 'opt.yaml', vars(opt))
-
-    # Loggers
+        # shutil.copy(cfg, save_dir / 'cfg.yaml') # model yaml file
     data_dict = None
     # if RANK in {-1, 0}:
     logger = GenericLogger(opt=opt, res_table_cols=KEYS, console_logger=LOGGER)
@@ -203,7 +208,6 @@ def train(hyp, opt, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     if not resume:
         if not opt.noautoanchor:
             anchors=check_anchors(dataset, strides, anchors, thr=hyp['anchor_t'], imgsz=imgsz[0])  # run AutoAnchor
-            LOGGER.info(f'{anchors}')
         if plots:
             labels = tf.concat(dataset.labels, 0)
             plot_labels(labels, class_names, save_dir)  # todo implement this!!
@@ -402,18 +406,19 @@ def main(opt, callbacks=Callbacks()):
     print_args(vars(opt))
 
     # Resume
-    if opt.resume and not opt.evolve:  # resume from specified or most recent last.pt
-        last = Path(check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run())
+    if opt.resume and not opt.evolve:  # resume from specified or most recent last.pt. Ignore if evolve
+        last = Path(check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run('../runs'))
         LOGGER.info(f'Resuming with {colorstr("bold", last)} ')
         opt_yaml = last.parent.parent / 'opt.yaml'  # train options yaml
         opt_data = opt.data  # original dataset
-        # if opt_yaml.is_file():
         with open(opt_yaml, errors='ignore') as f:
             d = yaml.safe_load(f)
         # else:
         #     d = torch.load(last, map_location='cpu')['opt']
         opt = argparse.Namespace(**d)  # replace
-        opt.cfg, opt.weights, opt.resume = '', str(last), True  # reinstate
+        # opt.cfg =last.parent.parent / 'model.yaml'  # use saved resume model.yaml config file
+
+        opt.weights, opt.resume = str(last), True  # reinstate
         if is_url(opt_data):
             opt.data = check_file(opt_data)  # avoid HUB resume auth timeout
     else:
@@ -421,7 +426,7 @@ def main(opt, callbacks=Callbacks()):
             check_file(opt.data), check_yaml(opt.cfg), check_yaml(opt.hyp), str(opt.weights), str(opt.project)  # checks
         assert len(opt.cfg) or len(opt.weights), 'either --cfg or --weights must be specified'
         if opt.evolve:
-            if opt.project == str(ROOT / 'runs/train-seg'):  # if default project name, rename to runs/evolve-seg
+            if opt.project == str(ROOT / 'runs/train-seg'):  # if default project name, rename to runs/evolve-seg todo rename segt!
                 opt.project = str(ROOT / 'runs/evolve-seg')
             opt.exist_ok, opt.resume, opt.pretrained = opt.resume, False, False  # pass resume to exist_ok and disable resume
         if opt.name == 'cfg':
@@ -487,9 +492,9 @@ def main(opt, callbacks=Callbacks()):
     # Evolve hyperparameters (optional)
     else:
         #     # todo consider separate evolve projects:
-        if opt.project == str(ROOT / "runs/train-segt"):  # if default project name, rename to runs/evolve-seg
-            opt.project = str(ROOT / "runs/evolve-seg")
-        opt.exist_ok, opt.resume, opt.pretrained = opt.resume, False, False  # pass resume to exist_ok and disable resume
+        # if opt.project == str(ROOT / "runs/train-segt"):  # if default project name, rename to runs/evolve-seg
+        #     opt.project = str(ROOT / "runs/evolve-seg")
+        # opt.exist_ok, opt.resume, opt.pretrained = opt.resume, False, False  # pass resume to exist_ok and disable resume
 
         # Hyperparameter evolution metadata (mutation scale 0-1, lower_limit, upper_limit)
         meta = {
@@ -527,8 +532,8 @@ def main(opt, callbacks=Callbacks()):
             hyp = yaml.safe_load(f)  # load hyps dict
             if 'anchors' not in hyp:  # anchors commented in hyp.yaml
                 hyp['anchors'] = 3
-        if opt.noautoanchor:
-            del hyp['anchors'], meta['anchors']
+        # if opt.noautoanchor: # todo
+        #     del hyp['anchors'], meta['anchors']
         opt.noval, opt.nosave, save_dir = True, True, Path(opt.save_dir)  # only val/save final epoch
         # ei = [isinstance(x, (int, float)) for x in hyp.values()]  # evolvable indices
         evolve_yaml, evolve_csv = save_dir / 'hyp_evolve.yaml', save_dir / 'evolve.csv'
@@ -541,6 +546,7 @@ def main(opt, callbacks=Callbacks()):
                 str(evolve_csv),])
 
         for _ in range(opt.evolve):  # generations to evolve
+            LOGGER.info(f'\n{evolve_yaml}')
             if evolve_csv.exists():  # if evolve.csv exists: select best hyps and mutate
                 # Select parent(s)
                 parent = 'single'  # parent selection method: 'single' or 'weighted'
